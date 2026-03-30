@@ -302,7 +302,7 @@ If `design` label present:
 2. **Commit and push** (without retriggering CI). Baselines are platform-specific:
    ```bash
    git -C [WT_PATH] add [BASELINE_PATH]/
-   git -C [WT_PATH] commit -m "chore(visual-qa): update golden baselines [skip ci]"
+   git -C [WT_PATH] commit -m "chore: update golden baselines [skip ci]"
    $WORKTREE_CLI push [WT_PATH] --no-rebase
    ```
 
