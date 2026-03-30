@@ -1790,17 +1790,43 @@ fn remove_installed_items(select: &mut TabbedSelect, names: &[String]) {
         }
     }
 
-    // Clear installed flag on items in other tabs
+    // Clear installed/outdated flags on items in source tabs
     for tab in &mut select.tabs {
-        if tab.name == "Installed" {
+        if tab.name == "Installed" || tab.name.starts_with("Updates") {
             continue;
         }
         for group in &mut tab.groups {
             for item in &mut group.items {
                 if names_set.contains(item.label.as_str()) {
                     item.installed = false;
+                    item.outdated = false;
                 }
             }
+        }
+    }
+
+    // Clean up the Updates tab — remove uninstalled items
+    if let Some(tab_idx) = select.tabs.iter().position(|t| t.name.starts_with("Updates")) {
+        for group in &mut select.tabs[tab_idx].groups {
+            group
+                .items
+                .retain(|i| !names_set.contains(i.label.as_str()));
+        }
+        select.tabs[tab_idx].groups.retain(|g| !g.items.is_empty());
+
+        if select.tabs[tab_idx].groups.is_empty() {
+            select.tabs.remove(tab_idx);
+            if select.active_tab >= select.tabs.len() {
+                select.active_tab = 0;
+            }
+        } else {
+            // Update the tab name count
+            let count: usize = select.tabs[tab_idx]
+                .groups
+                .iter()
+                .map(|g| g.items.len())
+                .sum();
+            select.tabs[tab_idx].name = format!("Updates ({count})");
         }
     }
 
