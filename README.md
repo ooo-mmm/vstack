@@ -154,7 +154,7 @@ rust = [
 ]
 generalist = []    # empty = no extra skills
 
-# Per-skill instructions appended at the bottom of each skill's SKILL.md
+# Project instructions appended at the bottom of each skill's SKILL.md (won't overwrite the skill author's own)
 [skill-instructions]
 trading-design = "Focus on dark theme with green/red accent colors."
 

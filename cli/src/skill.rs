@@ -58,27 +58,35 @@ impl Skill {
     }
 }
 
-/// Inject an "## Additional Instructions" section at the bottom of a SKILL.md file.
-/// Replaces any existing Additional Instructions section.
+const SKILL_INSTRUCTIONS_HEADER: &str = "## Project Instructions";
+
+/// Inject a "## Project Instructions" section at the bottom of a SKILL.md file.
+/// Uses a distinct heading from "## Additional Instructions" to avoid clobbering
+/// any instructions the skill author included in the original source.
 pub fn inject_skill_instructions(skill_md_path: &Path, instructions: &str) {
     let Ok(content) = std::fs::read_to_string(skill_md_path) else {
         return;
     };
 
-    // Strip any existing "## Additional Instructions" section
-    let clean = strip_additional_instructions(&content);
-    let section = format!("\n\n## Additional Instructions\n\n{}\n", instructions.trim());
+    // Strip any existing vstack-injected section
+    let clean = strip_project_instructions(&content);
+    let section = format!(
+        "\n\n{}\n\n{}\n",
+        SKILL_INSTRUCTIONS_HEADER,
+        instructions.trim()
+    );
     let new_content = format!("{}{}", clean.trim_end(), section);
 
     let _ = std::fs::write(skill_md_path, new_content);
 }
 
-fn strip_additional_instructions(content: &str) -> String {
-    if let Some(start) = content.find("\n## Additional Instructions") {
-        let after = &content[start + "\n## Additional Instructions".len()..];
+fn strip_project_instructions(content: &str) -> String {
+    let marker = format!("\n{}", SKILL_INSTRUCTIONS_HEADER);
+    if let Some(start) = content.find(&marker) {
+        let after = &content[start + marker.len()..];
         // Find the next ## heading or end
         if let Some(next) = after.find("\n## ") {
-            let end = start + "\n## Additional Instructions".len() + next;
+            let end = start + marker.len() + next;
             format!("{}{}", &content[..start], &content[end..])
         } else {
             content[..start].to_string()

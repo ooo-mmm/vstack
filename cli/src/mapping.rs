@@ -251,9 +251,10 @@ fn create_project_config(path: &Path, agents: &[String], skills: &[String]) {
 
     // ── skill-instructions ──
     out.push_str("\n\n# ── Skill Instructions ────────────────────────────────\n");
-    out.push_str("# Adds a \"## Additional Instructions\" section at the\n");
+    out.push_str("# Adds a \"## Project Instructions\" section at the\n");
     out.push_str("# bottom of each skill's SKILL.md. Project-specific\n");
     out.push_str("# context for how this skill applies to your codebase.\n");
+    out.push_str("# Won't overwrite the skill author's own instructions.\n");
     out.push_str("#\n");
     out.push_str("[skill-instructions]\n");
     for name in skills {
@@ -300,13 +301,13 @@ fn update_project_config(path: &Path, agents: &[String], skills: &[String]) {
     // Find agents not already mentioned as a TOML key (commented or active).
     let new_agents: Vec<&String> = agents
         .iter()
-        .filter(|name| agent_mentioned_in(&existing, name))
+        .filter(|name| is_new_key(&existing, name))
         .collect();
 
     // Find skills not already mentioned
     let new_skills: Vec<&String> = skills
         .iter()
-        .filter(|name| agent_mentioned_in(&existing, name))
+        .filter(|name| is_new_key(&existing, name))
         .collect();
 
     // Strip old skills reference block and re-append with current list
@@ -331,8 +332,8 @@ fn update_project_config(path: &Path, agents: &[String], skills: &[String]) {
     let _ = std::fs::write(path, out);
 }
 
-/// Check if an agent name already appears as a TOML key in the file.
-fn agent_mentioned_in(content: &str, name: &str) -> bool {
+/// Returns true if a name does NOT appear as a TOML key in the file.
+fn is_new_key(content: &str, name: &str) -> bool {
     let patterns = [
         format!("{} =", name),
         format!("{}=", name),
@@ -356,12 +357,14 @@ fn insert_keys_into_section(content: &str, section_header: &str, new_keys: &[&St
     let lines: Vec<&str> = content.lines().collect();
     let mut result: Vec<String> = Vec::new();
     let mut i = 0;
+    let mut found = false;
 
     while i < lines.len() {
         let trimmed = lines[i].trim();
         result.push(lines[i].to_string());
 
         if trimmed == section_header {
+            found = true;
             // Scan forward past existing keys in this section
             i += 1;
             while i < lines.len() {
@@ -392,6 +395,15 @@ fn insert_keys_into_section(content: &str, section_header: &str, new_keys: &[&St
         }
 
         i += 1;
+    }
+
+    // If the section didn't exist, create it at the end
+    if !found {
+        result.push(String::new());
+        result.push(section_header.to_string());
+        for name in new_keys {
+            result.push(format!("{} = \"\"", name));
+        }
     }
 
     result.join("\n")
