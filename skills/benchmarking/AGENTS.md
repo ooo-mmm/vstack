@@ -176,6 +176,17 @@ Rules:
 - **estimated_cycles** (iai-callgrind): Simulated cycles (Callgrind simulator)
 - **latency_distribution** (HdrHistogram): True percentiles with coordinated omission correction
 
+### Metric Kind Migration (Backfill)
+
+**Symptom**: `bench.sh regression <component>` outputs "No baseline commit reachable from HEAD" or shows "metric missing" for all operations — this often means historical data uses a different `metric_kind` than the current recorder.
+
+**Fix**: Backfill records for the relevant ancestor commit in the new metric kind format using the old values. Key points:
+
+- Backfill must cover **all variant operations** for that commit — including secondary variants — not just primary operations. Missing variants cause false regression errors.
+- `bench.sh record <component> '<json>'` writes the file with the current HEAD in the filename but preserves the specified `commit_hash` in the JSON content (which regression detection reads).
+- After backfilling an ancestor, record fresh results for the current HEAD so regression has two commits to compare.
+- Original metric-kind files remain in place; new records supersede them (the store picks the entry with the latest timestamp).
+
 ## File Naming
 
 Historical results (auto-generated): `{timestamp}_{commit}_{op_hash}.json`

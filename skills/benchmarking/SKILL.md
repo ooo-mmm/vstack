@@ -84,6 +84,7 @@ Exit codes: `0` = pass/improvement, `1` = regression detected.
 ### 2. Recording (HIGH)
 
 - `rec-metric-kind-match` - Baseline and latest must use same metric_kind; cross-kind rejected
+- `rec-metric-kind-backfill` - When migrating metric kinds, backfill ALL variant operations for ancestor commits to avoid false "no baseline" errors
 - `rec-environment-capture` - Always capture platform, kernel, CPU, governor
 
 ### 3. Schema (MEDIUM)
