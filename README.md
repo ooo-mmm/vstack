@@ -37,9 +37,9 @@ This makes `vstack` closer to a package manager than a static dotfiles repo.
 - **Global and project scope**: install once per user, or per project.
 - **Dependency resolution**: skills declare required/optional dependencies in `SKILL.md`; required deps are auto-included transitively.
 - **Config-driven attribution**: `vstack.toml` maps extra skills to agents, role-wide skills to agent roles, and hook events to roles.
-- **Project customization**: per-agent guidance, instructions, custom skills, and custom hooks via project-level `vstack.toml` — survives upstream updates.
-- **Reconciliation**: installed agents regenerate when skills/hooks change, preserving user edits.
-- **`vstack refresh`**: regenerate all agent files and re-copy skills from source after editing `vstack.toml`.
+- **Project customization**: per-agent guidance, instructions, custom skills, per-skill instructions, and custom hooks via project-level `vstack.toml` — survives upstream updates.
+- **Reconciliation**: installed agents and skills regenerate when packages change, preserving user edits.
+- **`vstack refresh`**: regenerate all agent files and re-inject skill instructions from `vstack.toml`.
 - **Version-based update check**: notifies when the CLI version changes, not on every repo push. `vstack update --force` to rebuild from source.
 - **Source registry**: previously used package repos are remembered and reusable from the TUI.
 - **Fast terminal UX**: native Rust TUI with mouse support, built with `ratatui` and `crossterm`.
