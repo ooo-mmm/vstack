@@ -279,14 +279,32 @@ fn extract_header_footer(content: &str, sections: &[Section]) -> (String, String
 
     let header = lines[..header_end].join("\n").trim_end().to_string();
 
-    // Find footer start: first `## ` heading after all known sections that
-    // doesn't match any section prefix pattern
+    // Find footer start: first `## ` heading AFTER the last known numbered
+    // section that isn't itself a known section. We scan backwards from the end
+    // to find where the last known section is, then scan forward from there.
     let max_section_num = sections.iter().map(|s| s.number).max().unwrap_or(0);
-    let mut footer_start = lines.len();
+    let mut last_known_section_line = header_end;
 
-    for (i, line) in lines.iter().enumerate().skip(header_end) {
+    for (i, line) in lines.iter().enumerate() {
+        if line.starts_with("## ")
+            && line.chars().nth(3).is_some_and(|c| c.is_ascii_digit())
+        {
+            let num_str: String = line[3..]
+                .chars()
+                .take_while(|c| c.is_ascii_digit())
+                .collect();
+            if let Ok(num) = num_str.parse::<u32>() {
+                if num <= max_section_num {
+                    last_known_section_line = i;
+                }
+            }
+        }
+    }
+
+    // Scan forward from the last known section to find the footer
+    let mut footer_start = lines.len();
+    for (i, line) in lines.iter().enumerate().skip(last_known_section_line + 1) {
         if line.starts_with("## ") {
-            // Check if this is a numbered section we know about
             if let Some(num_char) = line.chars().nth(3) {
                 if num_char.is_ascii_digit() {
                     let num_str: String = line[3..]
@@ -295,15 +313,12 @@ fn extract_header_footer(content: &str, sections: &[Section]) -> (String, String
                         .collect();
                     if let Ok(num) = num_str.parse::<u32>() {
                         if num <= max_section_num {
-                            continue; // known section, skip
+                            continue; // still a known section (shouldn't happen but be safe)
                         }
                     }
-                    // Numbered section beyond our known ones = start of footer
-                    footer_start = i;
-                    break;
                 }
             }
-            // Non-numbered ## heading after rule sections = footer
+            // Any ## heading after the last known section = footer
             footer_start = i;
             break;
         }
