@@ -15,6 +15,8 @@ metadata:
 
 Brief description of what this skill covers, prioritized by impact.
 
+> **Note**: `README.md` in this directory is for human setup/configuration only — not for AI agents. Follow this file (`SKILL.md`) as the authoritative skill definition.
+
 ## When to Apply
 
 Reference these guidelines when:
