@@ -81,6 +81,7 @@ App > Window > Shell > Zone > TitleBar > Panel > Canvas > Overlay
 - `interaction-overlay-starvation` - Cursor overlays starve underlying drag targets
 - `interaction-pane-drag-feedback` - Keep pane_grid drag feedback inside pane subtree
 - `interaction-split-ownership` - When `mouse_area` handles semantics and `button` handles visuals, flag the split and verify hit areas match
+- `interaction-overlay-invalidation` - Custom overlay widgets must call `shell.invalidate_layout()` on visibility transitions to prevent stale layout panics
 
 ## How to Use
 

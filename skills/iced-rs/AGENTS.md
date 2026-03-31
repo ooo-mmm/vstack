@@ -53,6 +53,8 @@ Patterns and rules for building Iced 0.14 applications with Elm-style state mana
 5. [Interaction](#5-interaction) — **MEDIUM**
    - 5.1 [Overlay Starvation](#51-overlay-starvation)
    - 5.2 [Keep PaneGrid Drag Feedback Internal](#52-keep-panegrid-drag-feedback-internal)
+   - 5.3 [Split Interaction Ownership](#53-split-interaction-ownership)
+   - 5.4 [Overlay Visibility Requires Layout Invalidation](#54-overlay-visibility-requires-layout-invalidation)
 6. [Chart Rendering](#6-chart-rendering)
 7. [Subscription-Based Data Streams](#7-subscription-based-data-streams)
 8. [Theming](#8-theming)
@@ -276,6 +278,92 @@ Stacked `mouse_area(...).interaction(...)` layers can stop underlying hover/move
 **Impact: MEDIUM (native Dropped events never arrive)**
 
 If pane dragging uses `pane_grid.on_drag(...)`, keep feedback inside the picked pane subtree or `pane_grid::Style`. `mouse_area`/`opaque` pane-drag overlays are rebuild-sensitive and can prevent native `Dropped` events from arriving.
+
+### 5.3 Split Interaction Ownership
+
+**Impact: MEDIUM (semantic and visual interaction layers diverge, causing ghost clicks or missed events)**
+
+When `mouse_area` handles semantic interaction (press, hover, drag) while a `button` provides visual feedback (styling, states), interaction ownership is split across two widgets. This creates risks:
+
+- Hit areas may differ — `button` respects its own bounds while `mouse_area` covers a potentially different region.
+- Event ordering is fragile — both widgets consume the same pointer events, and which wins depends on tree position.
+- State can desync — `button` visual state (pressed, hovered) may not reflect `mouse_area` semantic state.
+
+When this pattern appears in code, flag it explicitly. Prefer consolidating interaction into one widget: either a styled `mouse_area` or a `button` with `on_press`.
+
+If both are truly needed, exactly one layer publishes the action:
+
+**Correct (single owner):**
+
+```rust
+// mouse_area owns semantics; button is visual-only
+mouse_area(button(content))       // no .on_press on button
+    .on_press(Message::Activate)
+```
+
+**Incorrect (split ownership):**
+
+```rust
+// both layers publish — ambiguous press/release semantics
+mouse_area(
+    button(content).on_press(Message::Activate)
+).on_press(Message::Activate)
+```
+
+Document which widget owns which concern and verify hit areas match. If the semantic wrapper owns the interaction, it must wrap the entire intended hit region — otherwise animated layout changes can leave hit testing on stale geometry.
+
+### 5.4 Overlay Visibility Requires Layout Invalidation
+
+**Impact: MEDIUM (stale layout nodes cause panics after overlay visibility toggles)**
+
+Custom widgets that conditionally return an overlay from `overlay()` must call `shell.invalidate_layout()` in `update()` whenever the overlay appears or disappears. Without this, the popup tree's layout nodes go stale between `layout()` and `draw()`, causing panics like `container.rs unwrap() on None`. This is the same contract Iced's built-in `tooltip::Tooltip` follows — `shell.invalidate_layout()` on every `Open`↔`Idle` transition. Symptom: crash at `iced_widget/src/container.rs` after repeated hover cycling.
+
+**Incorrect (no invalidation on visibility change):**
+
+```rust
+fn update(&mut self, _state: &mut Tree, event: Event, ..., shell: &mut Shell<'_, Message>) {
+    match event {
+        Event::Mouse(mouse::Event::CursorEntered) => {
+            self.show_overlay = true;
+            // BUG: layout tree still has no overlay node
+        }
+        Event::Mouse(mouse::Event::CursorLeft) => {
+            self.show_overlay = false;
+        }
+        _ => {}
+    }
+}
+
+fn overlay<'b>(...) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
+    if self.show_overlay { Some(my_popup(...)) } else { None }
+}
+```
+
+**Correct (invalidate layout on every visibility transition):**
+
+```rust
+fn update(&mut self, _state: &mut Tree, event: Event, ..., shell: &mut Shell<'_, Message>) {
+    match event {
+        Event::Mouse(mouse::Event::CursorEntered) => {
+            if !self.show_overlay {
+                self.show_overlay = true;
+                shell.invalidate_layout();
+            }
+        }
+        Event::Mouse(mouse::Event::CursorLeft) => {
+            if self.show_overlay {
+                self.show_overlay = false;
+                shell.invalidate_layout();
+            }
+        }
+        _ => {}
+    }
+}
+
+fn overlay<'b>(...) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
+    if self.show_overlay { Some(my_popup(...)) } else { None }
+}
+```
 
 ---
 
