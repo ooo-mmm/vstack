@@ -54,6 +54,10 @@ App > Window > Shell > Zone > TitleBar > Panel > Canvas > Overlay
 - `hr-scroll-state` - `scrollable` events do not report initial layout; capture initial size explicitly before relying on scroll updates
 - `hr-animation-invalidation` - Animated geometry changes require both `request_redraw` and `invalidate_layout`; paint-only changes need just redraw
 - `hr-minimum-pane-size` - `PaneGrid::min_size` is shared across panes; handle per-pane minimums in pane content/layout
+- `hr-overlay-state-isolation` - Overlay layers must not affect the base layer's widget structure
+- `hr-pick-area-geometry` - TitleBar content must use `Shrink` width so pick area is not consumed
+- `hr-single-message` - Each widget interaction produces exactly one message; use state machines for composites
+- `hr-titlebar-event-ordering` - Title bar processes before body in `pane_grid::Content::update`; do not clear state unconditionally in body-exit handlers
 
 ### 2. Development Practices (HIGH)
 

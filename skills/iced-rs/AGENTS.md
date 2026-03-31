@@ -35,6 +35,11 @@ Patterns and rules for building Iced 0.14 applications with Elm-style state mana
    - 1.2 [View Is Pure](#12-view-is-pure)
    - 1.3 [Scroll State Initialization](#13-scroll-state-initialization)
    - 1.4 [Minimum Pane Size](#14-minimum-pane-size)
+   - 1.5 [Animation Invalidation](#15-animation-invalidation)
+   - 1.6 [Overlay State Isolation](#16-overlay-state-isolation)
+   - 1.7 [Pick Area Geometry](#17-pick-area-geometry)
+   - 1.8 [Single Message Per Interaction](#18-single-message-per-interaction)
+   - 1.9 [Title Bar Event Ordering](#19-title-bar-event-ordering)
 2. [Development Practices](#2-development-practices) — **HIGH**
    - 2.1 [Validate API Before Use](#21-validate-api-before-use)
    - 2.2 [Surface Selection](#22-surface-selection)
@@ -108,6 +113,103 @@ mouse_area(label)
 **Impact: CRITICAL (panes collapse or ignore per-pane minimums)**
 
 `PaneGrid::min_size` sets a uniform minimum for all panes. If different panes need different minimums, enforce them in the pane content or in your split/resize state instead of assuming `PaneGrid` tracks them per pane.
+
+### 1.5 Animation Invalidation
+
+**Impact: CRITICAL (animated geometry changes render correctly but layout stays stale)**
+
+When a custom widget animates, choose the right shell invalidation:
+
+- **Paint-only animation** (color, opacity, stroke width, rotation with fixed bounds): `shell.request_redraw()` is sufficient.
+- **Layout-affecting animation** (size, position, expand/collapse, clipping bounds, hit region): require **both** `shell.request_redraw()` **and** `shell.invalidate_layout()`.
+
+Omitting `invalidate_layout()` when geometry changes causes the widget to paint at its new size while surrounding layout retains the old dimensions — producing overlap, clipping, or dead space.
+
+**Diagnostic:** if a widget "only updates on the second click," suspect stale layout before suspecting message routing.
+
+**Immediate Transition Start:**
+
+When a user interaction triggers an animated state change, do not wait for incidental window events to advance the animation. Start the tween and immediately request both a redraw and a scheduled next-frame redraw:
+
+```rust
+shell.request_redraw();
+shell.request_redraw_at(Instant::now() + FRAME_INTERVAL);
+```
+
+If geometry changes, also call `shell.invalidate_layout()`.
+
+**Sustaining the Animation Loop:**
+
+Handle `RedrawRequested` to keep the animation alive every frame until the tween completes:
+
+```rust
+// On state transition (e.g. toggle expand/collapse)
+if state.pending_transition {
+    shell.invalidate_layout();
+    shell.request_redraw();
+    shell.request_redraw_at(Instant::now() + FRAME_INTERVAL);
+    state.pending_transition = false;
+}
+
+// On each frame while animating
+if let Event::Window(window::Event::RedrawRequested(now)) = event {
+    if state.animation.is_animating(*now) {
+        shell.invalidate_layout();
+        shell.request_redraw();
+        shell.request_redraw_at(*now + FRAME_INTERVAL);
+    }
+}
+```
+
+**Custom Widget Lifecycle:**
+
+For custom widgets that own an `iced::Animation<bool>`:
+
+1. Store animation state in widget `Tree` state.
+2. On state flip, call `animation.go_mut(new_state, Instant::now())`.
+3. While animating: request redraws every frame; invalidate layout every frame if geometry changes.
+4. In `layout()`, compute animated geometry from the current animation progress.
+5. In `draw()`, clip to the animated bounds if only part of the child should be visible.
+
+### 1.6 Overlay State Isolation
+
+**Impact: CRITICAL (base layer widgets break when overlays change)**
+
+Overlay layers (stack children beyond the base) must not affect the base layer's widget structure. Add/remove overlay layers freely, but never change how base-layer widgets are constructed based on overlay presence.
+
+### 1.7 Pick Area Geometry
+
+**Impact: CRITICAL (pane drag completely disabled)**
+
+TitleBar content must use `Shrink` width so empty space remains for the pick area. `Fill` width on tab row content eliminates the pick area, disabling pane drag entirely.
+
+**Incorrect (Fill width consumes pick area):**
+
+```rust
+pane_grid::TitleBar::new(
+    row![tabs].width(Length::Fill)  // No pick area left
+)
+```
+
+**Correct (Shrink width preserves pick area):**
+
+```rust
+pane_grid::TitleBar::new(
+    row![tabs].width(Length::Shrink)  // Pick area in remaining space
+)
+```
+
+### 1.8 Single Message Per Interaction
+
+**Impact: CRITICAL (race conditions and unpredictable state)**
+
+Each widget interaction produces exactly one message. For composite actions (e.g., tab press that might become a drag), use state machines in `update()` rather than emitting multiple messages from `view()`.
+
+### 1.9 Title Bar Event Ordering
+
+**Impact: CRITICAL (state cleared by body handler overwrites title bar state)**
+
+In `pane_grid::Content::update`, the title bar is processed before the body. When the cursor crosses from body to title bar in a single frame, title bar messages (e.g., `TabBarEntered`) fire before body messages (e.g., `PaneBodyExited`). Do not unconditionally clear state in body-exit handlers that the title bar just established.
 
 ---
 

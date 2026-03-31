@@ -93,6 +93,20 @@ The spawn prompt template must be copied verbatim (fill placeholders only). Para
 
 The `taskPrefix` from `workflow-sections` JSON output must be used exactly in delegation messages — never hand-written. Agents filter by prefix + PENDING status.
 
+### Task Prefix Matching
+
+**Impact: HIGH (agents claim wrong tasks or miss their assignments)**
+
+The task prefix from `workflow-sections` JSON output must be used exactly in delegation messages — never hand-written. Agents filter the task list by prefix + PENDING status, so the delegation message prefix must match the task subjects exactly.
+
+Task prefix hierarchy:
+- Top-level: `§ N: Title`
+- Nested sub-workflow: `⏤⤵ /command § N: Title`
+- Agent delegation: `⏤⏤🐲 agent-name § N: Title`
+- Inline tracking: `⏤⏤🐲 agent-name: Description`
+
+Agents only process PENDING tasks — completed and in-progress tasks from other agents or prior rounds are ignored.
+
 ### Task Layers
 
 The shared task list contains three visually distinct layers:
@@ -300,6 +314,14 @@ All review/QA agents output JSON:
 ```
 
 Verdict: `action_required` if blockers exist, `pass` otherwise. Location uses function/struct names, never line numbers.
+
+### Review Finding Schema Compliance
+
+**Impact: MEDIUM (malformed review JSON breaks automated fix routing and issue creation)**
+
+All review and QA agents must output JSON following the review finding schema: `agent`, `timestamp`, `verdict` (pass or action_required), `summary`, `blockers[]`, `suggestions[]`, `questions[]`, and optional `qa_metadata`. Verdict is `action_required` if blockers exist, `pass` otherwise.
+
+Each item requires: `id`, `title` (5-10 words), `location` (file path with function/struct names, no line numbers), `description`, `recommendation`, `priority` (1-4), `estimate` (1-5). Suggestions also require `category` (fix or issue).
 
 ### Recommendation Categorization
 

@@ -255,14 +255,19 @@ Project-level configuration:
 
 ### 2. Delegation (CRITICAL)
 
+- `del-delegation-patterns` - Four delegation patterns: spawn+message, message-only, self-create, consultation
 - `del-tasks-before-spawn` - Create tasks before spawning; spawn idle then send delegation
 - `del-message-gate` - Mandatory message gate in spawn prompts prevents processing non-delegation messages
+- `del-task-prefix-hierarchy` - Prefix hierarchy with emoji markers for orchestrator, sub-workflow, and agent tasks
+- `del-task-layers` - Three visually distinct task layers; agents filter by prefix + PENDING status
 - `del-prefix-matching` - Task prefix from workflow-sections must match delegation message exactly
 - `del-no-duplicate-spawn` - Message existing agents; only respawn after confirmed stuck
 - `del-single-return` - Last task handles return; no additional messages after
+- `del-spawn-prompt-design-principles` - Universal spawn prompt patterns: message gate, PENDING-only, task ID ordering, verbatim templates
 
 ### 3. Agent Lifecycle (HIGH)
 
+- `life-lifecycle-stages` - Seven-stage agent lifecycle: TASKS → SPAWN → DELEGATE → WORK → RETURN → IDLE/REDEL → SHUTDOWN
 - `life-dev-agent-persistence` - Dev agents persist entire session; re-delegate for fix cycles
 - `life-review-agent-lifecycle` - Review agents persist across fix/re-review; QA agents are one-shot
 - `life-wait-for-return` - Never intervene while tasks in-progress; quiet ≠ stalled; confirm stall via session-level evidence before shutdown
@@ -277,11 +282,13 @@ Project-level configuration:
 
 - `coord-agent-sequencing` - Determine blocking from data dependencies, not agent type
 - `coord-bundled-issues` - One composite task per sub-issue, not per section
+- `coord-multi-agent-bundles` - Cross-domain sub-issues processed sequentially per agent-sequencing rules
 - `coord-parallel-safety` - Verify five dimensions before running issues in parallel
 
 ### 6. Review Pipeline (MEDIUM)
 
-- `rev-finding-schema` - Review agents output structured JSON with blockers/suggestions/questions
+- `rev-review-finding-schema` - Review/QA agents output JSON with verdict, blockers, suggestions, questions
+- `rev-finding-schema` - All review findings require id, title, location, description, recommendation, priority, estimate
 - `rev-recommendation-bias` - Categorize findings as fix vs issue using actionability/relevance/size
 - `rev-issue-audit-pipeline` - Transform review findings into tracked issues via audit workflow
 
