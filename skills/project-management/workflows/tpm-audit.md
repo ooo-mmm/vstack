@@ -92,6 +92,10 @@ grep -rn "[CONSTANT_NAME]\|[API_NAME]" ${WORKTREE:-.}/src/
 
 ---
 
+**Done/Cancelled issue rule**: Done and Cancelled issues are historical records. Never modify their labels, agent assignments, priorities, or state. They may appear in relation analysis (as sources/targets of valid historical links) and cross-project comparison (to detect duplicates of completed work), but all fix recommendations must exclude them. Only active issues (Backlog, Todo, In Progress, In Review) are candidates for changes.
+
+---
+
 ## 2. Extract Contracts
 
 For each INPUT issue, extract from title + description:
@@ -261,7 +265,9 @@ grep -rn "consumedThing" ${WORKTREE:-.}/src/
 
 ### 5.3 Check Priority Alignment
 
-For each blocking relationship (A blocks B):
+**Skip** Done/Cancelled issues — their priorities are historical.
+
+For each blocking relationship (A blocks B) where both are active:
 - If A.priority > B.priority (lower urgency number = higher priority) → misaligned
 - If A has `critical-path` label and priority != 1 (Urgent) → misaligned
 
@@ -274,7 +280,9 @@ For each blocking relationship (A blocks B):
 
 ### 5.4 Verify Agent Labels
 
-**Check** each issue's `agent:X` label against its content.
+**Skip** Done/Cancelled issues — their labels are historical.
+
+**Check** each active issue's `agent:X` label against its content.
 
 **Code verification** (when target exists):
 ```bash
@@ -292,7 +300,9 @@ grep -rn "pub fn\|export function\|def " ${WORKTREE:-.}/src/[TARGET_MODULE]/
 
 ### 5.5 Verify Label Co-occurrence
 
-**Step 1 — Heuristic**: If issue lacks a required label, check title/description against detection signals. If 2+ signals match → add finding with `present: "[signals]"`.
+**Skip** Done/Cancelled issues — their labels are historical.
+
+**Step 1 — Heuristic**: For each active issue, if it lacks a required label, check title/description against detection signals. If 2+ signals match → add finding with `present: "[signals]"`.
 
 **Add** to `label_cooccurrence[]`:
 ```json
