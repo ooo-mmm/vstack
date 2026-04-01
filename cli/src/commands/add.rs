@@ -433,7 +433,7 @@ pub fn run(
     installer::record_install(
         &mut lock,
         &results,
-        source.as_deref().unwrap_or("."),
+        &resolved_source.source,
         method,
     );
 
@@ -446,16 +446,21 @@ pub fn run(
                 if !existing.harnesses.contains(&harness_id) {
                     existing.harnesses.push(harness_id);
                 }
+                existing.source = resolved_source.source.clone();
                 existing.installed_at = now.clone();
+                existing.source_hash = config::compute_source_hash(existing);
             } else {
-                lock.add(config::LockEntry {
+                let mut entry = config::LockEntry {
                     name: h.name.clone(),
                     kind: config::ItemKind::Hook,
-                    source: source.as_deref().unwrap_or(".").into(),
+                    source: resolved_source.source.clone(),
                     harnesses: vec![harness_id],
                     method,
                     installed_at: now.clone(),
-                });
+                    source_hash: String::new(),
+                };
+                entry.source_hash = config::compute_source_hash(&entry);
+                lock.add(entry);
             }
         }
     }

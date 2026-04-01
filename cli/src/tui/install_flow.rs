@@ -1427,6 +1427,7 @@ fn perform_inline_update(
         for name in names {
             if let Some(entry) = lock.entries.get_mut(name) {
                 entry.installed_at = now.clone();
+                entry.source_hash = crate::config::compute_source_hash(entry);
             }
         }
         let _ = lock.save(&lock_path);

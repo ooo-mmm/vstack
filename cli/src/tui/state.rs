@@ -1,4 +1,3 @@
-use crate::config::{dir_modified_after, file_modified_after, parse_installed_at};
 use crate::skill::Skill;
 use std::collections::HashMap;
 
@@ -9,6 +8,7 @@ pub(super) struct InstalledInfo {
     pub harnesses: Vec<String>,
     pub kind: Option<crate::config::ItemKind>,
     pub installed_at: String,
+    pub lock_entry: crate::config::LockEntry,
 }
 
 pub(super) type InstalledState = HashMap<String, InstalledInfo>;
@@ -27,6 +27,7 @@ pub(super) fn load_installed_state() -> InstalledState {
                     harnesses: entry.harnesses.clone(),
                     kind: Some(entry.kind),
                     installed_at: entry.installed_at.clone(),
+                    lock_entry: entry.clone(),
                 },
             );
         }
@@ -55,6 +56,7 @@ pub(super) fn load_installed_state() -> InstalledState {
                     harnesses: entry.harnesses.clone(),
                     kind: Some(entry.kind),
                     installed_at: entry.installed_at.clone(),
+                    lock_entry: entry.clone(),
                 });
         }
     }
@@ -62,28 +64,9 @@ pub(super) fn load_installed_state() -> InstalledState {
     state
 }
 
-/// Check if a skill's source directory was modified after install.
-pub(super) fn is_skill_outdated(source_dir: &std::path::Path, info: &InstalledInfo) -> bool {
-    let Some(installed_at) = parse_installed_at(&info.installed_at) else {
-        return false;
-    };
-    dir_modified_after(source_dir, installed_at)
-}
-
-/// Check if a hook's source file was modified after install.
-pub(super) fn is_hook_outdated(source_path: &std::path::Path, info: &InstalledInfo) -> bool {
-    let Some(installed_at) = parse_installed_at(&info.installed_at) else {
-        return false;
-    };
-    file_modified_after(source_path, installed_at)
-}
-
-/// Check if an agent's source file was modified after install.
-pub(super) fn is_agent_outdated(source_path: &std::path::Path, info: &InstalledInfo) -> bool {
-    let Some(installed_at) = parse_installed_at(&info.installed_at) else {
-        return false;
-    };
-    file_modified_after(source_path, installed_at)
+/// Check if an installed item's source has changed (content hash comparison).
+pub(super) fn is_item_outdated(info: &InstalledInfo) -> bool {
+    crate::config::is_source_changed(&info.lock_entry)
 }
 
 pub(super) fn installed_scope_label(scope: &str) -> String {
@@ -100,23 +83,8 @@ pub(super) fn build_item_tabs(
 ) -> Vec<Tab> {
     let mut tabs = Vec::new();
 
-    // Derive source repo vstack.toml and project vstack.toml paths.
-    // Changes to either affect agent generation (skill/hook assignments,
-    // guidance, instructions), so agents should be flagged as outdated.
-    let source_config = items
-        .agents
-        .first()
-        .map(|a| a.source_path.parent().and_then(|p| p.parent()))
-        .flatten()
-        .or_else(|| {
-            items
-                .skills
-                .first()
-                .map(|s| s.source_dir.parent().and_then(|p| p.parent()))
-                .flatten()
-        })
-        .map(|root| root.join("vstack.toml"));
-    let project_config_path = crate::config::project_root().join("vstack.toml");
+    // Config paths no longer needed for staleness — hash-based detection
+    // includes config content in the hash at install time.
 
     // ── Agents tab ───────────────────────────────────────────────────
     if !items.agents.is_empty() {
@@ -127,20 +95,7 @@ pub(super) fn build_item_tabs(
         for a in &items.agents {
             let installed_info = installed.get(&a.name);
             let is_installed = installed_info.is_some();
-            let agent_outdated = installed_info.is_some_and(|info| {
-                if is_agent_outdated(&a.source_path, info) {
-                    return true;
-                }
-                let Some(installed_at) = parse_installed_at(&info.installed_at) else {
-                    return false;
-                };
-                if let Some(ref cfg) = source_config {
-                    if file_modified_after(cfg, installed_at) {
-                        return true;
-                    }
-                }
-                file_modified_after(&project_config_path, installed_at)
-            });
+            let agent_outdated = installed_info.is_some_and(|info| is_item_outdated(info));
             let item = SelectItem {
                 label: a.name.clone(),
                 description: a.description.clone(),
@@ -204,16 +159,7 @@ pub(super) fn build_item_tabs(
                 locked: false,
                 installed: is_installed,
                 installed_scope: installed_info.map(|info| installed_scope_label(&info.scope)),
-                outdated: installed_info.is_some_and(|info| {
-                    if is_skill_outdated(&s.source_dir, info) {
-                        return true;
-                    }
-                    // Project vstack.toml can inject skill-instructions into SKILL.md
-                    let Some(installed_at) = parse_installed_at(&info.installed_at) else {
-                        return false;
-                    };
-                    file_modified_after(&project_config_path, installed_at)
-                }),
+                outdated: installed_info.is_some_and(|info| is_item_outdated(info)),
             };
 
             if s.name.starts_with("rust-") {
@@ -279,8 +225,7 @@ pub(super) fn build_item_tabs(
                     locked: false,
                     installed: is_installed,
                     installed_scope: installed_info.map(|info| installed_scope_label(&info.scope)),
-                    outdated: installed_info
-                        .is_some_and(|info| is_hook_outdated(&h.source_path, info)),
+                    outdated: installed_info.is_some_and(|info| is_item_outdated(info)),
                 }
             })
             .collect();

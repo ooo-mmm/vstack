@@ -747,16 +747,21 @@ pub fn record_install(
             if !existing.harnesses.contains(&harness_id) {
                 existing.harnesses.push(harness_id);
             }
+            existing.source = source.into();
             existing.installed_at = now.clone();
+            existing.source_hash = crate::config::compute_source_hash(existing);
         } else {
-            lock.add(LockEntry {
+            let mut entry = LockEntry {
                 name: result.name.clone(),
                 kind: result.kind,
                 source: source.into(),
                 harnesses: vec![harness_id],
                 method,
                 installed_at: now.clone(),
-            });
+                source_hash: String::new(),
+            };
+            entry.source_hash = crate::config::compute_source_hash(&entry);
+            lock.add(entry);
         }
     }
 }

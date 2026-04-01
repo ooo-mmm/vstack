@@ -12,6 +12,10 @@ pub struct LockEntry {
     pub harnesses: Vec<String>,
     pub method: InstallMethod,
     pub installed_at: String,
+    /// Content hash of the source at install time. Used for staleness
+    /// detection instead of mtime (immune to git checkout/rebase).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub source_hash: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -258,60 +262,170 @@ pub fn now_iso() -> String {
     format!("{year:04}-{month:02}-{day:02}T{hours:02}:{minutes:02}:{seconds:02}Z")
 }
 
-// ── Staleness / mtime helpers ──────────────────────────────────────
+// ── Content hash helpers (FNV-1a — portable, deterministic) ──────
 
-/// Parse an ISO 8601 timestamp (e.g. "2026-03-31T18:07:36Z") into a SystemTime.
-pub fn parse_installed_at(ts: &str) -> Option<std::time::SystemTime> {
-    let b = ts.as_bytes();
-    if b.len() < 20 || b[19] != b'Z' {
-        return None;
-    }
-    let year: u64 = ts[0..4].parse().ok()?;
-    let mon: u64 = ts[5..7].parse().ok()?;
-    let day: u64 = ts[8..10].parse().ok()?;
-    let hour: u64 = ts[11..13].parse().ok()?;
-    let min: u64 = ts[14..16].parse().ok()?;
-    let sec: u64 = ts[17..19].parse().ok()?;
+const FNV_OFFSET: u64 = 0xcbf29ce484222325;
+const FNV_PRIME: u64 = 0x00000100000001B3;
 
-    let mut days = 0u64;
-    for y in 1970..year {
-        days += if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) { 366 } else { 365 };
+fn fnv1a(data: &[u8]) -> u64 {
+    let mut h = FNV_OFFSET;
+    for &b in data {
+        h ^= b as u64;
+        h = h.wrapping_mul(FNV_PRIME);
     }
-    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
-    let month_days = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-    for m in 0..(mon.saturating_sub(1) as usize) {
-        days += month_days[m] as u64;
-    }
-    days += day.saturating_sub(1);
-
-    let total_secs = days * 86400 + hour * 3600 + min * 60 + sec;
-    // Add 1 second to compensate for sub-second truncation in now_iso().
-    Some(std::time::UNIX_EPOCH + std::time::Duration::from_secs(total_secs + 1))
+    h
 }
 
-/// Check if any file under `dir` has been modified after `since`.
-pub fn dir_modified_after(dir: &std::path::Path, since: std::time::SystemTime) -> bool {
-    for entry in walkdir::WalkDir::new(dir).min_depth(1) {
+fn fnv1a_chain(state: u64, data: &[u8]) -> u64 {
+    let mut h = state;
+    for &b in data {
+        h ^= b as u64;
+        h = h.wrapping_mul(FNV_PRIME);
+    }
+    h
+}
+
+/// Compute a content hash for a single file.
+fn hash_file_bytes(path: &Path) -> u64 {
+    match std::fs::read(path) {
+        Ok(content) => fnv1a(&content),
+        Err(_) => 0,
+    }
+}
+
+/// Compute a content hash for a directory (all files, sorted by relative path).
+fn hash_dir_bytes(dir: &Path) -> u64 {
+    let mut state = FNV_OFFSET;
+    for entry in walkdir::WalkDir::new(dir).min_depth(1).sort_by_file_name() {
         let Ok(entry) = entry else { continue };
         if !entry.file_type().is_file() {
             continue;
         }
-        if let Ok(meta) = entry.metadata()
-            && let Ok(mtime) = meta.modified()
-            && mtime > since
-        {
-            return true;
+        let rel = entry.path().strip_prefix(dir).unwrap_or(entry.path());
+        // Hash relative path then file content into the running state
+        state = fnv1a_chain(state, rel.to_string_lossy().as_bytes());
+        if let Ok(content) = std::fs::read(entry.path()) {
+            state = fnv1a_chain(state, &content);
         }
     }
-    false
+    state
 }
 
-/// Check if a single file has been modified after `since`.
-pub fn file_modified_after(path: &std::path::Path, since: std::time::SystemTime) -> bool {
-    path.metadata()
-        .ok()
-        .and_then(|m| m.modified().ok())
-        .is_some_and(|mtime| mtime > since)
+/// Extract the relevant section for a given name from a TOML file.
+/// Returns the raw text of lines belonging to that key, or empty if not found.
+/// This avoids hashing the entire config when only one agent/skill's section matters.
+fn extract_toml_section_for(path: &Path, name: &str) -> Vec<u8> {
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let mut result = Vec::new();
+    let mut capturing = false;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        // Match: name = ... (start of this key's value)
+        if trimmed.starts_with(&format!("{} =", name))
+            || trimmed.starts_with(&format!("\"{}\" =", name))
+        {
+            capturing = true;
+            result.extend_from_slice(line.as_bytes());
+            result.push(b'\n');
+            continue;
+        }
+        if capturing {
+            // Stop at next top-level key or section header
+            if trimmed.starts_with('[') || (!trimmed.is_empty() && !trimmed.starts_with('#')
+                && !trimmed.starts_with('"') && !trimmed.starts_with('{')
+                && !trimmed.starts_with(']') && !trimmed.starts_with(',')
+                && !line.starts_with(' ') && !line.starts_with('\t'))
+            {
+                capturing = false;
+            } else {
+                result.extend_from_slice(line.as_bytes());
+                result.push(b'\n');
+            }
+        }
+    }
+    result
+}
+
+/// Resolve a lock entry's source string to an actual directory path.
+/// Handles "." by walking up from CWD to find a vstack source repo,
+/// and absolute paths directly.
+pub fn resolve_source_path(source: &str) -> Option<PathBuf> {
+    let p = Path::new(source);
+    if p.is_absolute() && p.is_dir() {
+        return Some(p.to_path_buf());
+    }
+    // "." or relative — walk up from CWD to find vstack source
+    let mut dir = std::env::current_dir().ok()?;
+    loop {
+        if crate::resolve::is_vstack_source(&dir) {
+            return Some(dir);
+        }
+        if !dir.pop() {
+            break;
+        }
+    }
+    None
+}
+
+/// Compute source hash for a lock entry based on its kind.
+pub fn compute_source_hash(entry: &LockEntry) -> String {
+    let source_root = match resolve_source_path(&entry.source) {
+        Some(p) => p,
+        None => return String::new(),
+    };
+    let proj_root = project_root();
+
+    let mut state = FNV_OFFSET;
+
+    match entry.kind {
+        ItemKind::Skill => {
+            let dir = source_root.join("skills").join(&entry.name);
+            if dir.exists() {
+                state = fnv1a_chain(state, &hash_dir_bytes(&dir).to_le_bytes());
+            }
+            // Only hash this skill's section from project vstack.toml
+            let project_config = proj_root.join("vstack.toml");
+            let section = extract_toml_section_for(&project_config, &entry.name);
+            if !section.is_empty() {
+                state = fnv1a_chain(state, &section);
+            }
+        }
+        ItemKind::Agent => {
+            let file = source_root.join("agents").join(format!("{}.md", entry.name));
+            if file.exists() {
+                state = fnv1a_chain(state, &hash_file_bytes(&file).to_le_bytes());
+            }
+            // Hash this agent's sections from both configs
+            let source_config = source_root.join("vstack.toml");
+            for config_path in [&source_config, &proj_root.join("vstack.toml")] {
+                let section = extract_toml_section_for(config_path, &entry.name);
+                if !section.is_empty() {
+                    state = fnv1a_chain(state, &section);
+                }
+            }
+        }
+        ItemKind::Hook => {
+            let file = source_root.join("hooks").join(format!("{}.sh", entry.name));
+            if file.exists() {
+                state = fnv1a_chain(state, &hash_file_bytes(&file).to_le_bytes());
+            }
+        }
+    }
+
+    format!("{:016x}", state)
+}
+
+/// Check if an entry's source has changed since install.
+/// Uses content hash (immune to git mtime resets).
+/// Falls back to "not outdated" if no hash stored (old lock format).
+pub fn is_source_changed(entry: &LockEntry) -> bool {
+    if entry.source_hash.is_empty() {
+        return false; // No hash stored — assume fresh (legacy lock)
+    }
+    let current = compute_source_hash(entry);
+    current != entry.source_hash
 }
 
 fn epoch_days_to_date(days: u64) -> (u64, u64, u64) {

@@ -180,11 +180,12 @@ pub fn run(global: bool) -> Result<()> {
         .collect();
     installer::inject_dependency_references(&installed_source_skills, global);
 
-    // Update lock file timestamps so mtime-based outdated checks stay in sync
+    // Update lock file timestamps and content hashes
     let mut lock = config::LockFile::load(&lock_path)?;
     let now = config::now_iso();
     for entry in lock.entries.values_mut() {
         entry.installed_at = now.clone();
+        entry.source_hash = config::compute_source_hash(entry);
     }
     lock.save(&lock_path)?;
 
