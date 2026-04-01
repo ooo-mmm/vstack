@@ -6,8 +6,8 @@ Post summary comments to git host and issue tracker, and selective handoff comme
 
 | Command | Behavior |
 |---------|----------|
-| `/post-summary` | Post summary for current branch's issue |
-| `/post-summary [ISSUE_ID]` | Post summary for specific issue |
+| `post-summary` | Post summary for current branch's issue |
+| `post-summary [ISSUE_ID]` | Post summary for specific issue |
 | (from start-worktree) | Managed lifecycle with caller context |
 
 **Caller context parameters** (via `⤵`):

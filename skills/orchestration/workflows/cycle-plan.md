@@ -212,9 +212,9 @@ TPM populates this when § 1.4 architecture ordering reveals dependencies not ye
 
 1. **Collect unblocked issue IDs**: From `actions.assign_to_cycle[]`, filter to issues that have NO `blocked_by` relations with other issues in the planned set.
 
-2. **If 2+ unblocked**: Run `/parallel-check [UNBLOCKED_ISSUE_IDS]` via Skill. Persistence happens automatically via § 11 of parallel-check workflow.
+2. **If 2+ unblocked**: Run `workflows/parallel-check.md` with `[UNBLOCKED_ISSUE_IDS]` via Skill. Persistence happens automatically via § 11 of parallel-check workflow.
 
-3. **Present any safe groups found**: Include in results output so user knows parallel launch is available from next `/start`.
+3. **Present any safe groups found**: Include in results output so user knows parallel launch is available from next `workflows/start.md`.
 
 ## 6. Return State
 

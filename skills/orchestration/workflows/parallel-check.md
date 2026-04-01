@@ -248,7 +248,7 @@ Note: Multiple worktrees from main is correct for parallel work. This check is i
 
 ## 10. Persist Results
 
-Persist regardless of verdict (prevents re-analysis on next `/start`). Stale fingerprints auto-invalidate when issues change. Persist **multiple groups** when analysis identifies safe subgroups within a conflicting set.
+Persist regardless of verdict (prevents re-analysis on next `workflows/start.md`). Stale fingerprints auto-invalidate when issues change. Persist **multiple groups** when analysis identifies safe subgroups within a conflicting set.
 
 1. **Build fingerprints**: For each top-level issue, use its own `updated_at`. For bundle children, use `children_fingerprints`:
    ```bash

@@ -6,12 +6,12 @@ Audit tracked issues and projects for relations, hierarchy, project placement, d
 
 | Command | Mode | Target |
 |---------|------|--------|
-| `/audit-issues project-order` | `project-order` | Project ordering & transitions only |
-| `/audit-issues project` | `project` | Active project (default) |
-| `/audit-issues project "Name"` | `project` | Specified project |
-| `/audit-issues issue [ISSUE_ID] [...]` | `issue` | Specific issue(s) |
-| `/audit-issues --issues [file_path]` | `issue` | Proposed issues from JSON file |
-| `/audit-issues --analyzed [file_path]` | `analyzed` | Pre-analyzed audit-output JSON (skips TPM) |
+| `audit-issues project-order` | `project-order` | Project ordering & transitions only |
+| `audit-issues project` | `project` | Active project (default) |
+| `audit-issues project "Name"` | `project` | Specified project |
+| `audit-issues issue [ISSUE_ID] [...]` | `issue` | Specific issue(s) |
+| `audit-issues --issues [file_path]` | `issue` | Proposed issues from JSON file |
+| `audit-issues --analyzed [file_path]` | `analyzed` | Pre-analyzed audit-output JSON (skips TPM) |
 
 **When called by parent workflow** (start, research-complete, review-pr-comments):
 

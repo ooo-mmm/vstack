@@ -18,6 +18,8 @@ pub struct ProjectConfig {
     /// updates the generated agent files.
     #[serde(rename = "agent-skills")]
     pub agent_skills: HashMap<String, Vec<String>>,
+    #[serde(rename = "agent-skills-optional")]
+    pub agent_skills_optional: HashMap<String, Vec<crate::mapping::OptionalSkill>>,
     #[serde(rename = "agent-guidance")]
     pub agent_guidance: HashMap<String, String>,
     #[serde(rename = "agent-instructions")]
@@ -240,6 +242,64 @@ pub fn write_agent_skills(
     }
 }
 
+/// Write `[agent-skills-optional]` entries to the project's vstack.toml.
+/// Only adds agents that don't already have an entry — never overwrites user edits.
+pub fn write_agent_skills_optional(
+    project_root: &Path,
+    agent_optional_map: &HashMap<String, Vec<crate::mapping::OptionalSkill>>,
+) {
+    if agent_optional_map.is_empty() {
+        return;
+    }
+    let path = project_root.join("vstack.toml");
+    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+
+    let parsed: ProjectConfig = toml::from_str(&existing).unwrap_or_default();
+
+    // Ensure the section header exists
+    let mut content = existing.clone();
+    if !content.contains("[agent-skills-optional]") {
+        content.push_str("\n\n# ── Optional Skills ──────────────────────────────────\n");
+        content.push_str("# Specialist skills loaded on demand. The agent gets a\n");
+        content.push_str("# \"Load When Needed\" table. Edit `when` descriptions\n");
+        content.push_str("# or remove entries, then run `vstack refresh`.\n");
+        content.push_str("#\n");
+        content.push_str("[agent-skills-optional]\n");
+    }
+
+    let mut agents: Vec<&String> = agent_optional_map.keys().collect();
+    agents.sort();
+
+    let mut new_entries = String::new();
+    for agent in agents {
+        if parsed.agent_skills_optional.contains_key(agent.as_str()) {
+            continue;
+        }
+        let skills = &agent_optional_map[agent];
+        if skills.is_empty() {
+            continue;
+        }
+        new_entries.push_str(&format!("{} = [\n", agent));
+        for s in skills {
+            let when = s.when.replace('"', "\\\"");
+            new_entries.push_str(&format!(
+                "    {{ skill = \"{}\", when = \"{}\" }},\n",
+                s.skill, when
+            ));
+        }
+        new_entries.push_str("]\n");
+    }
+
+    if new_entries.is_empty() {
+        return;
+    }
+
+    let out = insert_entries_into_section(&content, "[agent-skills-optional]", &new_entries);
+    if out != existing {
+        let _ = std::fs::write(&path, out);
+    }
+}
+
 /// Create or update vstack.toml at the project root.
 ///
 /// - If the file doesn't exist, generates a full template with commented placeholders.
@@ -333,6 +393,15 @@ fn create_project_config(path: &Path, agents: &[String], skills: &[String]) {
     out.push_str("[agent-skills]\n");
     // Actual skill lists are written by write_agent_skills() after
     // the mapping is computed, so we just emit the section header here.
+
+    // ── agent-skills-optional ──
+    out.push_str("\n\n# ── Optional Skills ──────────────────────────────────\n");
+    out.push_str("# Specialist skills loaded on demand. The agent gets a\n");
+    out.push_str("# \"Load When Needed\" table. Edit `when` descriptions\n");
+    out.push_str("# or remove entries, then run `vstack refresh`.\n");
+    out.push_str("#\n");
+    out.push_str("[agent-skills-optional]\n");
+    // Actual entries are written by write_agent_skills_optional().
 
     // ── custom-hooks ──
     out.push_str("\n\n# ── Custom Hooks ─────────────────────────────────────\n");

@@ -6,8 +6,8 @@ Push changes, create/update PR, handle bot review, triage PR comments, and trigg
 
 | Command | Behavior |
 |---------|----------|
-| `/submit-pr` | Submit current branch as PR |
-| `/submit-pr [PR#]` | Manage existing PR |
+| `submit-pr` | Submit current branch as PR |
+| `submit-pr [PR#]` | Manage existing PR |
 | (from start-worktree) | Managed lifecycle with caller context |
 
 **Caller context parameters** (via `⤵`):
@@ -206,7 +206,7 @@ done
 
 ### 3.2 Re-Review Loop
 
-After fixes pushed, wait for bot re-review (CI still deferred). Re-run `/review-pr-comments` until approved or stable.
+After fixes pushed, wait for bot re-review (CI still deferred). Re-run `workflows/review-pr-comments.md` until approved or stable.
 
 1. **Check iteration count**:
    ```bash
@@ -240,7 +240,7 @@ After fixes pushed, wait for bot re-review (CI still deferred). Re-run `/review-
    | `true` | `has_threads` | `⤵ /review-pr-comments [PR_NUMBER] § 1-8 → § 3.2` with managed context, then update state, repeat |
    | `true` | `verdict_not_approved` | `⤵ /review-pr-comments [PR_NUMBER] § 1-8 → § 3.2` with managed context, then update state, repeat |
 
-4. **Update state** after `/review-pr-comments` — if no fixes applied → § 4. Otherwise:
+4. **Update state** after `workflows/review-pr-comments.md` — if no fixes applied → § 4. Otherwise:
    ```bash
    # Increment iteration count
    .agents/skills/orchestration/scripts/workflow-state increment [ISSUE_ID] pr_comment_review.iterations

@@ -6,8 +6,8 @@ Delegate fix items to specialist dev agent. Works standalone (user-initiated) or
 
 | Command | Behavior |
 |---------|----------|
-| `/dev-fix` | Fix items from conversation context |
-| `/dev-fix [ISSUE_ID]` | Fix items for specific issue |
+| `dev-fix` | Fix items from conversation context |
+| `dev-fix [ISSUE_ID]` | Fix items for specific issue |
 | (from review-pr workflow) | Managed lifecycle with caller context |
 
 **Caller context parameters** (via `⤵`):

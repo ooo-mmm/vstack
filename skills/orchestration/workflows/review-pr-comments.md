@@ -6,10 +6,10 @@ Route PR review comments to domain agents for analysis, auto-fix valid items, lo
 
 | Command | Behavior |
 |---------|----------|
-| `/review-pr-comments` | Full triage: analyze, fix, create issues, reply |
-| `/review-pr-comments [PR-number]` | Specific PR by number |
-| `/review-pr-comments [BRANCH_NAME]` | Specific PR by branch |
-| `/review-pr-comments --dry-run [N]` | Parse + analyze, stop before § 6 |
+| `review-pr-comments` | Full triage: analyze, fix, create issues, reply |
+| `review-pr-comments [PR-number]` | Specific PR by number |
+| `review-pr-comments [BRANCH_NAME]` | Specific PR by branch |
+| `review-pr-comments --dry-run [N]` | Parse + analyze, stop before § 6 |
 | (from submit-pr/start-worktree) | Managed lifecycle with caller context |
 
 **Dry-run**: Runs § 1-5, presents triage report, stops before fixes. No side effects.

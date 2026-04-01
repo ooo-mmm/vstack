@@ -143,4 +143,4 @@ Run Skill: `⤵ /research-issue § 1-5 → § 4` with context:
 | 4 | Complete: /research-complete [RESEARCH_ISSUE_ID] |
 </output_format>
 
-**END**: Research spike complete. User executes research externally, then runs `/research-complete`.
+**END**: Research spike complete. User executes research externally, then runs `research-complete [ISSUE_ID]`.

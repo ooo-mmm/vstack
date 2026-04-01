@@ -328,6 +328,10 @@ pub fn run(
     // Collect computed agent→skill mappings to write to project vstack.toml
     let mut agent_skill_map: std::collections::HashMap<String, Vec<String>> =
         std::collections::HashMap::new();
+    let mut agent_optional_map: std::collections::HashMap<
+        String,
+        Vec<crate::mapping::OptionalSkill>,
+    > = std::collections::HashMap::new();
 
     for harness in &harnesses {
         for a in &selected_agents {
@@ -345,13 +349,22 @@ pub fn run(
             let skill_pairs =
                 crate::resolve::resolve_skill_pairs(&skill_names, &selected_skills);
 
-            let optional_entries =
-                mapping.optional_skills_for_agent(&a.name, &available_skill_names);
+            // Use project [agent-skills-optional] if present, else source mapping
+            let optional_entries = if let Some(project_list) =
+                project_config.agent_skills_optional.get(&a.name)
+            {
+                project_list.clone()
+            } else {
+                mapping.optional_skills_for_agent(&a.name, &available_skill_names)
+            };
             let optional_pairs = crate::resolve::resolve_optional_skill_pairs(&optional_entries);
 
             agent_skill_map
                 .entry(a.name.clone())
                 .or_insert_with(|| skill_names.clone());
+            agent_optional_map
+                .entry(a.name.clone())
+                .or_insert_with(|| optional_entries.clone());
 
             let matched_hooks: Vec<hook::Hook> = mapping
                 .hooks_for_agent(&a.role, &selected_hooks)
@@ -407,6 +420,10 @@ pub fn run(
     // make every item appear outdated on next launch).
     if !global {
         crate::project_config::write_agent_skills(&config::project_root(), &agent_skill_map);
+        crate::project_config::write_agent_skills_optional(
+            &config::project_root(),
+            &agent_optional_map,
+        );
     }
 
     // Update lock file

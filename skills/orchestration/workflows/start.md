@@ -22,7 +22,7 @@ Initialize development session, display status, select work, evaluate research, 
 
 ### 1.3 Select Work
 
-**Skip if** `/start [ISSUE_ID]` provided → § 1.4
+**Skip if** `start [ISSUE_ID]` provided → § 1.4
 
 1. **Check recommendation**: The `Recommended` line shows the priority action.
 
@@ -30,14 +30,14 @@ Initialize development session, display status, select work, evaluate research, 
 
    | Recommendation | Action |
    |----------------|--------|
-   | `/ci-fix N` | `⤵ /ci-fix N § 1-7 → § 1` |
-   | `/review-pr-comments N` | `⤵ /review-pr-comments N § 1-8 → § 1` |
-   | `/merge-pr N` | `⤵ /merge-pr N § 1-7 → § 1` |
-   | `/research-complete [ISSUE_ID]` | `⤵ /research-complete [ISSUE_ID] § 1-7 → § 1` |
-   | Complete [Project]: /audit-issues project-order | Invoke workflow: `⤵ /audit-issues project-order § 1-9 → § 1` |
-   | Activate project: /audit-issues project-order | Invoke workflow: `⤵ /audit-issues project-order § 1-9 → § 1` |
-   | Plan cycle: /audit-issues → /cycle-plan | Invoke workflow: `⤵ /audit-issues project § 1-9`, then `⤵ /cycle-plan § 1-6 → § 1` |
-   | `/parallel-check "Project"` | `⤵ /parallel-check "Project" § 1-11 → § 1` |
+   | `ci-fix N` | `⤵ workflows/ci-fix.md N § 1-7 → § 1` |
+   | `review-pr-comments N` | `⤵ workflows/review-pr-comments.md N § 1-8 → § 1` |
+   | `merge-pr N` | `⤵ workflows/merge-pr.md N § 1-7 → § 1` |
+   | `research-complete [ISSUE_ID]` | `⤵ workflows/research-complete.md [ISSUE_ID] § 1-7 → § 1` |
+   | Complete [Project]: audit-issues project-order | Invoke workflow: `⤵ workflows/audit-issues.md project-order § 1-9 → § 1` |
+   | Activate project: audit-issues project-order | Invoke workflow: `⤵ workflows/audit-issues.md project-order § 1-9 → § 1` |
+   | Plan cycle: audit-issues → cycle-plan | Invoke workflow: `⤵ workflows/audit-issues.md project § 1-9`, then `⤵ workflows/cycle-plan.md § 1-6 → § 1` |
+   | `parallel-check "Project"` | `⤵ workflows/parallel-check.md "Project" § 1-11 → § 1` |
    | Start in parallel: [ISSUE_ID], ... | Ask user: `Start [ISSUE_ID] only` (→ § 1.4) \| `Launch parallel group` (capture `[ISSUE_IDS]` → § 1.4) |
    | Start [ISSUE_ID] | Capture issue ID → § 1.4 |
 
@@ -73,7 +73,7 @@ After all issues processed → § 3.
 
 ### 2.2 Get Issue
 
-1. **Fetch issue data** (from `/start [ISSUE_ID]` argument or § 1.3 selection):
+1. **Fetch issue data** (from `start [ISSUE_ID]` argument or § 1.3 selection):
    ```bash
    PARENT_ID=$(.agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID] --with-bundle | jq -r '.parent_id // empty')
    ```
@@ -250,9 +250,9 @@ Invoke workflow: `⤵ /research-issue § 1-5 → § 1` with context:
 - `project`: from `.agents/skills/linear/scripts/linear.sh cache projects list --state started`
 - `batch_issues`: list of per-issue objects, each containing: `topic`, `questions`, `domains`, `blocked_issue`, `type`, `consultation_agent_name`, `research_paths`, `decision_ids` — all sourced from § 3.2/3.3 per issue
 
-Research issues block their `blocked_issue`. After `/research-issue` completes, user executes research externally, then runs `/research-complete [ISSUE_ID]` to continue.
+Research issues block their `blocked_issue`. After `workflows/research-issue.md` completes, user executes research externally, then runs `research-complete [ISSUE_ID]` to continue.
 
-After `/research-issue` returns → § 3.6.
+After `workflows/research-issue.md` returns → § 3.6.
 
 ### 3.6 Clean Up Consultation Team
 
@@ -278,9 +278,9 @@ After `/research-issue` returns → § 3.6.
 
 2. **If missing** → Invoke workflow: `⤵ /research-issue § 2 → § 4.2` (Prepare Assets only)
 
-3. **If complete** → Present: `Research Ready: [ISSUE_ID] | Assets: ✓ | Run /research-complete after execution`
+3. **If complete** → Present: `Research Ready: [ISSUE_ID] | Assets: ✓ | Run research-complete after execution`
 
-4. **User executes externally** → `/research-complete [ISSUE_ID]` → § 1
+4. **User executes externally** → `research-complete [ISSUE_ID]` → § 1
 
 ### 4.3 Create Worktree
 

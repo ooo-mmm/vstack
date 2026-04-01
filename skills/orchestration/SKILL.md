@@ -46,7 +46,7 @@ Do not guess commands or improvise — load the skill first.
 
 ## Commands
 
-When invoked as `/orchestration <command> [args]`, route to the corresponding workflow.
+When invoked with `<command> [args]`, route to the corresponding workflow.
 
 ### Session
 
@@ -152,47 +152,47 @@ Project-level configuration (set in `.env.local`):
 
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
-| `workflows/initialize.md` | `/initialize` | Team setup, auth, cache, state init |
-| `workflows/start.md` | `/start` (from main repo) | Dashboard, issue selection, research eval, worktree creation |
-| `workflows/start-worktree.md` | `/start` (from worktree) | Full session: dev → review → submit → finalize |
-| `workflows/start-new.md` | `/start new` | Create new issue, spawn worktree session |
+| `workflows/initialize.md` | `initialize` | Team setup, auth, cache, state init |
+| `workflows/start.md` | `start` (from main repo) | Dashboard, issue selection, research eval, worktree creation |
+| `workflows/start-worktree.md` | `start` (from worktree) | Full session: dev → review → submit → finalize |
+| `workflows/start-new.md` | `start-new` | Create new issue, spawn worktree session |
 
 ### Development
 
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
-| `workflows/dev-start.md` | `/dev-start` | Delegate implementation to specialist agents |
-| `workflows/dev-fix.md` | `/dev-fix` | Delegate fix items to dev agents |
-| `workflows/ci-fix.md` | `/ci-fix` | Analyze and fix CI failures |
+| `workflows/dev-start.md` | `dev-start` | Delegate implementation to specialist agents |
+| `workflows/dev-fix.md` | `dev-fix` | Delegate fix items to dev agents |
+| `workflows/ci-fix.md` | `ci-fix` | Analyze and fix CI failures |
 
 ### Review & Submission
 
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
-| `workflows/review-pr.md` | `/review-pr` | Pre-submission review with fix handling and QA |
-| `workflows/review-pr-comments.md` | `/review-pr-comments` | Triage PR review comments via domain agents |
-| `workflows/submit-pr.md` | `/submit-pr` | Push, create PR, bot review, comment triage, CI |
-| `workflows/merge-pr.md` | `/merge-pr` | Verify conditions and merge PR(s) |
+| `workflows/review-pr.md` | `review-pr` | Pre-submission review with fix handling and QA |
+| `workflows/review-pr-comments.md` | `review-pr-comments` | Triage PR review comments via domain agents |
+| `workflows/submit-pr.md` | `submit-pr` | Push, create PR, bot review, comment triage, CI |
+| `workflows/merge-pr.md` | `merge-pr` | Verify conditions and merge PR(s) |
 
 ### Planning & Analysis
 
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
-| `workflows/audit-issues.md` | `/audit-issues` | Audit issues for relations, hierarchy, gaps |
-| `workflows/fix-reconcile.md` | `/fix-reconcile` | Check if fixes address existing open issues |
-| `workflows/post-summary.md` | `/post-summary` | Post summary and handoff comments |
-| `workflows/parallel-check.md` | `/parallel-check` | Verify parallel work safety |
-| `workflows/cycle-plan.md` | `/cycle-plan` | Plan development cycles |
-| `workflows/roadmap-plan.md` | `/roadmap plan` | Consult specialists, analyze roadmap |
-| `workflows/roadmap-create.md` | `/roadmap create` | Execute roadmap plan |
+| `workflows/audit-issues.md` | `audit-issues` | Audit issues for relations, hierarchy, gaps |
+| `workflows/fix-reconcile.md` | `fix-reconcile` | Check if fixes address existing open issues |
+| `workflows/post-summary.md` | `post-summary` | Post summary and handoff comments |
+| `workflows/parallel-check.md` | `parallel-check` | Verify parallel work safety |
+| `workflows/cycle-plan.md` | `cycle-plan` | Plan development cycles |
+| `workflows/roadmap-plan.md` | `roadmap plan` | Consult specialists, analyze roadmap |
+| `workflows/roadmap-create.md` | `roadmap create` | Execute roadmap plan |
 
 ### Research
 
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
-| `workflows/research-issue.md` | `/research-issue` | Create research issue with assets |
-| `workflows/research-complete.md` | `/research-complete` | Route completed research to workflows |
-| `workflows/research-spike.md` | `/research-spike` | Quick research exploration |
+| `workflows/research-issue.md` | `research-issue` | Create research issue with assets |
+| `workflows/research-complete.md` | `research-complete` | Route completed research to workflows |
+| `workflows/research-spike.md` | `research-spike` | Quick research exploration |
 
 ### Reference
 

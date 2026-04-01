@@ -201,7 +201,7 @@ Assets complete. Update issue description with asset paths, then set state to To
    Save findings to: [RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/findings.md
 
    ## Completion
-   `/research-complete [RESEARCH_ISSUE_ID]`
+   `research-complete [RESEARCH_ISSUE_ID]`
    ```
 
 3. **Update**: `.agents/skills/linear/scripts/linear.sh issues update [RESEARCH_ISSUE_ID] --description "[FULL_DESCRIPTION]"`

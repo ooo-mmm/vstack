@@ -6,10 +6,10 @@ Execute approved roadmap plan and create entities in issue tracker.
 
 | Command | Action |
 |---------|--------|
-| `/roadmap create @[plan-file]` | Execute plan file |
-| `/roadmap create` | Error: requires plan file |
+| `roadmap create @[plan-file]` | Execute plan file |
+| `roadmap create` | Error: requires plan file |
 
-**Requires**: Plan file from `/roadmap plan` output
+**Requires**: Plan file from `workflows/roadmap-plan.md` output
 
 ---
 
@@ -19,7 +19,7 @@ Execute approved roadmap plan and create entities in issue tracker.
 
 Extract `PLAN_PATH` from `@[path]` argument.
 
-**Missing file** → Error: "Requires plan file from `/roadmap plan`"
+**Missing file** → Error: "Requires plan file from `workflows/roadmap-plan.md`"
 
 ### 1.2 Read Plan File
 
@@ -200,7 +200,7 @@ For each relation in plan:
 
 ## 5. Determine Project Placement
 
-Project ordering handled when `/audit-issues project-order` runs. That workflow delegates to TPM to investigate scope, dependencies, and architecture for optimal ordering.
+Project ordering handled when `workflows/audit-issues.md` runs with `project-order`. That workflow delegates to TPM to investigate scope, dependencies, and architecture for optimal ordering.
 
 1. **Ask user** for immediate manual placement:
    - **Auto-place (Recommended)** -- Let audit-issues determine position later

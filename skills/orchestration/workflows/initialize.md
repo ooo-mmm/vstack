@@ -6,8 +6,8 @@ Set up team, auth, cache, and workflow state for a worktree session.
 
 | Command | Flow |
 |---------|------|
-| `/initialize` | § 1 → § 2 |
-| `/initialize [ISSUE_ID]` | § 1 → § 2 |
+| `initialize` | § 1 → § 2 |
+| `initialize [ISSUE_ID]` | § 1 → § 2 |
 | (from start-worktree.md) | Managed lifecycle with caller context |
 
 **Caller context parameters** (via `⤵`):

@@ -6,7 +6,7 @@ Link completed research to blocked issues, analyze impact, create follow-up work
 
 | Command | Flow |
 |---------|------|
-| `/research-complete [ISSUE_ID]` | § 1 → § 2 → § 3 → § 4 → § 5 → § 6 |
+| `research-complete [ISSUE_ID]` | § 1 → § 2 → § 3 → § 4 → § 5 → § 6 |
 
 ## 1. Get Research Details
 
@@ -216,7 +216,7 @@ Execute ONE flow based on § 3 unless meets escalation criteria as defined.
 
 4. **→ Jump to § 6**
 
-   Note: For Strategic, issue creation happens in `/roadmap create`. § 6 handles DXXX recording and doc/config updates only.
+   Note: For Strategic, issue creation happens in `workflows/roadmap-create.md`. § 6 handles DXXX recording and doc/config updates only.
 
 ## 6. Complete (Common Steps)
 

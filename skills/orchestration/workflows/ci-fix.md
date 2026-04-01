@@ -6,9 +6,9 @@ Fix CI failures by analyzing logs and routing to appropriate agents.
 
 | Command | Flow |
 |---------|------|
-| `/ci-fix` | § 1.1 → § 2 → § 3 → § 5 |
-| `/ci-fix [PR_NUMBER]` | § 1.1 → § 2 → § 3 → § 5 |
-| `/ci-fix queue` | § 1.2 → § 2 → § 4 → § 5 |
+| `ci-fix` | § 1.1 → § 2 → § 3 → § 5 |
+| `ci-fix [PR_NUMBER]` | § 1.1 → § 2 → § 3 → § 5 |
+| `ci-fix queue` | § 1.2 → § 2 → § 4 → § 5 |
 
 ## 1. Identify Failures
 

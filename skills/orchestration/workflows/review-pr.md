@@ -6,8 +6,8 @@ Pre-submission code review with fix handling, QA checks, and issue audit.
 
 | Command | Behavior |
 |---------|----------|
-| `/review-pr` | Full review cycle: review, fix, QA, summary |
-| `/review-pr [PR#]` | Get/create worktree for PR, full review cycle |
+| `review-pr` | Full review cycle: review, fix, QA, summary |
+| `review-pr [PR#]` | Get/create worktree for PR, full review cycle |
 | (from start-worktree) | Managed lifecycle with caller context |
 
 **Caller context parameters** (via `⤵`):
@@ -397,12 +397,12 @@ If >4 suggestion items: show first 3 + `All N fixes`. Refine via "Other".
 
 **Never fix as main agent.**
 
-Follow § 4 pattern (collect → present → ask user → delegate via `/dev-fix` → update state) with these overrides:
+Follow § 4 pattern (collect → present → ask user → delegate via `workflows/dev-fix.md` → update state) with these overrides:
 
 - **Items**: from QA agent JSONs. Exclude items already in `fixed_items` or `escalated_items`.
 - **Table header**: `QA Agent` instead of `Agent`. Title: `QA Review Items — [ISSUE_ID]`.
-- **Source**: `qa-review` in `/dev-fix` context.
-- **`qa_agent`**: pass QA agent name (project-configurable, e.g. safety audit, performance QA, architecture review) to `/dev-fix` context.
+- **Source**: `qa-review` in `workflows/dev-fix.md` context.
+- **`qa_agent`**: pass QA agent name (project-configurable, e.g. safety audit, performance QA, architecture review) to `workflows/dev-fix.md` context.
 - **Route after fix**:
 
    | `files_changed` | `risk_flags` | `scope` | Route |

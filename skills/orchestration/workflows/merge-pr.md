@@ -6,9 +6,9 @@ Verify conditions and safely merge PR(s).
 
 | Command | Flow |
 |---------|------|
-| `/merge-pr` | List ready PRs, user selects |
-| `/merge-pr [N]` | Merge specific PR |
-| `/merge-pr all` | Batch merge all ready PRs |
+| `merge-pr` | List ready PRs, user selects |
+| `merge-pr [N]` | Merge specific PR |
+| `merge-pr all` | Batch merge all ready PRs |
 
 ## 1. Identify Candidates
 

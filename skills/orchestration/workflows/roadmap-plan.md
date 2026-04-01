@@ -6,9 +6,9 @@ Plan a new roadmap with research gate, specialist consultation, cross-project an
 
 | Command | Action |
 |---------|--------|
-| `/roadmap plan [feature]` | Plan roadmap for feature |
-| `/roadmap plan [feature] @[research-path]` | Plan with existing research |
-| `/roadmap plan [feature] @[research-path] --origin-issue [ISSUE_ID]` | Plan with origin issue context for hierarchy |
+| `roadmap plan [feature]` | Plan roadmap for feature |
+| `roadmap plan [feature] @[research-path]` | Plan with existing research |
+| `roadmap plan [feature] @[research-path] --origin-issue [ISSUE_ID]` | Plan with origin issue context for hierarchy |
 
 ---
 
@@ -57,7 +57,7 @@ Store `id`, `title`, `project`, `description`, `children`. If not provided, set 
 
    | Selection | Action |
    |-----------|--------|
-   | Run research spike | `⤵ /research-spike [FEATURE] § 1-4`. After return, re-run `/roadmap plan [FEATURE] @[RESEARCH_OUTPUT_PATH]` |
+   | Run research spike | `⤵ workflows/research-spike.md [FEATURE] § 1-4`. After return, re-run `roadmap plan [FEATURE] @[RESEARCH_OUTPUT_PATH]` |
    | Skip research | Set `RESEARCH_PATH` = null → § 2 |
 
 ---
@@ -289,7 +289,7 @@ Legend: Parent = bundle parent #, Deps = blocking dependencies, Pri = priority, 
 | Change priority | Update `priority` field |
 | Change agent | Update `agent`, recompute bundle parent `agent_label` |
 | Change estimate | Update `estimate` field |
-| Add issue | Re-run `/roadmap plan` (cannot add without specialist input) |
+| Add issue | Re-run `roadmap plan` (cannot add without specialist input) |
 
 ---
 
@@ -370,7 +370,7 @@ Write markdown to `docs/roadmaps/roadmap-[FEATURE].md` and JSON to `docs/roadmap
 **Plan**: docs/roadmaps/roadmap-[FEATURE].md
 **Data**: docs/roadmaps/roadmap-[FEATURE].json
 
-**Next**: Run `/roadmap create @docs/roadmaps/roadmap-[FEATURE].md` to execute plan
+**Next**: Run `roadmap create @docs/roadmaps/roadmap-[FEATURE].md` to execute plan
 
 </output_format>
 

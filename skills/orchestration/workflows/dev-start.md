@@ -6,8 +6,8 @@ Delegate development work to specialist agent(s). Handles single issues and bund
 
 | Command | Behavior |
 |---------|----------|
-| `/dev-start` | Implement current branch's issue |
-| `/dev-start [ISSUE_ID]` | Implement specific issue (or sub-issue from start-new session) |
+| `dev-start` | Implement current branch's issue |
+| `dev-start [ISSUE_ID]` | Implement specific issue (or sub-issue from start-new session) |
 | (from start-worktree / review-pr workflows) | Managed lifecycle with caller context |
 
 **Caller context parameters** (via `⤵`):

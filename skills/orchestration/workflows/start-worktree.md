@@ -6,8 +6,8 @@ Expedited session start for worktree contexts. Skips issue selection, preparatio
 
 | Command | Flow |
 |---------|------|
-| `/start` (from worktree) | § 1 → § 2 → § 3 → § 4 → § 5 |
-| `/start [ISSUE_ID]` (from worktree) | § 1 → § 2 → § 3 → § 4 → § 5 |
+| `start` (from worktree) | § 1 → § 2 → § 3 → § 4 → § 5 |
+| `start [ISSUE_ID]` (from worktree) | § 1 → § 2 → § 3 → § 4 → § 5 |
 
 ---
 
@@ -73,7 +73,7 @@ Post-review cleanup: reconcile fixes, post summaries, handoff to downstream issu
 
 ### 5.3 Output Session Summary
 
-**Do NOT mark issues Done.** Issues stay "In Review" until `/merge-pr` or issue-closing convention triggers Done on merge.
+**Do NOT mark issues Done.** Issues stay "In Review" until `workflows/merge-pr.md` or issue-closing convention triggers Done on merge.
 
 1. **Read final state**:
    ```bash
@@ -126,7 +126,7 @@ Post-review cleanup: reconcile fixes, post summaries, handoff to downstream issu
 
    Omit sections with no data. Include sub-issues tree if bundled.
 
-   Run `/start-retro` if workflow issues or knowledge gaps were encountered.
+   Run `start-retro` if workflow issues or knowledge gaps were encountered.
 
    </output_format>
 
