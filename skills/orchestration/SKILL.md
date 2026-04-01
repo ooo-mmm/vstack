@@ -12,6 +12,8 @@ metadata:
 
 # Orchestration
 
+> **IMMEDIATE**: Before proceeding, load the `linear` and `github` skills now. Orchestration workflows depend on both.
+
 > **Note**: `README.md` in this directory is for human setup/configuration only — not for AI agents. Follow this file (`SKILL.md`) as the authoritative skill definition.
 
 Multi-agent session coordination with front-to-back issue workflows, delegation patterns, workflow state management, and review pipelines. Designed to survive context compaction and coordinate persistent agent sessions.
