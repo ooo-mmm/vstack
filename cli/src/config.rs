@@ -258,6 +258,62 @@ pub fn now_iso() -> String {
     format!("{year:04}-{month:02}-{day:02}T{hours:02}:{minutes:02}:{seconds:02}Z")
 }
 
+// ── Staleness / mtime helpers ──────────────────────────────────────
+
+/// Parse an ISO 8601 timestamp (e.g. "2026-03-31T18:07:36Z") into a SystemTime.
+pub fn parse_installed_at(ts: &str) -> Option<std::time::SystemTime> {
+    let b = ts.as_bytes();
+    if b.len() < 20 || b[19] != b'Z' {
+        return None;
+    }
+    let year: u64 = ts[0..4].parse().ok()?;
+    let mon: u64 = ts[5..7].parse().ok()?;
+    let day: u64 = ts[8..10].parse().ok()?;
+    let hour: u64 = ts[11..13].parse().ok()?;
+    let min: u64 = ts[14..16].parse().ok()?;
+    let sec: u64 = ts[17..19].parse().ok()?;
+
+    let mut days = 0u64;
+    for y in 1970..year {
+        days += if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) { 366 } else { 365 };
+    }
+    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let month_days = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    for m in 0..(mon.saturating_sub(1) as usize) {
+        days += month_days[m] as u64;
+    }
+    days += day.saturating_sub(1);
+
+    let total_secs = days * 86400 + hour * 3600 + min * 60 + sec;
+    // Add 1 second to compensate for sub-second truncation in now_iso().
+    Some(std::time::UNIX_EPOCH + std::time::Duration::from_secs(total_secs + 1))
+}
+
+/// Check if any file under `dir` has been modified after `since`.
+pub fn dir_modified_after(dir: &std::path::Path, since: std::time::SystemTime) -> bool {
+    for entry in walkdir::WalkDir::new(dir).min_depth(1) {
+        let Ok(entry) = entry else { continue };
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        if let Ok(meta) = entry.metadata()
+            && let Ok(mtime) = meta.modified()
+            && mtime > since
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// Check if a single file has been modified after `since`.
+pub fn file_modified_after(path: &std::path::Path, since: std::time::SystemTime) -> bool {
+    path.metadata()
+        .ok()
+        .and_then(|m| m.modified().ok())
+        .is_some_and(|mtime| mtime > since)
+}
+
 fn epoch_days_to_date(days: u64) -> (u64, u64, u64) {
     // Algorithm from http://howardhinnant.github.io/date_algorithms.html
     let z = days + 719468;

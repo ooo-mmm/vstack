@@ -83,7 +83,7 @@ fn resolve_source_for_app(
         None => {
             let mut dir = std::env::current_dir()?;
             loop {
-                if is_vstack_root(&dir) {
+                if crate::resolve::is_vstack_source(&dir) {
                     return Ok(ResolvedSource {
                         source: dir.display().to_string(),
                         label: source_label(dir.to_str().unwrap_or("local")),
@@ -271,10 +271,10 @@ pub fn run(
     if !global {
         let agent_names: Vec<String> = selected_agents.iter().map(|a| a.name.clone()).collect();
         let skill_names: Vec<String> = selected_skills.iter().map(|s| s.name.clone()).collect();
-        crate::mapping::ensure_project_config(&config::project_root(), &agent_names, &skill_names);
+        crate::project_config::ensure_project_config(&config::project_root(), &agent_names, &skill_names);
     }
 
-    let mut project_config = crate::mapping::ProjectConfig::load(&config::project_root());
+    let mut project_config = crate::project_config::ProjectConfig::load(&config::project_root());
 
     if global {
         let unsupported: Vec<Harness> = harnesses
@@ -342,50 +342,31 @@ pub fn run(
                     mapping.skills_for_agent(&a.name, &a.role, &available_skill_names)
                 };
 
-            // Map names to (name, description) pairs for frontmatter
-            let skill_pairs: Vec<(String, String)> = skill_names
-                .iter()
-                .map(|name| {
-                    let desc = selected_skills
-                        .iter()
-                        .find(|s| &s.name == name)
-                        .map(|s| s.description.clone())
-                        .unwrap_or_else(|| name.clone());
-                    (name.clone(), desc)
-                })
-                .collect();
+            let skill_pairs =
+                crate::resolve::resolve_skill_pairs(&skill_names, &selected_skills);
 
-            // Record for writing to project toml (only once per agent)
             agent_skill_map
                 .entry(a.name.clone())
                 .or_insert_with(|| skill_names.clone());
 
-            // Compute matched hooks
             let matched_hooks: Vec<hook::Hook> = mapping
                 .hooks_for_agent(&a.role, &selected_hooks)
                 .into_iter()
                 .cloned()
                 .collect();
 
-            // Extract user sections from existing file before overwriting
             let existing_path = harness
                 .agents_dir(global)
                 .join(harness.agent_filename(&a.name));
-            let file_extras = read_existing_extras(&existing_path, *harness);
+            let file_extras = crate::resolve::read_existing_extras(&existing_path, *harness);
             project_config.save_extracted(&config::project_root(), &a.name, &file_extras);
 
-            // Build per-agent extras from project config (toml wins, file is fallback)
-            let extras = crate::agent::AgentExtras {
-                guidance: project_config
-                    .guidance_for(&a.name)
-                    .or(file_extras.guidance.as_deref())
-                    .map(String::from),
-                instructions: project_config
-                    .instructions_for(&a.name)
-                    .or(file_extras.instructions.as_deref())
-                    .map(String::from),
-                custom_hooks: project_config.custom_hooks_for(&a.name, &a.role),
-            };
+            let extras = crate::resolve::build_agent_extras(
+                &project_config,
+                &a.name,
+                &a.role,
+                Some(&file_extras),
+            );
 
             let result = installer::install_agent(
                 a,
@@ -414,7 +395,7 @@ pub fn run(
 
     // Write computed agent→skill mappings to project vstack.toml
     if !global {
-        crate::mapping::write_agent_skills(&config::project_root(), &agent_skill_map);
+        crate::project_config::write_agent_skills(&config::project_root(), &agent_skill_map);
     }
 
     // Inject dependency quick-reference sections into skills that have deps
@@ -576,7 +557,7 @@ fn resolve_source(source: Option<&str>) -> Result<PathBuf> {
             // Walk up from CWD to find a local vstack repo first
             let mut dir = std::env::current_dir()?;
             loop {
-                if is_vstack_root(&dir) {
+                if crate::resolve::is_vstack_source(&dir) {
                     return Ok(dir);
                 }
                 if !dir.pop() {
@@ -587,28 +568,6 @@ fn resolve_source(source: Option<&str>) -> Result<PathBuf> {
             clone_or_update(crate::REPO)
         }
     }
-}
-
-fn is_vstack_root(dir: &Path) -> bool {
-    // Never match hidden directories (.opencode/, .claude/, .agents/, etc.)
-    if dir
-        .file_name()
-        .and_then(|n| n.to_str())
-        .is_some_and(|n| n.starts_with('.'))
-    {
-        return false;
-    }
-    // Require at least 2 of 3 standard source dirs (agents/, skills/, hooks/).
-    // A vstack.toml alone is not enough — project roots also have one for customization.
-    let count = [
-        dir.join("agents").is_dir(),
-        dir.join("skills").is_dir(),
-        dir.join("hooks").is_dir(),
-    ]
-    .iter()
-    .filter(|&&b| b)
-    .count();
-    count >= 2
 }
 
 fn looks_like_remote(source: &str) -> bool {
@@ -686,7 +645,7 @@ fn clone_or_update(source: &str) -> Result<PathBuf> {
         }
     }
 
-    if !is_vstack_root(&repo_dir) {
+    if !crate::resolve::is_vstack_source(&repo_dir) {
         anyhow::bail!(
             "Cloned repo doesn't look like a vstack repo (no agents/, skills/, or hooks/ found)"
         );
@@ -703,7 +662,7 @@ fn reconcile_agents(
     let lock_path = config::lock_file_path(global);
     let lock = config::LockFile::load(&lock_path)?;
     let mapping = crate::mapping::MappingConfig::load(source_dir);
-    let mut project_config = crate::mapping::ProjectConfig::load(&config::project_root());
+    let mut project_config = crate::project_config::ProjectConfig::load(&config::project_root());
 
     // Collect all installed skill names
     let installed_skills: Vec<String> = lock
@@ -746,17 +705,8 @@ fn reconcile_agents(
                 mapping.skills_for_agent(&agent.name, &agent.role, &installed_skills)
             };
 
-        let skill_pairs: Vec<(String, String)> = skill_names
-            .iter()
-            .map(|sname| {
-                let desc = source_skills
-                    .iter()
-                    .find(|s| &s.name == sname)
-                    .map(|s| s.description.clone())
-                    .unwrap_or_else(|| sname.clone());
-                (sname.clone(), desc)
-            })
-            .collect();
+        let skill_pairs =
+            crate::resolve::resolve_skill_pairs(&skill_names, &source_skills);
 
         let matched_hooks: Vec<crate::hook::Hook> = mapping
             .hooks_for_agent(&agent.role, &source_hooks)
@@ -764,14 +714,14 @@ fn reconcile_agents(
             .cloned()
             .collect();
 
-        // Extract user sections from existing files before overwriting
         for harness_id in &entry.harnesses {
             if let Some(harness) = Harness::from_id(harness_id) {
                 if harnesses.contains(&harness) {
                     let existing_path = harness
                         .agents_dir(global)
                         .join(harness.agent_filename(&agent.name));
-                    let file_extras = read_existing_extras(&existing_path, harness);
+                    let file_extras =
+                        crate::resolve::read_existing_extras(&existing_path, harness);
                     project_config.save_extracted(
                         &config::project_root(),
                         &agent.name,
@@ -781,13 +731,8 @@ fn reconcile_agents(
             }
         }
 
-        let extras = crate::agent::AgentExtras {
-            guidance: project_config.guidance_for(&agent.name).map(String::from),
-            instructions: project_config
-                .instructions_for(&agent.name)
-                .map(String::from),
-            custom_hooks: project_config.custom_hooks_for(&agent.name, &agent.role),
-        };
+        let extras =
+            crate::resolve::build_agent_extras(&project_config, &agent.name, &agent.role, None);
 
         // Regenerate for each harness this agent is installed to
         for harness_id in &entry.harnesses {
@@ -809,17 +754,3 @@ fn reconcile_agents(
     Ok(())
 }
 
-fn read_existing_extras(
-    path: &std::path::Path,
-    harness: Harness,
-) -> crate::agent::AgentExtras {
-    let Ok(content) = std::fs::read_to_string(path) else {
-        return Default::default();
-    };
-    let body = if matches!(harness, Harness::Codex) {
-        crate::agent::extract_body_from_codex_toml(&content).unwrap_or(content)
-    } else {
-        content
-    };
-    crate::agent::extract_user_sections(&body)
-}

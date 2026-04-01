@@ -8,6 +8,8 @@ mod harness;
 mod hook;
 mod installer;
 mod mapping;
+mod project_config;
+mod resolve;
 mod rules;
 mod skill;
 mod tui;

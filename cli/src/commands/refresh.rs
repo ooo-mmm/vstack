@@ -28,9 +28,9 @@ pub fn run(global: bool) -> Result<()> {
             .filter(|(_, e)| e.kind == ItemKind::Skill)
             .map(|(n, _)| n.clone())
             .collect();
-        crate::mapping::ensure_project_config(&project_root, &agent_names, &skill_names);
+        crate::project_config::ensure_project_config(&project_root, &agent_names, &skill_names);
     }
-    let mut project_config = crate::mapping::ProjectConfig::load(&project_root);
+    let mut project_config = crate::project_config::ProjectConfig::load(&project_root);
 
     // Resolve source directories from lock file entries
     let source_dirs = resolve_sources(&lock);
@@ -101,17 +101,8 @@ pub fn run(global: bool) -> Result<()> {
                 mapping.skills_for_agent(&agent.name, &agent.role, &installed_skills)
             };
 
-        let skill_pairs: Vec<(String, String)> = skill_names
-            .iter()
-            .map(|sname| {
-                let desc = all_source_skills
-                    .iter()
-                    .find(|s| &s.name == sname)
-                    .map(|s| s.description.clone())
-                    .unwrap_or_else(|| sname.clone());
-                (sname.clone(), desc)
-            })
-            .collect();
+        let skill_pairs =
+            crate::resolve::resolve_skill_pairs(&skill_names, &all_source_skills);
 
         let matched_hooks: Vec<crate::hook::Hook> = mapping
             .hooks_for_agent(&agent.role, &installed_hooks)
@@ -119,24 +110,23 @@ pub fn run(global: bool) -> Result<()> {
             .cloned()
             .collect();
 
-        // Extract user sections from existing files before overwriting
         for harness_id in &entry.harnesses {
             if let Some(harness) = Harness::from_id(harness_id) {
                 let existing_path = harness
                     .agents_dir(global)
                     .join(harness.agent_filename(&agent.name));
-                let file_extras = read_existing_extras(&existing_path, harness);
+                let file_extras =
+                    crate::resolve::read_existing_extras(&existing_path, harness);
                 project_config.save_extracted(&project_root, &agent.name, &file_extras);
             }
         }
 
-        let extras = crate::agent::AgentExtras {
-            guidance: project_config.guidance_for(&agent.name).map(String::from),
-            instructions: project_config
-                .instructions_for(&agent.name)
-                .map(String::from),
-            custom_hooks: project_config.custom_hooks_for(&agent.name, &agent.role),
-        };
+        let extras = crate::resolve::build_agent_extras(
+            &project_config,
+            &agent.name,
+            &agent.role,
+            None,
+        );
 
         for harness_id in &entry.harnesses {
             if let Some(harness) = Harness::from_id(harness_id) {
@@ -214,7 +204,7 @@ fn resolve_sources(lock: &config::LockFile) -> Vec<PathBuf> {
     if sources.is_empty() {
         if let Ok(mut dir) = std::env::current_dir() {
             loop {
-                if is_vstack_source(&dir) {
+                if crate::resolve::is_vstack_source(&dir) {
                     sources.push(dir);
                     break;
                 }
@@ -249,7 +239,7 @@ fn resolve_sources(lock: &config::LockFile) -> Vec<PathBuf> {
 fn resolve_single_source(source: &str) -> Option<PathBuf> {
     // Absolute or relative path that exists
     let p = std::path::Path::new(source);
-    if p.is_absolute() && p.is_dir() && is_vstack_source(p) {
+    if p.is_absolute() && p.is_dir() && crate::resolve::is_vstack_source(p) {
         return Some(p.to_path_buf());
     }
 
@@ -257,7 +247,7 @@ fn resolve_single_source(source: &str) -> Option<PathBuf> {
     if source == "." {
         let mut dir = std::env::current_dir().ok()?;
         loop {
-            if is_vstack_source(&dir) {
+            if crate::resolve::is_vstack_source(&dir) {
                 return Some(dir);
             }
             if !dir.pop() {
@@ -280,39 +270,3 @@ fn resolve_single_source(source: &str) -> Option<PathBuf> {
     None
 }
 
-fn is_vstack_source(dir: &std::path::Path) -> bool {
-    if dir
-        .file_name()
-        .and_then(|n| n.to_str())
-        .is_some_and(|n| n.starts_with('.'))
-    {
-        return false;
-    }
-    if dir.join("agents").is_dir() || dir.join("skills").is_dir() {
-        let count = [
-            dir.join("agents").is_dir(),
-            dir.join("skills").is_dir(),
-            dir.join("hooks").is_dir(),
-        ]
-        .iter()
-        .filter(|&&b| b)
-        .count();
-        return count >= 2;
-    }
-    false
-}
-
-fn read_existing_extras(
-    path: &std::path::Path,
-    harness: Harness,
-) -> crate::agent::AgentExtras {
-    let Ok(content) = std::fs::read_to_string(path) else {
-        return Default::default();
-    };
-    let body = if matches!(harness, Harness::Codex) {
-        crate::agent::extract_body_from_codex_toml(&content).unwrap_or(content)
-    } else {
-        content
-    };
-    crate::agent::extract_user_sections(&body)
-}

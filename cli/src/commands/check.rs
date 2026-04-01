@@ -65,7 +65,7 @@ pub fn run() -> Result<()> {
 fn check_staleness(entry: &LockEntry) -> &'static str {
     let root = config::project_root();
 
-    let installed_at = match crate::tui::parse_installed_at(&entry.installed_at) {
+    let installed_at = match config::parse_installed_at(&entry.installed_at) {
         Some(t) => t,
         None => return "ok",
     };
@@ -73,12 +73,12 @@ fn check_staleness(entry: &LockEntry) -> &'static str {
     match entry.kind {
         config::ItemKind::Skill => {
             let source_dir = root.join("skills").join(&entry.name);
-            if source_dir.exists() && crate::tui::dir_modified_after(&source_dir, installed_at) {
+            if source_dir.exists() && config::dir_modified_after(&source_dir, installed_at) {
                 return "outdated";
             }
             // Skill files depend on project vstack.toml (skill-instructions)
             let project_config = config::project_root().join("vstack.toml");
-            if crate::tui::file_modified_after(&project_config, installed_at) {
+            if config::file_modified_after(&project_config, installed_at) {
                 return "outdated";
             }
             "ok"
@@ -86,7 +86,7 @@ fn check_staleness(entry: &LockEntry) -> &'static str {
         config::ItemKind::Hook => {
             let source_path = root.join("hooks").join(format!("{}.sh", entry.name));
             if source_path.exists()
-                && crate::tui::file_modified_after(&source_path, installed_at)
+                && config::file_modified_after(&source_path, installed_at)
             {
                 return "outdated";
             }
@@ -95,17 +95,17 @@ fn check_staleness(entry: &LockEntry) -> &'static str {
         config::ItemKind::Agent => {
             let source_path = root.join("agents").join(format!("{}.md", entry.name));
             if source_path.exists()
-                && crate::tui::file_modified_after(&source_path, installed_at)
+                && config::file_modified_after(&source_path, installed_at)
             {
                 return "outdated";
             }
             // Agent files depend on vstack.toml (skill/hook mappings)
             let source_config = root.join("vstack.toml");
-            if crate::tui::file_modified_after(&source_config, installed_at) {
+            if config::file_modified_after(&source_config, installed_at) {
                 return "outdated";
             }
             let project_config = config::project_root().join("vstack.toml");
-            if crate::tui::file_modified_after(&project_config, installed_at) {
+            if config::file_modified_after(&project_config, installed_at) {
                 return "outdated";
             }
             "ok"
