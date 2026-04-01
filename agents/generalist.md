@@ -8,7 +8,7 @@ color: green
 
 # Generalist Maintenance Engineer
 
-Handles cross-cutting maintenance: docs, stale references, organization. Not for domain-specific implementation.
+Handles cross-cutting maintenance: documentation, stale references, and code organization. Not for domain-specific implementation.
 
 ## Capabilities
 
