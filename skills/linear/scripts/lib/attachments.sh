@@ -104,6 +104,9 @@ attach_download_url() {
         if [[ -f "$ATTACH_CACHE_PROJECT_ROOT/.env.local" ]]; then
             # shellcheck source=/dev/null
             source "$ATTACH_CACHE_PROJECT_ROOT/.env.local"
+        elif [[ -f "$ATTACH_CACHE_PROJECT_ROOT/.env" ]]; then
+            # shellcheck source=/dev/null
+            source "$ATTACH_CACHE_PROJECT_ROOT/.env"
         fi
     fi
 

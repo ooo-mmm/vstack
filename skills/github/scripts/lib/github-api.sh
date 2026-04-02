@@ -283,18 +283,21 @@ parse_format_arg() {
     echo "${remaining_args[@]:-}"
 }
 
-# Load and validate bot token from .env.local
+# Load and validate bot token from .env.local or .env
 # Supports direct tokens (ghp_*, gho_*, ghs_*, ghr_*) and 1Password references (op://...)
 # Returns: token string if valid, empty string if not configured/invalid
 # Outputs: diagnostic messages to stderr
 load_bot_token() {
     local token=""
-    local env_file="$PROJECT_ROOT/.env.local"
 
-    # Load from .env.local if exists
-    if [ -f "$env_file" ]; then
+    # Load from .env.local first, fall back to .env
+    if [ -f "$PROJECT_ROOT/.env.local" ]; then
         # shellcheck disable=SC1090
-        source "$env_file"
+        source "$PROJECT_ROOT/.env.local"
+        token="${GH_BOT_TOKEN:-}"
+    elif [ -f "$PROJECT_ROOT/.env" ]; then
+        # shellcheck disable=SC1090
+        source "$PROJECT_ROOT/.env"
         token="${GH_BOT_TOKEN:-}"
     fi
 

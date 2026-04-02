@@ -24,11 +24,14 @@ PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
 # Source formatters
 source "$_LIB_DIR/formatters.sh"
 
-# Load API key from .env.local if not already set
+# Load API key from .env.local or .env if not already set
 if [ -z "${LINEAR_API_KEY:-}" ]; then
     if [ -f "$PROJECT_ROOT/.env.local" ]; then
         # shellcheck source=/dev/null
         source "$PROJECT_ROOT/.env.local"
+    elif [ -f "$PROJECT_ROOT/.env" ]; then
+        # shellcheck source=/dev/null
+        source "$PROJECT_ROOT/.env"
     fi
 fi
 
