@@ -356,6 +356,17 @@ pub fn resolve_source_path(source: &str) -> Option<PathBuf> {
     if p.is_absolute() && p.is_dir() {
         return Some(p.to_path_buf());
     }
+    // Check cached repo (owner/repo → ~/.vstack/cache/owner_repo)
+    if source.contains('/') && !source.starts_with('.') && !source.starts_with('/') {
+        let cache_key = source.replace('/', "_");
+        let cache_dir = global_base_dir()
+            .join(".vstack")
+            .join("cache")
+            .join(&cache_key);
+        if cache_dir.is_dir() {
+            return Some(cache_dir);
+        }
+    }
     // "." or relative — walk up from CWD to find vstack source
     let mut dir = std::env::current_dir().ok()?;
     loop {
