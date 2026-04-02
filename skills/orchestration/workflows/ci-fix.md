@@ -102,9 +102,7 @@ Infer agent type from component paths or issue labels.
 
 **Detect team context**: `.agents/skills/orchestration/scripts/workflow-state exists [ISSUE_ID] && TEAM=$(.agents/skills/orchestration/scripts/workflow-state get [ISSUE_ID] .team_name)`
 
-**Create tracking task**: Create task: "🐲 [AGENT]: Fix CI [ERROR_TYPE]", Update task status to in_progress.
-
-Delegate to `[AGENT]` with the prompt below. Wait for completion. Update tracking task to completed.
+Delegate to `[AGENT]` with the prompt below. Wait for completion.
 
 Follow exactly, fill placeholders, add nothing else. Omit lines/sections with empty placeholders.
 

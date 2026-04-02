@@ -244,10 +244,10 @@ Project-level configuration (set in `.env.local`):
 
 | Pattern | When | Flow |
 |---------|------|------|
-| Spawn + message | Fresh agents | Create tasks → spawn (behavioral prompt) → send delegation message |
-| Message only | Re-delegation to existing agents | Create tasks → send delegation message |
-| Self-create | Agent without team context | Full delegation instructions in prompt |
-| Consultation | One-off sub-agent | Full instructions in prompt, no task machinery |
+| New agent | Fresh delegation | Launch agent with delegation prompt |
+| Re-delegate | Existing agent, new work | Send new delegation to running agent |
+| Self-delegate | Agent without team context | Full delegation instructions in prompt |
+| Consultation | One-off sub-agent | Full instructions in prompt, ephemeral |
 
 ## Rule Categories by Priority
 
