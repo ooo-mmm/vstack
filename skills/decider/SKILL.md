@@ -39,7 +39,7 @@ Project-level configuration:
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `$DECISIONS_DIR` | Path to decision documents directory | — (required) |
+| `$DECISIONS_DIR` | Path to decision documents directory | Auto-discovers `docs/decisions/`, `decisions/`, `doc/decisions/`, or `adr/` with `INDEX.md` |
 
 ## Templates
 
@@ -120,7 +120,7 @@ All entries require: title (`# DXXX: Title`), date, status, research ref (or `�
 
 | Variable | Purpose | Required |
 |----------|---------|----------|
-| `DECISIONS_DIR` | Decision documents directory path | Yes |
+| `DECISIONS_DIR` | Decision documents directory path | No — auto-discovers from CWD |
 
 ## System Dependencies
 

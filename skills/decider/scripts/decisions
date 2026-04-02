@@ -33,7 +33,25 @@ fi
 
 # --- Configuration -----------------------------------------------------------
 
-DECISIONS_DIR="${DECISIONS_DIR:?DECISIONS_DIR must be set to the decision documents directory}"
+# Auto-discover decisions directory if not set
+if [[ -z "${DECISIONS_DIR:-}" ]]; then
+  _dir="$(pwd)"
+  while [[ "$_dir" != "/" ]]; do
+    for _candidate in "docs/decisions" "decisions" "doc/decisions" "adr"; do
+      if [[ -d "$_dir/$_candidate" && -f "$_dir/$_candidate/INDEX.md" ]]; then
+        DECISIONS_DIR="$_dir/$_candidate"
+        break 2
+      fi
+    done
+    _dir="$(dirname "$_dir")"
+  done
+  unset _dir _candidate
+fi
+
+if [[ -z "${DECISIONS_DIR:-}" ]]; then
+  echo "Error: Could not find decisions directory. Set DECISIONS_DIR or create docs/decisions/INDEX.md" >&2
+  exit 1
+fi
 
 if [[ ! -d "$DECISIONS_DIR" ]]; then
   echo "Error: DECISIONS_DIR '$DECISIONS_DIR' does not exist" >&2
