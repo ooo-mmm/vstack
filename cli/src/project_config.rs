@@ -216,15 +216,6 @@ pub fn merge_upstream_agent_skills(
         // Build the replacement value
         let new_value = if skills.is_empty() {
             "[]".to_string()
-        } else if skills.len() <= 3 {
-            format!(
-                "[{}]",
-                skills
-                    .iter()
-                    .map(|s| format!("\"{}\"", s))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
         } else {
             let mut v = "[\n".to_string();
             for s in skills {

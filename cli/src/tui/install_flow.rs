@@ -1294,7 +1294,9 @@ fn perform_inline_update(
         };
 
         let project_root = crate::config::project_root();
-        let project_config = crate::project_config::ProjectConfig::load(&project_root);
+        let mut project_config = crate::project_config::ProjectConfig::load(&project_root);
+        let mut upstream_skill_updates: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
 
         // Determine source mapping (from first discovered agent/skill path)
         let source_dir = items
@@ -1335,12 +1337,29 @@ fn perform_inline_update(
                     let Some(agent) = items.agents.iter().find(|a| a.name == *name) else {
                         continue;
                     };
+                    let source_skills =
+                        mapping.skills_for_agent(&agent.name, &agent.role, &installed_skills);
                     let skill_names: Vec<String> = if let Some(project_list) =
                         project_config.agent_skills_for(&agent.name)
                     {
-                        project_list.clone()
+                        let mut merged = project_list.clone();
+                        let existing: std::collections::HashSet<String> =
+                            merged.iter().cloned().collect();
+                        for s in &source_skills {
+                            if !existing.contains(s) {
+                                merged.push(s.clone());
+                            }
+                        }
+                        if merged.len() > project_list.len() {
+                            project_config
+                                .agent_skills
+                                .insert(agent.name.clone(), merged.clone());
+                            upstream_skill_updates
+                                .insert(agent.name.clone(), merged.clone());
+                        }
+                        merged
                     } else {
-                        mapping.skills_for_agent(&agent.name, &agent.role, &installed_skills)
+                        source_skills
                     };
                     let skill_pairs =
                         crate::resolve::resolve_skill_pairs(&skill_names, &items.skills);
@@ -1419,6 +1438,14 @@ fn perform_inline_update(
                     }
                 }
             }
+        }
+
+        // Persist upstream skill additions to project vstack.toml
+        if !scope_global && !upstream_skill_updates.is_empty() {
+            crate::project_config::merge_upstream_agent_skills(
+                &project_root,
+                &upstream_skill_updates,
+            );
         }
 
         // Update lock file timestamps
