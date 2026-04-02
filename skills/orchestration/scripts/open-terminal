@@ -123,20 +123,16 @@ detect_start_cmd() {
     echo "${CMD_TEMPLATE//\{issue\}/$issue}"
     return
   fi
-  case "$SCRIPT_DIR" in
-    */.claude/*)
-      echo "claude -n \"$issue\" '/orchestration start $issue'"
-      ;;
-    */.opencode/*)
-      echo "opencode '/orchestration start $issue'"
-      ;;
-    */.agents/*)
-      echo "codex '\$orchestration start $issue'"
-      ;;
-    *)
-      echo ""
-      ;;
-  esac
+  # Detect harness by which CLI is available
+  if command -v claude &>/dev/null; then
+    echo "claude -n \"$issue\" '/orchestration start $issue'"
+  elif command -v opencode &>/dev/null; then
+    echo "opencode '/orchestration start $issue'"
+  elif command -v codex &>/dev/null; then
+    echo "codex '\$orchestration start $issue'"
+  else
+    echo ""
+  fi
 }
 
 # --- Terminal launchers -------------------------------------------------------
