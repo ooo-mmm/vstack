@@ -47,20 +47,7 @@ Workflows reference these companion skills and tools. Install and configure per 
 
 ## Execution Rules
 
-### Sequential Section Execution
-
-Execute all workflow sections in order. Never skip steps because the outcome seems predictable, or rationalize skipping based on change scope ("test-only", "small", "only N items", "already reviewed"). The workflow text is the decision authority, not the agent's assessment.
-
-When a section starts with "**Skip if** [condition]", evaluate the condition literally. If true, skip the section. The workflow decides what to skip, not the agent.
-
-### Format Tags Are Literal
-
-`<delegation_format>` and `<output_format>` tags in workflows define exact content. When sending or presenting content from these tags:
-
-1. **Fill `[PLACEHOLDERS]`** with actual values
-2. **Omit lines/sections** where the placeholder value is empty or not applicable
-3. **Add nothing else** — no commentary, no extra fields, no rewording
-4. **Do not paraphrase** — use the exact structure, headings, and field names from the tag
+Execute all workflow sections in order. The workflow decides what to skip via "**Skip if**" conditions — never skip based on your own scope assessment. `<delegation_format>` and `<output_format>` tags are literal templates: fill `[PLACEHOLDERS]`, omit empty lines, add nothing else, do not paraphrase.
 
 ## Configuration
 
