@@ -6,89 +6,59 @@ Cross-model code review and consultation via external AI CLI. Auto-detects your 
 
 ```
 skills/second-opinion/
-├── SKILL.md          # Agent-facing skill definition + prompt templates
-├── README.md         # This file (human setup guide)
-└── scripts/
-    └── second-opinion  # CLI wrapper (harness detection, invocation, JSON extraction)
+├── SKILL.md                    # Agent-facing routing table + config
+├── README.md                   # This file
+├── schemas/
+│   └── review-finding-prompt.md  # JSON schema (shared by review + audit)
+├── scripts/
+│   └── second-opinion          # CLI wrapper
+└── workflows/
+    ├── review.md               # Code review → JSON
+    ├── challenge.md            # Adversarial analysis → text
+    ├── audit.md                # Code examination → JSON
+    └── quick.md                # Quick question → text
 ```
 
 ## Prerequisites
 
 - **jq** installed
-- At least one external CLI available: `claude` (Claude Code) or `codex` (Codex CLI)
-- Both CLIs should be authenticated before first use
+- At least one external CLI: `claude` (Claude Code) or `codex` (Codex CLI)
+- CLI must be authenticated (`claude /login` or `codex login`)
 
 ## Usage
 
-From an AI agent (user-invocable slash command):
+As a slash command (natural language works):
 
 ```
-/second-opinion review                  # Review pending changes
-/second-opinion challenge <description> # Adversarial analysis of an approach
-/second-opinion audit <path>            # Deep examination of existing code
-/second-opinion quick <question>        # Quick question to the other model
+/second-opinion review                     # Full branch diff
+/second-opinion review last 3 commits      # Recent commits only
+/second-opinion review uncommitted work     # Staged/unstaged changes
+/second-opinion challenge my refactor plan  # Stress-test an approach
+/second-opinion audit src/auth/             # Examine existing code
+/second-opinion quick is this pattern safe? # Quick question
 ```
 
-From the shell directly:
+From the shell:
 
 ```bash
-# Review current branch vs main
 ./scripts/second-opinion review --cwd .
-
-# Detect which CLI would be called
 ./scripts/second-opinion detect
-
-# Challenge an approach with a prompt file
-./scripts/second-opinion challenge --prompt /tmp/my-approach.md
-
-# Override target
-./scripts/second-opinion review --target claude --cwd .
+./scripts/second-opinion review --target claude --range HEAD~3..HEAD --cwd .
 ```
 
 ## Configuration
 
-Set in `.env.local` at project root (see `.env.local.example`). All optional — defaults work out of the box.
+All optional — defaults work out of the box. Set in `.env.local` at project root (see `.env.local.example` for full flag reference).
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `SECOND_OPINION_TARGET` | auto-detect | Force target: `claude` or `codex` |
 | `SECOND_OPINION_TIMEOUT` | `300` | Max seconds to wait |
-| `SECOND_OPINION_CLAUDE_CMD` | (see below) | Full claude command with all flags |
-| `SECOND_OPINION_CODEX_CMD` | (see below) | Full codex command with all flags |
+| `SECOND_OPINION_CLAUDE_CMD` | `claude -p --no-session-persistence --model opus --effort max --allowedTools ...` | Full command when calling Claude |
+| `SECOND_OPINION_CODEX_CMD` | `codex exec -m gpt-5.4 -s read-only -c model_reasoning_effort=xhigh --ephemeral` | Full command when calling Codex |
 
-### Default commands
+Edit the full command string to change model, effort level, or tool access. No additional flags are appended.
 
-```bash
-# When calling Claude (from Codex):
-SECOND_OPINION_CLAUDE_CMD="claude -p --no-session-persistence --model opus --effort max --allowedTools Bash(read-only:true),Read,Glob,Grep"
+## review-pr Integration
 
-# When calling Codex (from Claude):
-SECOND_OPINION_CODEX_CMD="codex exec -m gpt-5.4 -s read-only -c model_reasoning_effort=xhigh --ephemeral"
-```
-
-To customize, uncomment the relevant line in `.env.local` and edit any flags. The entire variable is the command — no additional flags are appended.
-
-### Flag reference
-
-**Claude flags:**
-
-| Flag | Purpose |
-|------|---------|
-| `-p` | Non-interactive print mode |
-| `--no-session-persistence` | Ephemeral session |
-| `--model opus` | Opus 4.6 (change to `sonnet` or `haiku` for speed/cost) |
-| `--effort max` | Max reasoning (`low`, `medium`, `high`, `max`) |
-| `--allowedTools` | Tool access (read-only bash, file reads, search) |
-
-**Codex flags:**
-
-| Flag | Purpose |
-|------|---------|
-| `-m gpt-5.4` | Model (change to any supported model) |
-| `-s read-only` | Sandbox mode (`read-only`, `workspace-write`) |
-| `-c model_reasoning_effort=xhigh` | Reasoning effort (`low`, `medium`, `high`, `xhigh`) |
-| `--ephemeral` | Ephemeral session |
-
-## Integration with review-pr
-
-When the orchestration skill runs `review-pr`, it optionally offers an external review at section 2.1. The user is prompted, and if accepted, the script runs and produces a review-finding JSON that flows through the same pipeline as internal review agents.
+The orchestration skill's `review-pr` workflow optionally offers an external review at § 2.1. If accepted, the script produces review-finding JSON (same schema as internal review agents) that flows through the standard blocker/suggestion/issue pipeline.
