@@ -48,16 +48,47 @@ From the shell:
 
 ## Configuration
 
-All optional — defaults work out of the box. Set in `.env.local` at project root (see `.env.local.example` for full flag reference).
+All optional — defaults work out of the box. Set in `.env.local` at project root.
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `SECOND_OPINION_TARGET` | auto-detect | Force target: `claude` or `codex` |
 | `SECOND_OPINION_TIMEOUT` | `300` | Max seconds to wait |
-| `SECOND_OPINION_CLAUDE_CMD` | `claude -p --no-session-persistence --model opus --effort max --allowedTools ...` | Full command when calling Claude |
-| `SECOND_OPINION_CODEX_CMD` | `codex exec -m gpt-5.4 -s read-only -c model_reasoning_effort=xhigh --ephemeral` | Full command when calling Codex |
+| `SECOND_OPINION_CLAUDE_CMD` | (see below) | Full command when calling Claude |
+| `SECOND_OPINION_CODEX_CMD` | (see below) | Full command when calling Codex |
+
+### Default commands
+
+```bash
+# When calling Claude (from Codex):
+SECOND_OPINION_CLAUDE_CMD="claude -p --no-session-persistence --model opus --effort max --allowedTools Bash(read-only:true),Read,Glob,Grep"
+
+# When calling Codex (from Claude):
+SECOND_OPINION_CODEX_CMD="codex exec -m gpt-5.4 -s read-only -c model_reasoning_effort=xhigh --ephemeral"
+```
 
 Edit the full command string to change model, effort level, or tool access. No additional flags are appended.
+
+### Flag reference
+
+**Claude:**
+
+| Flag | Purpose |
+|------|---------|
+| `-p` | Non-interactive print mode |
+| `--no-session-persistence` | Ephemeral session |
+| `--model opus` | Opus 4.6 (change to `sonnet` or `haiku` for speed/cost) |
+| `--effort max` | Reasoning effort (`low`, `medium`, `high`, `max`) |
+| `--allowedTools` | Tool access — read-only bash, file reads, search (no writes) |
+
+**Codex:**
+
+| Flag | Purpose |
+|------|---------|
+| `-m gpt-5.4` | Model (change to any supported model) |
+| `-s read-only` | Sandbox (`read-only`, `workspace-write`) |
+| `-c model_reasoning_effort=xhigh` | Reasoning effort (`low`, `medium`, `high`, `xhigh`) |
+| `--ephemeral` | Ephemeral session |
 
 ## review-pr Integration
 
