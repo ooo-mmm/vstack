@@ -1,115 +1,60 @@
 # Orchestration
 
-Multi-agent session coordination — front-to-back issue workflows, delegation patterns, workflow state management, review pipelines, and parallel work safety analysis.
+Multi-agent session coordination — issue workflows, delegation, review pipelines, cycle planning, and research spikes.
 
-## Structure
+## Commands
 
-### Workflows (Session Lifecycle)
-- `workflows/initialize.md` - Team setup, auth, cache, state init
-- `workflows/start.md` - Dashboard, issue selection, research eval, worktree creation
-- `workflows/start-worktree.md` - Full session: dev → review → submit → finalize
-- `workflows/start-new.md` - Create new issue, spawn worktree session
+Invoke via your AI coding harness (e.g., `/$orchestration <command>`).
 
-### Workflows (Development)
-- `workflows/dev-start.md` - Delegate implementation to specialist agents
-- `workflows/dev-fix.md` - Delegate fix items to dev agents
-- `workflows/ci-fix.md` - Analyze and fix CI failures
-
-### Workflows (Review & Submission)
-- `workflows/review-pr.md` - Pre-submission review with fix handling and QA
-- `workflows/review-pr-comments.md` - Triage PR review comments via domain agents
-- `workflows/submit-pr.md` - Push, create PR, bot review, comment triage, CI
-- `workflows/merge-pr.md` - Verify conditions and merge PR(s)
-
-### Workflows (Planning & Analysis)
-- `workflows/audit-issues.md` - Audit issues for relations, hierarchy, gaps
-- `workflows/fix-reconcile.md` - Check if fixes address existing open issues
-- `workflows/post-summary.md` - Post summary and handoff comments
-- `workflows/parallel-check.md` - Verify parallel work safety
-- `workflows/cycle-plan.md` - Plan development cycles
-- `workflows/roadmap-plan.md` - Consult specialists, analyze roadmap
-- `workflows/roadmap-create.md` - Execute roadmap plan
-
-### Workflows (Research)
-- `workflows/research-issue.md` - Create research issue with assets
-- `workflows/research-complete.md` - Route completed research to workflows
-- `workflows/research-spike.md` - Quick research exploration
-
-### Workflows (Reference)
-- `workflows/agent-sequencing.md` - Cross-domain blocking relations
-- `workflows/recommendation-bias.md` - Review finding categorization (fix vs issue)
-
-### Scripts
-- `.agents/skills/orchestration/scripts/workflow-state` - Read/write persistent state files with atomic locking
-
-### Schemas
-- `schemas/workflow-state.md` - Persistent state file schema
-- `schemas/review-finding.md` - Review/QA agent JSON output format
-- `schemas/audit-issues-input.md` - Input for issue audit workflows
-- `schemas/roadmap-plan-input.md` - Input for roadmap planning
-
-### Rules
-- `rules/` - Individual rule files with frontmatter
-- **`SKILL.md`** - Quick-reference index for skill-aware harnesses
-- **`AGENTS.md`** - Full compiled document for all harnesses
+| Command | Description |
+|---------|-------------|
+| `start [ISSUE_ID]` | Start a session — routes by context (main repo, worktree, or new issue) |
+| `start new [title]` | Create a new issue and worktree |
+| `start self` | Initialize team/auth/state, then await instructions |
+| `dev-start [ISSUE_ID]` | Delegate implementation to specialist agents |
+| `dev-fix [ISSUE_ID]` | Delegate review fix items |
+| `ci-fix PR_NUMBER` | Fix CI failures |
+| `review-pr [PR_NUMBER]` | Pre-submission review |
+| `review-pr-comments PR_NUMBER` | Triage PR review comments |
+| `submit-pr [PR_NUMBER]` | Push, create PR, bot review, CI |
+| `merge-pr PR_NUMBER \| all` | Verify and merge PR(s) |
+| `audit-issues project \| issue [IDs]` | Audit issues for relations and hierarchy |
+| `cycle-plan` | Prioritized cycle plan |
+| `roadmap plan [feature]` | Consult specialists, analyze roadmap |
+| `roadmap create @[plan-file]` | Execute roadmap plan |
+| `parallel-check [ISSUE_IDS]` | Verify parallel work safety |
+| `research-spike` | Quick research exploration |
+| `start-retro` | Analyze workflow execution of just-completed session |
 
 ## Skill Dependencies
 
-| Dependency | Purpose |
-|------------|---------|
-| Issue tracker CLI (e.g., `linear` skill) | Issue CRUD, cache, comments |
-| Git host CLI (e.g., `github` skill) | PR operations, CI status |
-| Worktree CLI (e.g., `worktree` skill) | Create/remove git worktrees |
-| Issue lifecycle skill | Dev implement/fix/review agent workflows |
-| Project management skill | TPM audit/cycle/roadmap agent workflows |
+Install these before using orchestration workflows:
+
+| Skill | Purpose |
+|-------|---------|
+| `linear` | Issue tracking (CRUD, cache, comments) |
+| `github` | PR operations, CI status |
+| `worktree` | Git worktree management |
+| `project-management` | TPM audit/cycle/roadmap workflows |
+| `decider` | Architectural decision documents |
 
 ## Configuration
 
-Set these in `.env.local` or export them in the shell that runs the workflow. The orchestration helper scripts source `.env.local` automatically when present.
+Set in `.env.local` or export in the shell. Helper scripts source `.env.local` automatically.
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `ORCH_STATE_DIR` | Override state file directory | `tmp` |
+| `ORCH_STATE_DIR` | State file directory | `tmp` |
 | `ISSUE_PATTERN` | Issue ID regex for branch names | `[A-Z]+-[0-9]+` |
 | `BOT_REVIEWERS` | Comma-separated review bot usernames | auto-detect |
-| `BOT_CHECK_NAME` | Optional CI check name for early review detection | — |
+| `BOT_CHECK_NAME` | CI check name for early review detection | — |
 
-## Minimum Setup
+## System Dependencies
 
-To make orchestration workflows usable in a project:
+- `jq`, `bash` 4+, `flock` (util-linux)
 
-1. Install the required dependency skills: `linear`, `github`, `worktree`, `decider`.
-2. Set runtime config in `.env.local` (only actual env vars like `LINEAR_API_KEY`, `ORCH_STATE_DIR`, etc.).
+## Setup
+
+1. Install dependency skills: `linear`, `github`, `worktree`, `decider`, `project-management`.
+2. Set runtime config in `.env.local` (`LINEAR_API_KEY`, `ORCH_STATE_DIR`, etc.).
 3. Verify each dependency skill works from the project root before invoking a workflow.
-
-## Creating a New Rule
-
-1. Choose the category (see `rules/_sections.md`)
-2. Use prefix: `wf-`, `del-`, `life-`, `state-`, `coord-`, `rev-`
-3. Copy `rules/_template.md`
-4. Fill frontmatter and rule body
-5. Add to Quick Reference in `SKILL.md` and expand in `AGENTS.md`
-
-## Rule File Structure
-
-```markdown
----
-title: Rule Title
-impact: CRITICAL|HIGH|MEDIUM|LOW
-impactDescription: One-line consequence of violation
-tags: tag1, tag2
----
-
-## Rule Title
-
-**Impact: LEVEL (consequence)**
-
-Explanation and why it matters.
-```
-
-## Impact Levels
-
-- **CRITICAL** - Workflow failure, lost state, agents producing incorrect work
-- **HIGH** - Degraded performance, context loss, wasted resources
-- **MEDIUM** - Suboptimal coordination, noise in tracking, missed findings
-- **LOW** - Style/convention deviation
