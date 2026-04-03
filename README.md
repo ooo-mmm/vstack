@@ -302,9 +302,7 @@ Windows note:
 | `price-handling` | Price rounding, epsilon comparison, and market-price handling. | — |
 | `trading-design` | Dense, professional trading-style interface design guidance. | — |
 
-#### Workflow / Platform (WIP)
-
-These packages are still WIP. They were migrated from a specific project and have not been tested as thoroughly in the generalized `vstack` setup yet. GitHub issues are welcome.
+#### Workflow / Platform
 
 | Skill | Brief | Arguments |
 |---|---|---|
