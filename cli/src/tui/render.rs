@@ -166,6 +166,27 @@ fn draw_header(
         }
     }
 
+    // Version label right-aligned on the step line (below repo chip)
+    {
+        let ver = format!(" v{} ", env!("CARGO_PKG_VERSION"));
+        let ver_width = ver.chars().count() as u16;
+        if ver_width < step_area.width {
+            let ver_x = step_area.right().saturating_sub(ver_width + 1);
+            frame.render_widget(
+                Paragraph::new(Line::from(vec![Span::styled(
+                    ver,
+                    Style::default().fg(Color::Indexed(240)),
+                )])),
+                Rect {
+                    x: ver_x,
+                    y: step_area.y,
+                    width: ver_width,
+                    height: 1,
+                },
+            );
+        }
+    }
+
     let step_prefix_art = " ╰─ ";
     let step_prefix_label = "Flow ";
     let mut step_spans = vec![
