@@ -1,0 +1,441 @@
+#!/usr/bin/env bash
+# Cross-model second opinion — detect current harness, call the opposite CLI.
+#
+# Usage:
+#   second-opinion review  [--range <ref..ref>] [--cwd <path>] [--output <path>]
+#   second-opinion challenge --prompt <file>    [--cwd <path>]
+#   second-opinion audit     --prompt <file>    [--cwd <path>] [--output <path>]
+#   second-opinion quick     --prompt <file>    [--cwd <path>]
+#   second-opinion detect
+#
+# Environment:
+#   SECOND_OPINION_TARGET        Force target CLI (claude|codex)
+#   SECOND_OPINION_TIMEOUT       Timeout in seconds (default: 300)
+#   SECOND_OPINION_CLAUDE_FLAGS  Extra flags for claude -p
+#   SECOND_OPINION_CODEX_FLAGS   Extra flags for codex exec
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Resolve project root for .env sourcing
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+_git_common_dir=$(git -C "$PROJECT_ROOT" rev-parse --git-common-dir 2>/dev/null || echo "")
+if [[ "$_git_common_dir" != ".git" && -n "$_git_common_dir" ]]; then
+  PROJECT_ROOT="$(dirname "$_git_common_dir")"
+fi
+
+# Source env if available
+if [[ -f "$PROJECT_ROOT/.env.local" ]]; then
+  # shellcheck source=/dev/null
+  source "$PROJECT_ROOT/.env.local"
+elif [[ -f "$PROJECT_ROOT/.env" ]]; then
+  # shellcheck source=/dev/null
+  source "$PROJECT_ROOT/.env"
+fi
+
+# Dependency check
+command -v jq >/dev/null 2>&1 || { echo "Error: jq is required but not found" >&2; exit 1; }
+
+# Portability: macOS lacks timeout, try gtimeout fallback
+if ! command -v timeout >/dev/null 2>&1; then
+  if command -v gtimeout >/dev/null 2>&1; then
+    timeout() { gtimeout "$@"; }
+  else
+    # No timeout available — run without time limit
+    timeout() { shift; "$@"; }
+  fi
+fi
+
+# --- Defaults -----------------------------------------------------------------
+
+MODE=""
+PROMPT_FILE=""
+OUTPUT_PATH=""
+TARGET=""
+TIMEOUT="${SECOND_OPINION_TIMEOUT:-300}"
+CWD="."
+RANGE=""
+
+# --- Help ---------------------------------------------------------------------
+
+show_help() {
+  cat <<'HELP'
+Cross-model second opinion via external AI CLI.
+
+Usage:
+  second-opinion review  [--range <ref..ref>] [--cwd <path>] [--output <path>]
+  second-opinion challenge --prompt <file>    [--cwd <path>]
+  second-opinion audit     --prompt <file>    [--cwd <path>] [--output <path>]
+  second-opinion quick     --prompt <file>    [--cwd <path>]
+  second-opinion detect
+
+Modes:
+  review     Code review of pending changes — outputs review-finding JSON
+  challenge  Adversarial analysis — accepts prompt, returns text critique
+  audit      Deep code examination — accepts prompt, returns review-finding JSON
+  quick      Question to alternate model — accepts prompt, returns text
+  detect     Print auto-detected target CLI name and exit
+
+Options:
+  --prompt <file>   Prompt file (required for challenge/audit/quick; or pipe stdin)
+  --output <path>   Write result to file (default: stdout)
+  --target <name>   Override target: claude | codex
+  --range <ref>     Git diff range for review (default: origin/BASE...HEAD)
+  --cwd <path>      Working directory for external CLI (default: .)
+  --timeout <secs>  CLI timeout (default: 300, env: SECOND_OPINION_TIMEOUT)
+  -h, --help        Show this help
+
+Environment (set in .env.local):
+  SECOND_OPINION_TARGET      Force target CLI
+  SECOND_OPINION_TIMEOUT     Timeout in seconds (default: 300)
+  SECOND_OPINION_CLAUDE_CMD  Full claude command (default below)
+  SECOND_OPINION_CODEX_CMD   Full codex command (default below)
+
+Default commands:
+  claude: claude -p --bare --no-session-persistence --model opus --effort max
+            --allowedTools Bash(read-only:true),Read,Glob,Grep
+  codex:  codex exec -m gpt-5.4 -s read-only -c model_reasoning_effort=xhigh
+            --ephemeral
+HELP
+}
+
+# --- Argument parsing ---------------------------------------------------------
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    review|challenge|audit|quick|detect)
+      MODE="$1"; shift ;;
+    --prompt)    [[ $# -ge 2 ]] || { echo "Error: --prompt requires a value" >&2; exit 1; }; PROMPT_FILE="$2"; shift 2 ;;
+    --prompt=*)  PROMPT_FILE="${1#--prompt=}"; shift ;;
+    --output)    [[ $# -ge 2 ]] || { echo "Error: --output requires a value" >&2; exit 1; }; OUTPUT_PATH="$2"; shift 2 ;;
+    --output=*)  OUTPUT_PATH="${1#--output=}"; shift ;;
+    --target)    [[ $# -ge 2 ]] || { echo "Error: --target requires a value" >&2; exit 1; }; TARGET="$2"; shift 2 ;;
+    --target=*)  TARGET="${1#--target=}"; shift ;;
+    --range)     [[ $# -ge 2 ]] || { echo "Error: --range requires a value" >&2; exit 1; }; RANGE="$2"; shift 2 ;;
+    --range=*)   RANGE="${1#--range=}"; shift ;;
+    --cwd)       [[ $# -ge 2 ]] || { echo "Error: --cwd requires a value" >&2; exit 1; }; CWD="$2"; shift 2 ;;
+    --cwd=*)     CWD="${1#--cwd=}"; shift ;;
+    --timeout)   [[ $# -ge 2 ]] || { echo "Error: --timeout requires a value" >&2; exit 1; }; TIMEOUT="$2"; shift 2 ;;
+    --timeout=*) TIMEOUT="${1#--timeout=}"; shift ;;
+    -h|--help)   show_help; exit 0 ;;
+    *)           echo "Error: unknown argument: $1" >&2; exit 1 ;;
+  esac
+done
+
+[[ -n "$MODE" ]] || { echo "Error: mode required (review|challenge|audit|quick|detect)" >&2; exit 1; }
+[[ "$TIMEOUT" =~ ^[0-9]+$ ]] || { echo "Error: --timeout must be a positive integer" >&2; exit 1; }
+
+# --- Harness detection --------------------------------------------------------
+
+detect_current_harness() {
+  # Claude Code sets these env vars
+  if [[ -n "${CLAUDE_CODE:-}" ]] || [[ -n "${CLAUDE_PROJECT_DIR:-}" ]]; then
+    echo "claude"
+    return
+  fi
+  # Codex sandbox detection
+  if [[ -n "${CODEX_SANDBOX:-}" ]]; then
+    echo "codex"
+    return
+  fi
+  # Process-tree fallback: check if parent is a known harness
+  local parent_cmd
+  parent_cmd=$(ps -o comm= -p "$PPID" 2>/dev/null || echo "")
+  case "$parent_cmd" in
+    claude*) echo "claude"; return ;;
+    codex*)  echo "codex"; return ;;
+  esac
+  echo "unknown"
+}
+
+resolve_target() {
+  # Explicit flag
+  if [[ -n "$TARGET" ]]; then echo "$TARGET"; return; fi
+  # Env var override
+  if [[ -n "${SECOND_OPINION_TARGET:-}" ]]; then echo "$SECOND_OPINION_TARGET"; return; fi
+
+  # Auto-detect: call the opposite of current harness
+  local current
+  current=$(detect_current_harness)
+  case "$current" in
+    claude) echo "codex" ;;
+    codex)  echo "claude" ;;
+    *)
+      # Unknown harness — pick whichever external CLI is available
+      if command -v codex >/dev/null 2>&1; then echo "codex"
+      elif command -v claude >/dev/null 2>&1; then echo "claude"
+      else echo ""; fi
+      ;;
+  esac
+}
+
+TARGET_CLI=$(resolve_target)
+
+# Handle detect mode
+if [[ "$MODE" == "detect" ]]; then
+  if [[ -n "$TARGET_CLI" ]] && command -v "$TARGET_CLI" >/dev/null 2>&1; then
+    echo "$TARGET_CLI"
+    exit 0
+  else
+    echo "none"
+    exit 1
+  fi
+fi
+
+# Validate target
+if [[ -z "$TARGET_CLI" ]]; then
+  echo '{"error": "No external CLI found. Install claude or codex CLI."}' >&2
+  exit 1
+fi
+if ! command -v "$TARGET_CLI" >/dev/null 2>&1; then
+  echo "{\"error\": \"CLI not found: $TARGET_CLI. Install it or set SECOND_OPINION_TARGET.\"}" >&2
+  exit 1
+fi
+
+# Validate CWD
+[[ -d "$CWD" ]] || { echo "Error: --cwd directory not found: $CWD" >&2; exit 1; }
+
+echo "→ second-opinion: target=$TARGET_CLI mode=$MODE cwd=$CWD" >&2
+
+# --- Prompt construction (review mode) ----------------------------------------
+
+build_review_prompt() {
+  local cwd="$1"
+  local range="$2"
+
+  local diff_cmd
+  if [[ -n "$range" ]]; then
+    diff_cmd="git diff $range"
+  else
+    local base_branch
+    base_branch=${WORKTREE_DEFAULT_BRANCH:-$(git -C "$cwd" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || true)}
+    [[ -n "$base_branch" ]] || base_branch=main
+    diff_cmd="git diff origin/${base_branch}...HEAD"
+  fi
+
+  local ts
+  ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+  cat <<PROMPT
+You are a code reviewer providing a cross-model second opinion. Find real bugs, errors, security issues, and logic problems in the code changes.
+
+Run this command to see the changes:
+  $diff_cmd
+
+Then read changed files that need more context to understand the diff.
+
+Focus on:
+- Bugs and logic errors
+- Security vulnerabilities (injection, auth bypass, data exposure)
+- Race conditions and concurrency issues
+- Resource leaks (file handles, connections, memory)
+- Error handling gaps (silent failures, swallowed errors)
+- Performance problems in hot paths
+- API contract violations
+
+Skip:
+- Style and formatting preferences
+- Minor naming opinions
+- Documentation gaps (unless API docs are factually wrong)
+- Test coverage suggestions (unless a critical code path is completely untested)
+
+Output ONLY valid JSON — no markdown fences, no explanation before or after the JSON:
+
+{
+  "agent": "external-${TARGET_CLI}",
+  "timestamp": "${ts}",
+  "verdict": "pass or action_required",
+  "summary": "1-2 sentence summary of findings",
+  "blockers": [
+    {
+      "id": 1,
+      "title": "Concise issue title (5-10 words)",
+      "location": "src/file.rs (\`function_name\`)",
+      "description": "What the bug/issue is",
+      "recommendation": "How to fix it",
+      "priority": 1,
+      "estimate": 2
+    }
+  ],
+  "suggestions": [
+    {
+      "id": 1,
+      "title": "Concise issue title (5-10 words)",
+      "location": "src/file.rs (\`function_name\`)",
+      "description": "What could be improved",
+      "recommendation": "How to improve it",
+      "priority": 3,
+      "estimate": 2,
+      "category": "fix"
+    }
+  ],
+  "questions": [],
+  "qa_metadata": {}
+}
+
+Rules:
+- verdict: "action_required" if 1+ items in blockers[], "pass" if blockers[] is empty
+- Suggestions may exist even when verdict is "pass"
+- location: file path with function/struct names in backticks — NO line numbers (they go stale)
+- priority: 1=Urgent, 2=High, 3=Normal, 4=Low
+- estimate: 1=hours, 2=half-day, 3=day, 4=2-3 days, 5=week+
+- category: "fix" (apply in this PR) or "issue" (track separately)
+- Only report genuine issues you are confident about. No speculative warnings. If the code is clean, return verdict "pass" with empty arrays.
+PROMPT
+}
+
+# --- Read prompt (challenge/audit/quick modes) --------------------------------
+
+read_prompt() {
+  if [[ -n "$PROMPT_FILE" ]]; then
+    [[ -f "$PROMPT_FILE" ]] || { echo "Error: prompt file not found: $PROMPT_FILE" >&2; exit 1; }
+    cat "$PROMPT_FILE"
+  elif [[ ! -t 0 ]]; then
+    cat
+  else
+    echo "Error: $MODE mode requires --prompt <file> or piped stdin" >&2
+    exit 1
+  fi
+}
+
+# --- Build final prompt -------------------------------------------------------
+
+PROMPT=""
+case "$MODE" in
+  review)    PROMPT=$(build_review_prompt "$CWD" "$RANGE") ;;
+  challenge) PROMPT=$(read_prompt) ;;
+  audit)     PROMPT=$(read_prompt) ;;
+  quick)     PROMPT=$(read_prompt) ;;
+esac
+
+# Guard: empty prompt (stdin was closed with no data)
+if [[ -z "$PROMPT" ]]; then
+  echo "Error: empty prompt — provide --prompt <file> or pipe content via stdin" >&2
+  exit 1
+fi
+
+# Write prompt to temp file — use printf to avoid echo interpreting leading dashes
+PROMPT_TMP=$(mktemp)
+trap 'rm -f "$PROMPT_TMP"' EXIT
+printf '%s\n' "$PROMPT" > "$PROMPT_TMP"
+
+STDERR_TMP=$(mktemp)
+trap 'rm -f "$PROMPT_TMP" "$STDERR_TMP"' EXIT
+
+# --- Invoke external CLI ------------------------------------------------------
+
+RESULT=""
+EXIT_CODE=0
+
+# Full command templates — override the entire command via .env.local
+CLAUDE_CMD="${SECOND_OPINION_CLAUDE_CMD:-claude -p --bare --no-session-persistence --model opus --effort max --allowedTools Bash(read-only:true),Read,Glob,Grep}"
+CODEX_CMD="${SECOND_OPINION_CODEX_CMD:-codex exec -m gpt-5.4 -s read-only -c model_reasoning_effort=xhigh --ephemeral}"
+
+case "$TARGET_CLI" in
+  claude)
+    echo "→ cmd: $CLAUDE_CMD" >&2
+    # shellcheck disable=SC2086
+    RESULT=$(cd "$CWD" && timeout "$TIMEOUT" \
+      $CLAUDE_CMD \
+      < "$PROMPT_TMP" 2>"$STDERR_TMP") || EXIT_CODE=$?
+    ;;
+  codex)
+    echo "→ cmd: $CODEX_CMD" >&2
+    # shellcheck disable=SC2086
+    RESULT=$(cd "$CWD" && timeout "$TIMEOUT" \
+      $CODEX_CMD \
+      < "$PROMPT_TMP" 2>"$STDERR_TMP") || EXIT_CODE=$?
+    ;;
+  *)
+    echo "{\"error\": \"Unknown target: $TARGET_CLI\"}" >&2
+    exit 1
+    ;;
+esac
+
+if [[ $EXIT_CODE -eq 124 ]]; then
+  echo "{\"error\": \"Timeout after ${TIMEOUT}s\", \"target\": \"$TARGET_CLI\"}" >&2
+  exit 1
+elif [[ $EXIT_CODE -ne 0 ]]; then
+  echo "{\"error\": \"$TARGET_CLI exited with code $EXIT_CODE\", \"target\": \"$TARGET_CLI\"}" >&2
+  if [[ -s "$STDERR_TMP" ]]; then
+    echo "--- stderr ---" >&2
+    head -20 "$STDERR_TMP" >&2
+  fi
+  exit 1
+fi
+
+echo "→ Response received (${#RESULT} bytes)" >&2
+
+# --- Extract JSON (review/audit modes) ----------------------------------------
+
+extract_json() {
+  local input="$1"
+
+  # Whole output is valid JSON
+  if printf '%s' "$input" | jq -e . >/dev/null 2>&1; then
+    printf '%s' "$input" | jq .
+    return 0
+  fi
+
+  # Extract from first ```json ... ``` code fence (stop at first closing fence)
+  local fenced
+  fenced=$(printf '%s' "$input" | sed -n '/^```json/{n; :a; /^```$/q; p; n; ba}')
+  if [[ -n "$fenced" ]] && printf '%s' "$fenced" | jq -e . >/dev/null 2>&1; then
+    printf '%s' "$fenced" | jq .
+    return 0
+  fi
+
+  # Extract from first ``` ... ``` fence (no language tag)
+  fenced=$(printf '%s' "$input" | sed -n '/^```$/{n; :a; /^```$/q; p; n; ba}')
+  if [[ -n "$fenced" ]] && printf '%s' "$fenced" | jq -e . >/dev/null 2>&1; then
+    printf '%s' "$fenced" | jq .
+    return 0
+  fi
+
+  # Last resort: extract from first { to last } (trim trailing prose)
+  local from_brace
+  from_brace=$(printf '%s' "$input" | sed -n '/^{/,$ p')
+  if [[ -n "$from_brace" ]]; then
+    # Single-line JSON (common): try first line alone
+    local first_line
+    first_line=$(printf '%s\n' "$from_brace" | head -1)
+    if printf '%s' "$first_line" | jq -e . >/dev/null 2>&1; then
+      printf '%s' "$first_line" | jq .
+      return 0
+    fi
+    # Multiline JSON: truncate at last line starting with }
+    local last_brace_line trimmed
+    last_brace_line=$(printf '%s\n' "$from_brace" | grep -n '^}' | tail -1 | cut -d: -f1)
+    if [[ -n "$last_brace_line" ]]; then
+      trimmed=$(printf '%s\n' "$from_brace" | head -n "$last_brace_line")
+      if printf '%s' "$trimmed" | jq -e . >/dev/null 2>&1; then
+        printf '%s' "$trimmed" | jq .
+        return 0
+      fi
+    fi
+  fi
+
+  return 1
+}
+
+if [[ "$MODE" == "review" || "$MODE" == "audit" ]]; then
+  JSON=$(extract_json "$RESULT") || {
+    echo "{\"error\": \"Failed to extract JSON from $TARGET_CLI response\", \"raw_length\": ${#RESULT}}" >&2
+    echo "--- First 30 lines of raw response ---" >&2
+    printf '%s\n' "$RESULT" | head -30 >&2
+    exit 1
+  }
+  RESULT="$JSON"
+fi
+
+# --- Output -------------------------------------------------------------------
+
+if [[ -n "$OUTPUT_PATH" ]]; then
+  mkdir -p "$(dirname "$OUTPUT_PATH")"
+  printf '%s\n' "$RESULT" > "$OUTPUT_PATH"
+  echo "→ Written: $OUTPUT_PATH" >&2
+  echo "$OUTPUT_PATH"
+else
+  printf '%s\n' "$RESULT"
+fi

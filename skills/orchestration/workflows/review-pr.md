@@ -105,6 +105,47 @@ Re-review cycle [N]. Already resolved — do NOT re-report:
 </if>
 </delegation_format>
 
+## 2.1 External Review (Optional)
+
+**Skip if** second-opinion skill is not installed (`.agents/skills/second-opinion/scripts/second-opinion` does not exist). → § 3
+
+**Detect external target**:
+```bash
+EXTERNAL_TARGET=$(.agents/skills/second-opinion/scripts/second-opinion detect 2>/dev/null) || true
+```
+
+**Skip if** `EXTERNAL_TARGET` is empty or `"none"`. → § 3
+
+→ Ask user:
+
+| Question | Type |
+|----------|------|
+| `In addition to internal agent reviews, request an external code review from [EXTERNAL_TARGET]? (typically 1-3 min)` | `Yes` \| `No` |
+
+**If No** → § 3
+
+**If Yes** — this runs sequentially before § 3 (blocking call, default timeout from `SECOND_OPINION_TIMEOUT` env var or 300s):
+
+```bash
+TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+EXTERNAL_OUTPUT="[WORKTREE_PATH]/tmp/review-external-${TIMESTAMP}.json"
+.agents/skills/second-opinion/scripts/second-opinion review \
+  --cwd [WORKTREE_PATH] \
+  --output "$EXTERNAL_OUTPUT"
+```
+
+**On success** — validate and append to state:
+```bash
+# Basic schema check: verdict field must exist
+if jq -e '.verdict' "$EXTERNAL_OUTPUT" >/dev/null 2>&1; then
+  .agents/skills/orchestration/scripts/workflow-state append [ISSUE_ID] json_paths "$EXTERNAL_OUTPUT"
+else
+  echo "Warning: external review JSON missing verdict field — skipping" >&2
+fi
+```
+
+**On failure**: Report error to user but **continue** — external review is advisory, not blocking. Do not halt the review pipeline.
+
 ## 3. Collect & Present Results
 
 Wait for all review agents to complete. Do NOT shutdown — agents needed for potential re-review in § 4.
@@ -127,6 +168,8 @@ Overall verdict: `action_required` if any agent has blockers, `pass` otherwise.
 |-------|---------|------|
 | **Overall** | `[pass\|action_required]` | |
 | [For each agent in AGENTS:] |
+| [AGENT] | `[verdict]` | `[path]` |
+| [If external review JSON exists in json_paths (agent field starts with "external-"):] |
 | [AGENT] | `[verdict]` | `[path]` |
 </output_format>
 
