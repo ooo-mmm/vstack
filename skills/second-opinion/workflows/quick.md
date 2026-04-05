@@ -18,9 +18,17 @@ Answer concisely and directly. If you need to examine code in this project to an
 
 ## 2. Run Script
 
+Either pass the prompt file or the question inline:
+
 ```bash
+# With prompt file:
 .agents/skills/second-opinion/scripts/second-opinion quick \
   --prompt tmp/second-opinion-prompt.md \
+  --cwd [PROJECT_PATH]
+
+# Or inline (when no file context is needed):
+.agents/skills/second-opinion/scripts/second-opinion quick \
+  "[QUESTION]" \
   --cwd [PROJECT_PATH]
 ```
 

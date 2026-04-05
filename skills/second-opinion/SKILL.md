@@ -53,6 +53,8 @@ All modes accept:
 - Execute all workflow sections in order. The workflow decides what to skip via "**Skip if**" conditions — never skip based on your own scope assessment.
 - `<output_format>` tags are literal templates: fill `[PLACEHOLDERS]`, omit empty lines, add nothing else, do not paraphrase.
 - **Do not pass `--timeout` or `--target`** — the script reads these from `.env.local` automatically. Only pass `--timeout` if the user explicitly asks for a different value for this specific call.
+- **Always pass `--cwd`** with the absolute project root path. Never use `--cwd .` — the external CLI needs the full path to find project files.
+- For `quick` mode, you can pass the question as an inline argument instead of writing a file: `second-opinion quick "your question here" --cwd /path`
 
 ## Configuration
 
