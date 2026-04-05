@@ -47,6 +47,7 @@ fi
 
 MODE=""
 PROMPT_FILE=""
+INLINE_PROMPT=""
 OUTPUT_PATH=""
 TARGET=""
 TIMEOUT="${SECOND_OPINION_TIMEOUT:-300}"
@@ -60,10 +61,10 @@ show_help() {
 Cross-model second opinion via external AI CLI.
 
 Usage:
-  second-opinion review  [--range <ref..ref>] [--cwd <path>] [--output <path>]
-  second-opinion challenge --prompt <file>    [--cwd <path>]
-  second-opinion audit     --prompt <file>    [--cwd <path>] [--output <path>]
-  second-opinion quick     --prompt <file>    [--cwd <path>]
+  second-opinion review    [--range <ref..ref>] [--cwd <path>] [--output <path>]
+  second-opinion challenge [--prompt <file> | "text"]  [--cwd <path>]
+  second-opinion audit     [--prompt <file> | "text"]  [--cwd <path>] [--output <path>]
+  second-opinion quick     [--prompt <file> | "text"]  [--cwd <path>]
   second-opinion detect
 
 Modes:
@@ -74,7 +75,7 @@ Modes:
   detect     Print auto-detected target CLI name and exit
 
 Options:
-  --prompt <file>   Prompt file (required for challenge/audit/quick; or pipe stdin)
+  --prompt <file>   Prompt file (or pass text as positional arg, or pipe stdin)
   --output <path>   Write result to file (default: stdout)
   --target <name>   Override target: claude | codex
   --range <ref>     Git diff range for review (default: origin/BASE...HEAD)
@@ -115,7 +116,14 @@ while [[ $# -gt 0 ]]; do
     --timeout)   [[ $# -ge 2 ]] || { echo "Error: --timeout requires a value" >&2; exit 1; }; TIMEOUT="$2"; shift 2 ;;
     --timeout=*) TIMEOUT="${1#--timeout=}"; shift ;;
     -h|--help)   show_help; exit 0 ;;
-    *)           echo "Error: unknown argument: $1" >&2; exit 1 ;;
+    *)
+      # Non-flag arg after mode → treat as inline prompt text
+      if [[ -n "$MODE" && -z "$PROMPT_FILE" ]]; then
+        INLINE_PROMPT="$1"; shift
+      else
+        echo "Error: unknown argument: $1" >&2; exit 1
+      fi
+      ;;
   esac
 done
 
@@ -261,10 +269,12 @@ read_prompt() {
   if [[ -n "$PROMPT_FILE" ]]; then
     [[ -f "$PROMPT_FILE" ]] || { echo "Error: prompt file not found: $PROMPT_FILE" >&2; exit 1; }
     cat "$PROMPT_FILE"
+  elif [[ -n "$INLINE_PROMPT" ]]; then
+    printf '%s\n' "$INLINE_PROMPT"
   elif [[ ! -t 0 ]]; then
     cat
   else
-    echo "Error: $MODE mode requires --prompt <file> or piped stdin" >&2
+    echo "Error: $MODE mode requires --prompt <file>, inline text, or piped stdin" >&2
     exit 1
   fi
 }
