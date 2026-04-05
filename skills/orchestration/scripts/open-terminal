@@ -22,7 +22,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Resolve project root (works in worktrees and main repos)
 PROJECT_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null)"
-SKILLS_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+SKILLS_DIR="$PROJECT_ROOT/.agents/skills"
 ENV_FILE="$PROJECT_ROOT/.env.local"
 if [[ -f "$ENV_FILE" ]]; then
   # shellcheck source=/dev/null

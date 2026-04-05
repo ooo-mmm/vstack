@@ -6,8 +6,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SKILLS_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+SKILLS_DIR="$PROJECT_ROOT/.agents/skills"
 
 # Source .env.local for project config (ISSUE_PATTERN, GH_BOT_TOKEN, etc.)
 ENV_FILE="$PROJECT_ROOT/.env.local"
