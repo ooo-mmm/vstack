@@ -86,6 +86,34 @@ pub fn inject_skill_instructions(skill_md_path: &Path, instructions: &str) {
     let _ = std::fs::write(skill_md_path, new_content);
 }
 
+/// Inject a do-not-edit notice after frontmatter in a SKILL.md file.
+pub fn inject_vstack_notice(skill_md_path: &Path) {
+    let Ok(content) = std::fs::read_to_string(skill_md_path) else {
+        return;
+    };
+
+    let notice =
+        "> **Never edit this file directly.** To make additions or modifications, edit the appropriate section in `./vstack.toml`.";
+
+    // Already present? Skip.
+    if content.contains("Never edit this file directly") {
+        return;
+    }
+
+    let new_content = if let Some(pos) = find_frontmatter_end(&content) {
+        format!(
+            "{}\n{}\n\n{}",
+            &content[..pos],
+            notice,
+            content[pos..].trim_start_matches('\n')
+        )
+    } else {
+        format!("{}\n\n{}", notice, content)
+    };
+
+    let _ = std::fs::write(skill_md_path, new_content);
+}
+
 /// Find the byte offset just after the closing `---` of YAML frontmatter.
 /// Returns None if no frontmatter is found.
 fn find_frontmatter_end(content: &str) -> Option<usize> {

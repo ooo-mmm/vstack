@@ -91,10 +91,11 @@ pub fn install_skill(
                 copy_dir(&skill.source_dir, &canonical)?;
 
                 // Inject skill instructions from project config
+                let skill_md = canonical.join("SKILL.md");
                 if let Some(text) = instructions {
-                    let skill_md = canonical.join("SKILL.md");
                     crate::skill::inject_skill_instructions(&skill_md, text);
                 }
+                crate::skill::inject_vstack_notice(&skill_md);
 
                 // Mark as done for this process
                 let _ = std::fs::write(&marker, std::process::id().to_string());
@@ -137,10 +138,11 @@ pub fn install_skill(
             copy_dir(&skill.source_dir, &dest)?;
 
             // Inject skill instructions from project config
+            let skill_md = dest.join("SKILL.md");
             if let Some(text) = instructions {
-                let skill_md = dest.join("SKILL.md");
                 crate::skill::inject_skill_instructions(&skill_md, text);
             }
+            crate::skill::inject_vstack_notice(&skill_md);
 
             // Write marker so reconciliation can detect vstack-managed skills
             let _ = std::fs::write(
