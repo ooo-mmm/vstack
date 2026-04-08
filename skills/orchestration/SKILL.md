@@ -64,6 +64,8 @@ When invoked with `<command> [args]`, route to the corresponding workflow.
 3. Current directory is a worktree (git common dir differs from `.git`) → `workflows/start-worktree.md`
 4. Otherwise → `workflows/start.md`
 
+> **Existing worktree guardrail**: If you are already working within a worktree, never automatically create a new branch or worktree to work on an issue. Always explicitly ask the user first.
+
 ### Development
 
 | Command | Arguments | Workflow | Notes |
