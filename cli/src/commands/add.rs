@@ -790,8 +790,13 @@ fn reconcile_agents(
         let skill_pairs =
             crate::resolve::resolve_skill_pairs(&skill_names, &source_skills);
 
-        let optional_entries =
-            mapping.optional_skills_for_agent(&agent.name, &installed_skills);
+        let optional_entries = if let Some(project_list) =
+            project_config.agent_skills_optional.get(&agent.name)
+        {
+            project_list.clone()
+        } else {
+            mapping.optional_skills_for_agent(&agent.name, &installed_skills)
+        };
         let optional_pairs = crate::resolve::resolve_optional_skill_pairs(&optional_entries);
 
         let matched_hooks: Vec<crate::hook::Hook> = mapping
