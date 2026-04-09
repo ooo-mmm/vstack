@@ -46,7 +46,7 @@ Set in `.env.local` or export in the shell. Helper scripts source `.env.local` a
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `ORCH_STATE_DIR` | State file directory | `tmp` |
-| `ISSUE_PATTERN` | Issue ID regex for branch names | `[A-Z]+-[0-9]+` |
+| `GH_ISSUE_PATTERN` | Issue ID regex for branch names | `[A-Z]+-[0-9]+` |
 | `BOT_REVIEWERS` | Comma-separated review bot usernames | auto-detect |
 | `BOT_CHECK_NAME` | CI check name for early review detection | — |
 

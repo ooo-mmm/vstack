@@ -9,7 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 SKILLS_DIR="$PROJECT_ROOT/.agents/skills"
 
-# Source .env.local for project config (ISSUE_PATTERN, GH_BOT_TOKEN, etc.)
+# Source .env.local for project config (GH_ISSUE_PATTERN, GH_BOT_TOKEN, etc.)
 ENV_FILE="$PROJECT_ROOT/.env.local"
 if [[ -f "$ENV_FILE" ]]; then
   # shellcheck source=/dev/null
@@ -21,7 +21,15 @@ LINEAR="$SKILLS_DIR/linear/scripts/linear.sh"
 GITHUB="$SKILLS_DIR/github/scripts/github.sh"
 
 OUTPUT_FORMAT="dashboard"
-[[ "${1:-}" == "--json" ]] && OUTPUT_FORMAT="json"
+ISSUE_ID_ARG=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --json) OUTPUT_FORMAT="json"; shift ;;
+    --)     shift; break ;;
+    -*)     shift ;;  # ignore unknown flags
+    *)      ISSUE_ID_ARG="$1"; shift ;;
+  esac
+done
 
 json_or_default() {
   local fallback="$1"
@@ -93,6 +101,15 @@ fi
 
 BRANCH=$(git branch --show-current 2>/dev/null || echo "main")
 
+# Resolve ISSUE_ID from explicit arg or branch name
+_ISSUE_PAT="${GH_ISSUE_PATTERN:-[A-Z]+-[0-9]+}"
+if [[ -n "$ISSUE_ID_ARG" ]]; then
+  ISSUE_ID="$ISSUE_ID_ARG"
+else
+  ISSUE_ID=$(printf '%s' "$BRANCH" | grep -oiE "$_ISSUE_PAT" | head -1 | tr '[:lower:]' '[:upper:]' || true)
+fi
+ISSUE_ID="${ISSUE_ID:-}"
+
 # Worktree detection
 IS_WORKTREE="false"
 WORKTREE_NAME=""
@@ -119,7 +136,8 @@ if [[ -n "$GIT_COMMON_DIR" && "$GIT_COMMON_DIR" != ".git" && "$GIT_COMMON_DIR" !
       --arg lang "$LANG_NAME" \
       --arg lang_version "$LANG_VERSION" \
       --arg branch "$BRANCH" \
-      '{is_worktree: true, worktree_name: $worktree_name, platform: $platform, lang: $lang, lang_version: $lang_version, branch: $branch, gh_auth: $gh, linear_auth: $linear, lsp: $lsp}'
+      --arg issue_id "$ISSUE_ID" \
+      '{is_worktree: true, worktree_name: $worktree_name, platform: $platform, lang: $lang, lang_version: $lang_version, branch: $branch, issue_id: $issue_id, gh_auth: $gh, linear_auth: $linear, lsp: $lsp}'
   else
     GH_ICON=$([[ "$WT_GH_OK" == "true" ]] && echo "✓" || echo "✗")
     LINEAR_ICON=$([[ "$WT_LINEAR_OK" == "true" ]] && echo "✓" || echo "✗")
@@ -431,9 +449,6 @@ if [[ -n "$PR_STATUS_JSON" && "$PR_STATUS_JSON" != "[]" ]] && [[ -x "$GITHUB" ]]
   fi
 fi
 
-# Issue pattern for extracting IDs from PR titles
-_ISSUE_PAT="${ISSUE_PATTERN:-[A-Z]+-[0-9]+}"
-
 # Build final JSON
 SESSION_JSON=$(jq -n \
   --arg platform "$PLATFORM" \
@@ -441,6 +456,7 @@ SESSION_JSON=$(jq -n \
   --arg lang_version "$LANG_VERSION" \
   --arg lang_lsp "${LANG_LSP:-}" \
   --arg branch "$BRANCH" \
+  --arg issue_id "$ISSUE_ID" \
   --arg build_status "$BUILD_STATUS" \
   --arg repo_owner "${REPO_OWNER:-}" \
   --arg repo_name "${REPO_NAME:-}" \
@@ -459,6 +475,7 @@ SESSION_JSON=$(jq -n \
   lang_version: $lang_version,
   lang_lsp: $lang_lsp,
   branch: $branch,
+  issue_id: $issue_id,
   build_status: $build_status,
   uncommitted: $uncommitted,
   worktrees: $worktrees,

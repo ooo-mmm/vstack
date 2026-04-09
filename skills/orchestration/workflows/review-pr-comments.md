@@ -22,7 +22,7 @@ Route PR review comments to domain agents for analysis, auto-fix valid items, lo
 
 **Standalone init** (`lifecycle: "self"` only):
 ```bash
-ISSUE_ID=$(git rev-parse --abbrev-ref HEAD | grep -oiP "$ISSUE_PATTERN")
+ISSUE_ID=$(git rev-parse --abbrev-ref HEAD | grep -oiP "$GH_ISSUE_PATTERN")
 PR_NUMBER=$(gh pr view --json number -q .number 2>/dev/null)
 if ! .agents/skills/orchestration/scripts/workflow-state exists $ISSUE_ID; then
   WT_PATH=$(.agents/skills/worktree/scripts/worktree path $ISSUE_ID 2>/dev/null || echo ".")

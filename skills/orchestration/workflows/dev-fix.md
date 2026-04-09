@@ -21,7 +21,7 @@ Delegate fix items to specialist dev agent. Works standalone (user-initiated) or
 
 **Standalone init** (`lifecycle: "self"` only):
 ```bash
-ISSUE_ID=${ARG:-$(git rev-parse --abbrev-ref HEAD | grep -oiP "$ISSUE_PATTERN")}
+ISSUE_ID=${ARG:-$(git rev-parse --abbrev-ref HEAD | grep -oiP "$GH_ISSUE_PATTERN")}
 WT_PATH=$(.agents/skills/worktree/scripts/worktree path $ISSUE_ID 2>/dev/null || pwd)
 ```
 

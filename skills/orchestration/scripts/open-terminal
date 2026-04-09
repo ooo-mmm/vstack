@@ -14,7 +14,7 @@
 #   (default)      Auto-detect: tmux if $TMUX set, else ghostty/GUI terminal
 #
 # Environment:
-#   ISSUE_PATTERN  - Regex pattern matching issue IDs (default: "[A-Z]+-[0-9]+")
+#   GH_ISSUE_PATTERN  - Regex pattern matching issue IDs (default: "[A-Z]+-[0-9]+")
 
 set -euo pipefail
 
@@ -36,7 +36,7 @@ fi
 WORKTREE_CLI="${WORKTREE_CLI:-$SKILLS_DIR/worktree/scripts/worktree}"
 
 # Configurable issue pattern (default: JIRA-style ABC-123)
-ISSUE_PATTERN="${ISSUE_PATTERN:-[A-Z]+-[0-9]+}"
+GH_ISSUE_PATTERN="${GH_ISSUE_PATTERN:-[A-Z]+-[0-9]+}"
 
 TERMINAL_MODE=""
 HARNESS=""
@@ -67,13 +67,13 @@ while [[ $# -gt 0 ]]; do
       echo "  opencode → opencode run '/orchestration start ISSUE'"
       echo ""
       echo "Environment:"
-      echo "  ISSUE_PATTERN  Regex for issue IDs (default: [A-Z]+-[0-9]+)"
+      echo "  GH_ISSUE_PATTERN  Regex for issue IDs (default: [A-Z]+-[0-9]+)"
       exit 0
       ;;
     [0-9]*) GROUP_ID="$1"; shift ;;
     *)
       # Match against configurable issue pattern
-      if echo "$1" | grep -qE "^${ISSUE_PATTERN}$"; then
+      if echo "$1" | grep -qE "^${GH_ISSUE_PATTERN}$"; then
         ISSUES+=("$(echo "$1" | tr '[:lower:]' '[:upper:]')"); shift
       else
         echo "Error: unexpected argument: $1" >&2; exit 1

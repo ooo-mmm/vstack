@@ -26,7 +26,7 @@ WT_PATH=$(.agents/skills/worktree/scripts/worktree path $ISSUE_ID 2>/dev/null ||
 **Standalone init** (`lifecycle: "self"` only):
 ```bash
 # Extract issue from branch if not provided
-ISSUE_ID=$(git rev-parse --abbrev-ref HEAD | grep -oiP "$ISSUE_PATTERN")
+ISSUE_ID=$(git rev-parse --abbrev-ref HEAD | grep -oiP "$GH_ISSUE_PATTERN")
 WT_PATH=$(.agents/skills/worktree/scripts/worktree path $ISSUE_ID 2>/dev/null || echo ".")
 # Init workflow state if not exists
 if ! .agents/skills/orchestration/scripts/workflow-state exists $ISSUE_ID; then

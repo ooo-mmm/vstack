@@ -18,7 +18,7 @@ Delegate development work to specialist agent(s). Handles single issues and bund
 **Standalone init** (`lifecycle: "self"` only):
 ```bash
 # Use argument if provided, else extract from branch
-ISSUE_ID=${ARG:-$(git rev-parse --abbrev-ref HEAD | grep -oiP "$ISSUE_PATTERN")}
+ISSUE_ID=${ARG:-$(git rev-parse --abbrev-ref HEAD | grep -oiP "$GH_ISSUE_PATTERN")}
 WT_PATH=$(.agents/skills/worktree/scripts/worktree path $ISSUE_ID 2>/dev/null || pwd)
 
 # Init workflow state if not exists

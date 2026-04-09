@@ -19,7 +19,7 @@ Post summary comments to git host and issue tracker, and selective handoff comme
 **Standalone init** (`lifecycle: "self"` only):
 ```bash
 # Extract issue from branch if not provided
-ISSUE_ID=$(git rev-parse --abbrev-ref HEAD | grep -oiP "$ISSUE_PATTERN")
+ISSUE_ID=$(git rev-parse --abbrev-ref HEAD | grep -oiP "$GH_ISSUE_PATTERN")
 WT_PATH=$(.agents/skills/worktree/scripts/worktree path $ISSUE_ID 2>/dev/null || echo ".")
 PR_NUMBER=$(.agents/skills/github/scripts/github.sh -C "$WT_PATH" pr-view --json number 2>/dev/null | jq -r .number)
 # Init workflow state if not exists

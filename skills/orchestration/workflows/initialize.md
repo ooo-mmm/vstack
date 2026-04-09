@@ -18,24 +18,23 @@ Set up team, auth, cache, and workflow state for a worktree session.
 
 ## 1. Initialize
 
-**Create team first — before any other steps.**
+> If you are running in **Claude Code**: Create a team before any other steps — before auth checks, cache sync, or workflow-state init. All agents launch within the team. Other harnesses have no team concept; skip this.
 
-1. **Extract ISSUE_ID**:
-   - From argument if provided
-   - Otherwise from branch: `git rev-parse --abbrev-ref HEAD` → parse `$ISSUE_PATTERN` (case-insensitive, project-configurable)
+1. **Run**: `.agents/skills/orchestration/scripts/session-init --json [ISSUE_ID]`
+   - Pass `[ISSUE_ID]` as a positional argument if the caller provided one; otherwise omit it.
+   - The script resolves `ISSUE_ID` from the argument or current branch (via `$GH_ISSUE_PATTERN`, case-insensitive) and returns it as `issue_id` in the JSON output (alongside `branch`).
+   - Read `issue_id` from the output and use it for subsequent steps. If empty (branch does not match the pattern), fall back to the sanitized branch name — replace `/` with `-` — so workflow-state and team naming still work for non-issue branches.
 
-2. **Run**: `.agents/skills/orchestration/scripts/session-init`
+2. **If `gh_auth` is false or `linear_auth.ok` is false** → report error and fix before proceeding.
 
-3. **If `gh_auth` is false or issue tracker auth is false** → report error and fix before proceeding.
+3. **Set `WORKTREE_PATH`** to current working directory.
 
-4. **Set `WORKTREE_PATH`** to current working directory.
-
-5. **Sync cache**:
+4. **Sync cache**:
    ```bash
    .agents/skills/linear/scripts/linear.sh sync --reconcile
    ```
 
-6. **Init workflow state**:
+5. **Init workflow state**:
    ```bash
    .agents/skills/orchestration/scripts/workflow-state init [ISSUE_ID] --team "[ISSUE_ID_LOWERCASE]" \
      --agent "[AGENT]" --worktree "[WORKTREE_PATH]" --branch "[BRANCH]"

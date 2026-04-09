@@ -15,7 +15,7 @@ On-demand code review for the current working session. Reviews recent commits, p
 
 **Init:**
 ```bash
-ISSUE_ID=$(git rev-parse --abbrev-ref HEAD | grep -oiP "$ISSUE_PATTERN") || true
+ISSUE_ID=$(git rev-parse --abbrev-ref HEAD | grep -oiP "$GH_ISSUE_PATTERN") || true
 WT_PATH=$(pwd)
 
 if [[ -n "$ISSUE_ID" ]] && ! .agents/skills/orchestration/scripts/workflow-state exists $ISSUE_ID; then

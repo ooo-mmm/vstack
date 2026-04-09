@@ -226,7 +226,7 @@ Key fields per schema:
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `ORCH_STATE_DIR` | Override state file directory | `tmp` |
-| `ISSUE_PATTERN` | Regex for issue IDs in branch names | — |
+| `GH_ISSUE_PATTERN` | Regex for issue IDs in branch names | — |
 | `BOT_REVIEWERS` | Comma-separated bot usernames to wait for | Auto-detects |
 | `BOT_CHECK_NAME` | CI check name to treat as early review signal | — |
 
