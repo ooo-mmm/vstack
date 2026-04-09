@@ -1,6 +1,10 @@
 #!/bin/bash
 # Portable git worktree manager
 # Usage: worktree create|list|remove|cleanup|path|exists|check|push|fix-links [ID] [options]
+#   create options:
+#     --base BRANCH   Checkout an existing remote branch into the worktree
+#     --from REF      Create a new branch starting from REF (branch, tag, or commit)
+#     --pr NUMBER     Look up the branch from a PR number (implies --base)
 #
 # Layout: project/main (repo) + project/trees/{id} (worktrees)
 # Config: reads .env.local for optional settings (see below)
@@ -135,10 +139,12 @@ case "${1:-}" in
     shift 2
     BASE=""
     BRANCH=""
+    FROM=""
     PR=""
     while [[ $# -gt 0 ]]; do
       case "$1" in
         --base) BASE="$2"; shift 2 ;;
+        --from) FROM="$2"; shift 2 ;;
         --pr) PR="$2"; shift 2 ;;
         *) BRANCH="$1"; shift ;;
       esac
@@ -169,7 +175,26 @@ case "${1:-}" in
       git -C "$PROJECT_ROOT" worktree prune 2>/dev/null || true
     fi
 
-    # 2. If --pr specified, look up the branch from the PR
+    # 2. If --from specified, create a new branch starting from that ref
+    if [[ -n "$FROM" ]]; then
+      fetch_origin
+      BRANCH="${BRANCH:-$(echo "$ISSUE" | tr '[:upper:]' '[:lower:]')}"
+      # Resolve: try origin/$FROM first (remote branch), then $FROM directly (local branch/tag/commit)
+      if git -C "$PROJECT_ROOT" rev-parse --verify "origin/$FROM" &>/dev/null; then
+        START_POINT="origin/$FROM"
+      elif git -C "$PROJECT_ROOT" rev-parse --verify "$FROM" &>/dev/null; then
+        START_POINT="$FROM"
+      else
+        echo "Error: Cannot resolve ref '$FROM'" >&2
+        exit 1
+      fi
+      git -C "$PROJECT_ROOT" worktree add --no-track -b "$BRANCH" "$WT_PATH" "$START_POINT" >/dev/null 2>&1
+      setup_worktree_links "$WT_PATH"
+      echo "$WT_PATH"
+      exit 0
+    fi
+
+    # 3. If --pr specified, look up the branch from the PR (implies --base)
     if [[ -n "$PR" ]] && command -v gh &>/dev/null; then
       BASE=$(gh pr view "$PR" --json headRefName -q .headRefName 2>/dev/null)
       if [[ -z "$BASE" ]]; then
@@ -178,7 +203,7 @@ case "${1:-}" in
       fi
     fi
 
-    # 3. Auto-detect: check if PR exists with expected branch patterns
+    # 4. Auto-detect: check if PR exists with expected branch patterns
     if [[ -z "$BASE" ]] && command -v gh &>/dev/null; then
       ISSUE_LOWER=$(echo "$ISSUE" | tr '[:upper:]' '[:lower:]')
       USER_BRANCH="$ISSUE_LOWER"

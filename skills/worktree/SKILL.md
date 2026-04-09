@@ -3,7 +3,7 @@ name: worktree
 description: "Git worktree management: create, list, remove isolated working copies with env/config symlinks."
 license: MIT
 user-invocable: true
-argument-hint: "create <ID> [--base <ref>] [--pr <N>] | list | remove <ID|path>"
+argument-hint: "create <ID> [--base <branch>] [--from <ref>] [--pr <N>] | list | remove <ID|path>"
 metadata:
   author: vanillagreen
   version: "1.0.0"
@@ -31,3 +31,11 @@ Resolves project root via `git rev-parse`, detects default branch automatically,
 | `exists` | Check if worktree exists for issue ID |
 | `check` | Pre-create git state check (JSON: uncommitted, unpushed) |
 | `push` | Push worktree branch with auto-rebase |
+
+### `create` flags
+
+| Flag | Effect |
+|------|--------|
+| `--base BRANCH` | Checkout an existing remote branch into the worktree |
+| `--from REF` | Create a new branch (named after ID) starting from REF (branch, tag, or commit) |
+| `--pr NUMBER` | Look up the branch from a GitHub PR number (implies `--base`) |
