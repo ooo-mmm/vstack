@@ -140,5 +140,5 @@ sortOrder → sort_order  # Manual sort position
 
 ## Dependencies
 
-- `curl` for API calls
-- `jq` for JSON processing
+- `curl`
+- `jq`

@@ -342,7 +342,7 @@ The fence ensures all prior Relaxed stores are visible to any thread that observ
 
 ### Epoch Reclamation
 
-Rules for safe use of epoch-based memory reclamation (crossbeam-epoch). Violations cause use-after-free in lock-free data structures.
+Safe use of epoch-based memory reclamation (crossbeam-epoch).
 
 #### Pin Epoch Before Atomic Load
 

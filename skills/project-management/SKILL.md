@@ -84,4 +84,4 @@ Score = (Critical Path x 3) + (Dependencies x 2) + (Risk x 2) + (Value x 1) - (E
 ## Dependencies
 
 - Issue tracker CLI (e.g., `linear` skill)
-- `jq` for JSON processing
+- `jq`

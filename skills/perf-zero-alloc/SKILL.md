@@ -52,7 +52,7 @@ Documentation lookup order: local skill files -> ctx7 CLI -> web fallback.
 
 ### Allocation Elimination
 
-Core patterns for eliminating heap allocations in hot paths. Violations cause latency spikes from allocator contention and unpredictable GC-like pauses.
+Core patterns for eliminating heap allocations in hot paths.
 
 #### Object Pools
 
@@ -482,8 +482,6 @@ No feature flags required -- `assert_no_alloc` uses a global allocator override 
 Structure allocation tests as dedicated test binaries (one per hot path) for clear CI output.
 
 #### Allocation Profiling
-
-Use profiling tools to identify where allocations occur before optimizing.
 
 ##### dhat (Rust-native, source-level attribution)
 

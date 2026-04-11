@@ -10,7 +10,7 @@ metadata:
 
 # Rust no_std Development
 
-Patterns for `#![no_std]` libraries, embedded targets, and dual-mode crates — core/alloc/std tiers, panic handlers, OOM handling, and feature-gated portability.
+Patterns for `#![no_std]` libraries, embedded targets, and dual-mode crates.
 
 ## Resources
 
@@ -28,7 +28,7 @@ Documentation lookup order: local skill files -> ctx7 CLI -> web fallback.
 
 ### Environment Tiers
 
-Core vs alloc vs std tier selection and crate-level declarations. Understanding which types and traits live in which tier is fundamental to no_std development. Always start from core and escalate only when required.
+Core vs alloc vs std tier selection and crate-level declarations. Always start from core and escalate only when required.
 
 #### no_std Declaration
 
@@ -78,11 +78,11 @@ For bare-metal binaries:
 
 ### Panic and Allocator
 
-Panic handlers, global allocators, and OOM handling. In no_std environments, you must provide your own panic handler and, if using `alloc`, a global allocator. These are hard requirements -- the binary will not link without them.
+In no_std environments, you must provide your own panic handler and, if using `alloc`, a global allocator. The binary will not link without them.
 
 #### OOM Handler
 
-When allocation fails, the default behavior is to panic. In embedded systems where memory is scarce, prefer fallible allocation APIs (`Vec::try_reserve`, `Box::try_new`) over infallible ones. On nightly, use `#[alloc_error_handler]` for custom OOM behavior. On stable, use `alloc::alloc::set_alloc_error_hook`.
+When allocation fails, the default behavior is to panic. In embedded systems, prefer fallible APIs (`Vec::try_reserve`, `Box::try_new`) over infallible ones. On nightly, use `#[alloc_error_handler]` for custom OOM behavior. On stable, use `alloc::alloc::set_alloc_error_hook`.
 
 **Incorrect (ignoring allocation failure):**
 

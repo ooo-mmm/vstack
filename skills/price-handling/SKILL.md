@@ -24,7 +24,7 @@ f64 price handling rules for trading systems -- epsilon comparison, tick-size ro
 
 ### Core Rules
 
-Non-negotiable f64 price handling constraints. Violations cause incorrect comparisons, silent rounding errors, or precision loss that corrupt order prices and P&L calculations.
+Non-negotiable f64 price handling constraints.
 
 #### f64 for All Prices
 
@@ -158,7 +158,7 @@ format!("{:.1$}", price, symbol.display_decimals as usize)
 
 ### Type Design
 
-How to structure price-related types -- newtypes, symbol metadata, display precision. Violations cause precision embedded in the wrong place or accidental `==` on f64.
+How to structure price-related types -- newtypes, symbol metadata, display precision.
 
 #### Symbol Metadata Owns Precision
 

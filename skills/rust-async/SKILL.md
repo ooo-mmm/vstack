@@ -27,7 +27,7 @@ Async runtime internals, concurrency composition, and task management patterns f
 
 ### Future & Poll Model
 
-Core Future::poll contract, Pin/Unpin semantics, and async state machine internals. Violations cause busy-loops, use-after-move, and unbounded memory growth.
+Future::poll contract, Pin/Unpin semantics, and async state machine internals.
 
 #### Future::poll Contract
 
@@ -119,7 +119,7 @@ async fn process_boxed() {
 
 ### Tokio Runtime
 
-Tokio runtime configuration, spawn_blocking for blocking work, and task lifecycle management. Violations cause runtime stalls, deadlocks, and thread pool exhaustion.
+Tokio runtime configuration, spawn_blocking, and task lifecycle management.
 
 #### Task Cancellation Lifecycle
 
@@ -174,7 +174,7 @@ async fn managed_example() {
 
 ### Select & Join
 
-Composing futures with select!, join!, try_join!, and collection types. Violations cause lost data from cancelled branches, starvation, and subtle cancellation bugs.
+Composing futures with select!, join!, try_join!, and collection types.
 
 #### select! Semantics
 
@@ -281,7 +281,7 @@ loop {
 
 ### Async Patterns
 
-Structured concurrency, backpressure, async traits, and stream processing. Violations cause resource leaks, OOM under load, and unnecessary allocations in hot paths.
+Structured concurrency, backpressure, async traits, and stream processing.
 
 #### Structured Concurrency
 

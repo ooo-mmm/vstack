@@ -26,7 +26,7 @@ Style, testing, structure, and completeness rules for Rust codebases, prioritize
 
 ### Style and Formatting
 
-Consistent Rust code style -- clippy pedantic, imports, doc comments, safety comments. Reduces review friction and prevents clippy failures.
+Consistent Rust code style -- clippy pedantic, imports, doc comments, safety comments.
 
 #### Doc Comment Conventions
 
@@ -70,7 +70,7 @@ Document every `unsafe` block with a `// SAFETY:` comment explaining why invaria
 
 ### Code Structure
 
-How to organize and split Rust code -- file limits, modularity, extraction patterns. Violations cause bloated files, duplicated logic, and architectural drift.
+How to organize and split Rust code -- file limits, modularity, extraction patterns.
 
 #### No Magic Numbers
 
@@ -112,7 +112,7 @@ When different instances (panes, tabs, widgets) have different dimensions/state,
 
 ### Testing
 
-Test structure, flaky test avoidance, and test quality. Violations cause CI flakiness, false confidence, and hard-to-debug failures.
+Test structure, flaky test avoidance, and test quality.
 
 #### Unit Test Path Pattern
 

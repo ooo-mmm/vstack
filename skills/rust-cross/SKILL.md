@@ -25,7 +25,7 @@ Target configuration, cross-compilation tools, static binary recipes, and multi-
 
 ### Target Configuration
 
-Target triple format, rustup setup, and cargo configuration for cross-compilation. Incorrect target configuration causes linker failures, wrong ABIs, and binaries that crash on the target platform.
+Target triple format, rustup setup, and cargo configuration for cross-compilation.
 
 #### Cargo Config for Cross-Compilation
 
@@ -68,11 +68,11 @@ rustflags = ["-C", "target-feature=+crt-static"]
 
 ### Cross-Compilation Tools
 
-Docker-based cross, Zig-based zigbuild, and nightly build-std for cross-compiling Rust. Wrong tool choice wastes hours on toolchain setup and produces broken builds.
+Docker-based cross, Zig-based zigbuild, and nightly build-std for cross-compiling Rust.
 
 #### Cargo Zigbuild
 
-`cargo-zigbuild` uses Zig as a drop-in C/C++ cross-compiler. No Docker required. Key advantage: precise glibc version targeting with `--target aarch64-unknown-linux-gnu.2.17`. Better than `cross` for CI without Docker, precise glibc control, and mixed C/Rust projects.
+`cargo-zigbuild` uses Zig as a drop-in C/C++ cross-compiler. No Docker. Key advantage: precise glibc version targeting with `--target aarch64-unknown-linux-gnu.2.17`. Better than `cross` for CI without Docker, precise glibc control, and mixed C/Rust projects.
 
 **Incorrect:**
 
@@ -196,7 +196,7 @@ openssl = { version = "0.10", features = ["vendored"] }
 
 ### Testing and CI
 
-QEMU testing, GitHub Actions matrix builds, and conditional compilation patterns. Untested cross targets ship architecture-specific bugs -- especially memory ordering on ARM.
+QEMU testing, GitHub Actions matrix builds, and conditional compilation patterns.
 
 #### QEMU Testing for Cross Targets
 

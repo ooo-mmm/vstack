@@ -52,7 +52,7 @@ Documentation lookup order: local skill files -> ctx7 CLI -> web fallback.
 
 ### Measurement Fundamentals
 
-Core principles for accurate latency measurement. Violations produce misleading data that leads to wrong optimization decisions.
+Core principles for accurate latency measurement.
 
 #### Measure Percentiles, Not Averages
 

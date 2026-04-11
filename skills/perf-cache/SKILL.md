@@ -31,7 +31,7 @@ Data layout, false sharing prevention, prefetching, memory locking, and cache me
 
 ### Data Layout
 
-Struct layout, field ordering, hot/cold splitting, and AoS vs SoA decisions. Poor layout wastes cache lines on every access and dominates hot-path latency.
+Struct layout, field ordering, hot/cold splitting, and AoS vs SoA decisions.
 
 #### Array-of-Structs vs Struct-of-Arrays
 

@@ -230,7 +230,7 @@ Key fields per schema:
 
 ## System Dependencies
 
-- `jq` for JSON processing
+- `jq`
 - `bash` 4+
 - `flock` (util-linux) for atomic state updates
 

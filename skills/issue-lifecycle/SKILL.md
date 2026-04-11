@@ -12,7 +12,7 @@ metadata:
 
 # Issue Lifecycle
 
-Agent workflows for issue implementation, review fix delegation, pre-submission PR review, and QA review. Designed for specialist agents receiving delegations from an orchestrator.
+Agent workflows for specialist agents receiving delegations from an orchestrator.
 
 ## Workflows
 

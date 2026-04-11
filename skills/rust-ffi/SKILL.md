@@ -27,7 +27,7 @@ Safe and correct patterns for Rust Foreign Function Interface boundaries, priori
 
 ### String and Data Handling
 
-Safe conversion of strings, slices, and owned data across the Rust/C boundary. Violations cause buffer overflows (missing null terminators), use-after-free (wrong ownership), and memory leaks (mismatched allocators).
+String, slice, and owned data conversion across the Rust/C boundary.
 
 #### CStr/CString for C String Conversion
 
@@ -158,7 +158,7 @@ pub extern "C" fn config_free(ptr: *mut Config) {
 
 ### Bindgen and Cbindgen
 
-Automated binding generation and sys-crate organization. Violations cause stale bindings, manual transcription errors, and tangled safe/unsafe code in one crate.
+Automated binding generation and sys-crate organization.
 
 #### Sys Crate + Safe Wrapper Pattern
 
@@ -238,7 +238,7 @@ impl Drop for Handle {
 
 ### Safe Wrappers
 
-Wrapping raw C handles and callbacks in safe Rust abstractions. Violations cause resource leaks (missing Drop), unsound Send/Sync, use-after-free (wrong lifetimes), and UB from panics unwinding through C frames.
+Wrapping raw C handles and callbacks in safe Rust abstractions.
 
 #### Wrap C Handles in Newtype with Drop
 

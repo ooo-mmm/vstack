@@ -218,7 +218,7 @@ fn worker(mutex_a: &Mutex<Data>, mutex_b: &Mutex<Data>) {
 
 ### Panic Analysis
 
-Panic triage, custom hooks, and backtrace configuration. Violations cause undiagnosed crashes, missing context in production logs, and slow incident response.
+Panic triage, custom hooks, and backtrace configuration.
 
 #### Custom Panic Hooks
 
@@ -304,7 +304,7 @@ tokio::spawn(future);
 
 #### tokio-console Async Debugging
 
-tokio-console provides a top-like view of async tasks -- poll durations, waker counts, and resource contention. Essential for diagnosing slow polls, task starvation, and waker storms that are invisible to traditional debuggers.
+tokio-console provides a top-like view of async tasks -- poll durations, waker counts, and resource contention. Essential for diagnosing slow polls, task starvation, and waker storms invisible to traditional debuggers.
 
 **Incorrect (diagnosing async issues with println):**
 

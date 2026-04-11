@@ -25,7 +25,7 @@ Workspace management, build tooling, compilation performance, and release/CI con
 
 ### Workspace Management
 
-Cargo workspace layout, dependency centralization, crate splitting strategy, and feature flag discipline. Violations cause version conflicts, slow builds, and broken feature combinations.
+Cargo workspace layout, dependency centralization, crate splitting strategy, and feature flag discipline.
 
 #### Centralized Workspace Dependencies
 

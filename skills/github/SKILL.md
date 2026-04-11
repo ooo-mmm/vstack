@@ -83,6 +83,6 @@ Bot token supports direct tokens (`ghp_*`, `gho_*`, `ghs_*`, `ghr_*`, `github_pa
 
 ## Dependencies
 
-- `gh` CLI authenticated (`gh auth login`)
-- `jq` for JSON processing
-- `op` CLI (optional, for 1Password token references)
+- `gh` CLI (authenticated)
+- `jq`
+- `op` CLI (optional, 1Password token references)
