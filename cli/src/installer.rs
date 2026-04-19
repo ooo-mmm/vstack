@@ -233,12 +233,19 @@ fn install_hook_claude(hook: &Hook, global: bool) -> Result<()> {
     }
     let hooks_obj = map.get_mut("hooks").unwrap().as_object_mut().unwrap();
 
-    // Build the hook entry
+    // Build the hook entry.
+    // Project installs: use $CLAUDE_PROJECT_DIR so hooks resolve regardless of CWD.
+    // Global installs: use the absolute path under the global config dir.
+    let command = if global {
+        dest.to_string_lossy().into_owned()
+    } else {
+        format!("$CLAUDE_PROJECT_DIR/.claude/hooks/{}.sh", hook.name)
+    };
     let hook_entry = {
         let mut entry = serde_json::json!({
             "hooks": [{
                 "type": "command",
-                "command": format!(".claude/hooks/{}.sh", hook.name)
+                "command": command,
             }]
         });
         if let Some(ref matcher) = hook.matcher {

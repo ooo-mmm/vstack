@@ -85,7 +85,7 @@ fn format_hooks_yaml_with_custom(
             .or_default()
             .entry(matcher)
             .or_default()
-            .push(format!(".claude/hooks/{}.sh", hook.name));
+            .push(format!("$CLAUDE_PROJECT_DIR/.claude/hooks/{}.sh", hook.name));
     }
 
     for hook in custom {
