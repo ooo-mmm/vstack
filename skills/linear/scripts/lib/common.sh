@@ -35,6 +35,35 @@ if [ -z "${LINEAR_API_KEY:-}" ]; then
     fi
 fi
 
+# Resolve 1Password references when the env file contains op:// secrets.
+resolve_linear_api_key() {
+    local token="${LINEAR_API_KEY:-}"
+
+    if [[ -z "$token" ]]; then
+        return 0
+    fi
+
+    if [[ "$token" == op://* ]]; then
+        if command -v op &>/dev/null; then
+            local resolved
+            if resolved=$(op read "$token" 2>/dev/null); then
+                LINEAR_API_KEY="$resolved"
+                export LINEAR_API_KEY
+            else
+                echo '{"error": "Failed to resolve LINEAR_API_KEY from 1Password. Run: op signin"}' >&2
+                return 1
+            fi
+        else
+            echo '{"error": "LINEAR_API_KEY is a 1Password reference but the op CLI is not installed"}' >&2
+            return 1
+        fi
+    fi
+
+    return 0
+}
+
+resolve_linear_api_key || exit 1
+
 # Validate API key
 check_api_key() {
     if [ -z "${LINEAR_API_KEY:-}" ]; then

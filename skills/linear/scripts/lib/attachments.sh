@@ -110,6 +110,11 @@ attach_download_url() {
         fi
     fi
 
+    if ! resolve_linear_api_key; then
+        echo "Warning: failed to resolve LINEAR_API_KEY, skipping attachment download" >&2
+        return 1
+    fi
+
     if [[ -z "${LINEAR_API_KEY:-}" ]]; then
         echo "Warning: LINEAR_API_KEY not set, skipping attachment download" >&2
         return 1
