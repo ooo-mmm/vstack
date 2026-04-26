@@ -188,6 +188,7 @@ URL: [URL]
    - `suggestions[]`: Passed checks + blocking=false
    - `questions[]`: QUESTION type — include draft response
    - NOISE or failed checks: Omit entirely
+   - **Already fixed**: If a comment is verified resolved by a prior fix commit, do NOT omit silently. Return it in `questions[]` with `outcome: "already_fixed"`, `commit: "[SHA]"`, and a `draft_response` — orchestrator replies & resolves in § 6.1 step 8.
 3. Preserve `source_id` and `source_type` from input on each item.
 4. Save JSON to `[WORKTREE_PATH]/tmp/review-[AGENT]-YYYYMMDD-HHMMSS.json`.
 5. Return exactly:
@@ -350,6 +351,23 @@ Issue suggestions: [N] items → § 6.2 audit
 
 7. **Push**: `git -C "[WORKTREE_PATH]" push origin HEAD`
 
+8. **Reply & resolve addressed threads immediately** — for each item with `source_type: inline` handled in this pass, do not wait for § 7.1:
+
+   | Outcome | Reply body |
+   |---------|------------|
+   | Applied | `Applied in [COMMIT_SHA]: [SHORT_FIX_SUMMARY]` |
+   | Skipped | `Acknowledged — [RATIONALE]` |
+   | Blocked → issue | `Tracking in [CREATED_ISSUE_ID]` |
+   | Already fixed (from § 3) | Use `draft_response` from finding |
+
+   ```bash
+   .agents/skills/github/scripts/github.sh post-reply "[THREAD_ID]" "[REPLY_BODY]" --pr "[PR_NUMBER]"
+   .agents/skills/github/scripts/github.sh resolve-thread "[THREAD_ID]"
+   .agents/skills/orchestration/scripts/workflow-state append [ISSUE_ID] pr_comment_review.replied '{"source_id":"[THREAD_ID]","commit":"[COMMIT_SHA]","outcome":"[applied|skipped|blocked|already_fixed]"}'
+   ```
+
+   PR-level comments and human-only threads remain deferred to § 7.1.
+
 ### 6.2 Create Issues
 
 **Skip if** no issue suggestions AND no blocked items.
@@ -407,6 +425,10 @@ After fixes are pushed, bots re-review. Wait for new comments, then loop.
 **Always runs** after comment loop stabilizes (§ 6.3 exits with 0 new comments or max iterations).
 
 ### 7.1 Post Replies & Resolve Threads
+
+**Backstop only.** Inline threads handled per-pass in § 6.1 step 8 are already replied & resolved. This step covers PR-level comments, human-only threads, and any inline items missed by per-pass handling.
+
+Before posting, skip any `source_id` already present in `pr_comment_review.replied` to avoid duplicate replies.
 
 1. **Post reply** to each comment from the final pass:
 
