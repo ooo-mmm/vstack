@@ -1,12 +1,17 @@
 #!/bin/bash
-# Get claude bot sticky comment from PR
-# Usage: ./sticky-comment.sh <PR#> [--body|--updated-at|--verdict|--analysis]
+# Get sticky/review-summary bot comment from a PR.
+# Usage: ./sticky-comment.sh <PR#> [--body|--updated-at|--verdict|--analysis] [--bot <login>]
+#
+# By default this targets the bot in $GH_BOT_USERNAME (Claude-style sticky).
+# Pass --bot to query a different reviewer — useful when multiple review bots
+# (e.g. Claude + Codex) are configured for a single PR.
 #
 # Returns JSON by default, or specific field with flags:
 #   --body         Just the comment body
 #   --updated-at   Just the updated_at timestamp
-#   --verdict      "approved" | "changes" | "pending" (emoji-based)
+#   --verdict      "approved" | "changes" | "pending" (formal review > sticky text)
 #   --analysis     Deep analysis: recommendation, remaining items, merge readiness
+#   --bot <login>  Override $GH_BOT_USERNAME for this call
 #
 # Exit codes:
 #   0 - Success
@@ -19,7 +24,7 @@ source "$_SC_DIR/../lib/github-api.sh"
 
 show_help() {
     cat << 'EOF'
-Get Claude Bot Sticky Comment
+Get Bot Sticky / Review Summary Comment
 
 Usage: sticky-comment.sh <PR#> [options]
 
@@ -29,8 +34,9 @@ Arguments:
 Options:
   --body           Just the comment body
   --updated-at     Just the updated_at timestamp
-  --verdict        "approved" | "changes" | "pending" (emoji-based)
+  --verdict        "approved" | "changes" | "pending" (formal review > sticky text)
   --analysis       Deep analysis: recommendation, remaining items, merge readiness
+  --bot <login>    Override $GH_BOT_USERNAME for this call (e.g. for Codex)
   --help, -h       Show this help
 
 Output (default):
@@ -44,23 +50,47 @@ Analysis Output:
   }
 
 Examples:
-  sticky-comment.sh 23                  # Full JSON
-  sticky-comment.sh 23 --body           # Just comment body
-  sticky-comment.sh 23 --analysis       # Merge readiness analysis
-  sticky-comment.sh 23 --verdict        # Quick status: approved/changes/pending
+  sticky-comment.sh 23                              # Full JSON for default bot
+  sticky-comment.sh 23 --body                       # Just comment body
+  sticky-comment.sh 23 --verdict --bot 'codex[bot]' # Codex's verdict
 EOF
 }
 
-PR_NUM="${1:-}"
-FLAG="${2:-}"
-
-# Handle --help as first argument
-if [[ "$PR_NUM" == "--help" || "$PR_NUM" == "-h" ]]; then
-    show_help
-    exit 0
+PR_NUM=""
+FLAG=""
+BOT_OVERRIDE=""
+POSITIONAL=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --help|-h)
+            show_help
+            exit 0
+            ;;
+        --bot)
+            BOT_OVERRIDE="$2"
+            shift 2
+            ;;
+        --bot=*)
+            BOT_OVERRIDE="${1#--bot=}"
+            shift
+            ;;
+        --body|--updated-at|--verdict|--analysis)
+            FLAG="$1"
+            shift
+            ;;
+        *)
+            POSITIONAL+=("$1")
+            shift
+            ;;
+    esac
+done
+PR_NUM="${POSITIONAL[0]:-}"
+# Accept legacy positional flag form: sticky-comment.sh 23 --verdict
+if [[ -z "$FLAG" && "${POSITIONAL[1]:-}" =~ ^--(body|updated-at|verdict|analysis)$ ]]; then
+    FLAG="${POSITIONAL[1]}"
 fi
 
-BOT_USER="${GH_BOT_USERNAME:-review-bot[bot]}"
+BOT_USER="${BOT_OVERRIDE:-${GH_BOT_USERNAME:-review-bot[bot]}}"
 
 if [[ -z "$PR_NUM" ]]; then
   echo '{"error": "Usage: sticky-comment.sh <PR#> [--body|--updated-at|--verdict|--analysis]"}' >&2
@@ -227,7 +257,7 @@ case "$FLAG" in
     ;;
   --verdict)
     # Primary: formal GitHub review state (structured, reliable)
-    FORMAL=$(get_formal_review_verdict "$PR_NUM")
+    FORMAL=$(get_formal_review_verdict "$PR_NUM" "$BOT_USER")
     if [[ -n "$FORMAL" ]]; then
       echo "$FORMAL"
     else
@@ -244,7 +274,7 @@ case "$FLAG" in
     # Return full JSON with computed verdict
     # Primary: formal review; fallback: sticky text parsing
     BODY=$(echo "$STICKY" | jq -r '.body')
-    FORMAL=$(get_formal_review_verdict "$PR_NUM")
+    FORMAL=$(get_formal_review_verdict "$PR_NUM" "$BOT_USER")
     VERDICT="${FORMAL:-$(get_verdict "$BODY")}"
     # Sanitize control characters in body to prevent jq parse errors
     echo "$STICKY" | jq --arg v "$VERDICT" '.body |= gsub("[[:cntrl:]]"; "") | . + {verdict: $v}'

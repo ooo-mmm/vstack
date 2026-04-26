@@ -14,7 +14,8 @@
 #   "baseline_provided": true,
 #   "changes_detected": true,
 #   "needs_action": true,
-#   "reason": "approved_clean|no_change|has_threads|verdict_not_approved|no_sticky"
+#   "reason": "approved_clean|no_change|has_threads|verdict_not_approved|pending_bot_reviewer|no_sticky",
+#   "pending_bot_reviewers": []   # populated when BOT_REVIEWERS env is set
 # }
 #
 # Exit codes:
@@ -92,11 +93,56 @@ if [[ -z "$PR_NUM" ]]; then
     exit 1
 fi
 
+# Compute the set of bot reviewers still pending, if BOT_REVIEWERS is configured.
+# Skipped reviewers (BOT_SKIPPED_REVIEWERS) are excluded.
+PENDING_BOTS_JSON='[]'
+if [[ -n "${BOT_REVIEWERS:-}" ]]; then
+    declare -A _SKIPPED_SET=()
+    if [[ -n "${BOT_SKIPPED_REVIEWERS:-}" ]]; then
+        for s in $(printf '%s' "$BOT_SKIPPED_REVIEWERS" | tr ',' ' '); do
+            [[ -n "$s" ]] && _SKIPPED_SET["$s"]=1
+        done
+    fi
+    _pending=()
+    IFS=',' read -ra _BR <<< "$BOT_REVIEWERS"
+    for _b in "${_BR[@]}"; do
+        _b="${_b#"${_b%%[![:space:]]*}"}"
+        _b="${_b%"${_b##*[![:space:]]}"}"
+        [[ -z "$_b" ]] && continue
+        [[ -n "${_SKIPPED_SET[$_b]:-}" ]] && continue
+        _entry=$(bot_review_status "$PR_NUM" "$_b" 2>/dev/null || echo '{"status":"unknown"}')
+        _st=$(echo "$_entry" | jq -r '.status // "unknown"')
+        if [[ "$_st" == "pending" || "$_st" == "unknown" ]]; then
+            _pending+=("$_b")
+        fi
+    done
+    if [[ ${#_pending[@]} -gt 0 ]]; then
+        PENDING_BOTS_JSON=$(printf '%s\n' "${_pending[@]}" | jq -R . | jq -cs .)
+    fi
+fi
+
 # Get sticky comment (with retry logic built into sticky-comment.sh)
 STICKY_RESULT=$("$CMD_DIR/sticky-comment.sh" "$PR_NUM" 2>&1) || {
     # Check if it's "no sticky found" vs other error
     if echo "$STICKY_RESULT" | grep -q "No sticky comment found"; then
-        jq -n '{
+        # If non-sticky bots are still pending, surface that as the reason
+        # rather than masking it with "no_sticky".
+        _has_pending=$(echo "$PENDING_BOTS_JSON" | jq 'length > 0')
+        if [[ "$_has_pending" == "true" ]]; then
+            jq -n --argjson pending "$PENDING_BOTS_JSON" '{
+                sticky_found: false,
+                sticky_updated_at: null,
+                verdict: "pending",
+                unresolved_threads: null,
+                baseline_provided: false,
+                changes_detected: false,
+                needs_action: false,
+                reason: "pending_bot_reviewer",
+                pending_bot_reviewers: $pending
+            }'
+            exit 0
+        fi
+        jq -n --argjson pending "$PENDING_BOTS_JSON" '{
             sticky_found: false,
             sticky_updated_at: null,
             verdict: null,
@@ -104,7 +150,8 @@ STICKY_RESULT=$("$CMD_DIR/sticky-comment.sh" "$PR_NUM" 2>&1) || {
             baseline_provided: false,
             changes_detected: false,
             needs_action: false,
-            reason: "no_sticky"
+            reason: "no_sticky",
+            pending_bot_reviewers: $pending
         }'
         exit 0
     fi
@@ -143,24 +190,29 @@ if [[ "$BASELINE_PROVIDED" == "true" ]]; then
     fi
 fi
 
-# Decision logic (matches original § 9.2 exactly)
+# Decision logic (matches original § 9.2 plus pending-bot-reviewer handling).
 # Order matters - evaluated top to bottom, first match wins
 NEEDS_ACTION="false"
 REASON=""
+HAS_PENDING_BOTS=$(echo "$PENDING_BOTS_JSON" | jq 'length > 0')
 
 # Condition 5: No changes from baseline → done
 if [[ "$BASELINE_PROVIDED" == "true" ]] && [[ "$CHANGES_DETECTED" == "false" ]]; then
     NEEDS_ACTION="false"
     REASON="no_change"
-# Condition 6: Approved with 0 threads → done
+# Condition 6: Bots still pending — caller must wait, not treat as approved
+elif [[ "$HAS_PENDING_BOTS" == "true" ]]; then
+    NEEDS_ACTION="false"
+    REASON="pending_bot_reviewer"
+# Condition 7: Approved with 0 threads → done
 elif [[ "$VERDICT" == "approved" ]] && [[ "$UNRESOLVED_COUNT" -eq 0 ]]; then
     NEEDS_ACTION="false"
     REASON="approved_clean"
-# Condition 7a: Has unresolved threads → needs action
+# Condition 8a: Has unresolved threads → needs action
 elif [[ "$UNRESOLVED_COUNT" -gt 0 ]]; then
     NEEDS_ACTION="true"
     REASON="has_threads"
-# Condition 7b: Verdict is changes or pending → needs action
+# Condition 8b: Verdict is changes or pending → needs action
 elif [[ "$VERDICT" == "changes" ]] || [[ "$VERDICT" == "pending" ]]; then
     NEEDS_ACTION="true"
     REASON="verdict_not_approved"
@@ -180,6 +232,7 @@ jq -n \
     --argjson changes_detected "$CHANGES_DETECTED" \
     --argjson needs_action "$NEEDS_ACTION" \
     --arg reason "$REASON" \
+    --argjson pending_bot_reviewers "$PENDING_BOTS_JSON" \
     '{
         sticky_found: $sticky_found,
         sticky_updated_at: $sticky_updated_at,
@@ -188,5 +241,6 @@ jq -n \
         baseline_provided: $baseline_provided,
         changes_detected: $changes_detected,
         needs_action: $needs_action,
-        reason: $reason
+        reason: $reason,
+        pending_bot_reviewers: $pending_bot_reviewers
     }'

@@ -11,14 +11,20 @@ show_help() {
     cat << 'EOF'
 Find PR Comment
 
-Usage: find-comment.sh <PR-number> --pattern <regex> [--author <login>]
+Usage: find-comment.sh <PR-number> [--pattern <regex>] [--review-summary] [--author <login>]
 
 Arguments:
-  PR-number    PR number (required)
+  PR-number          PR number (required)
 
 Options:
-  --pattern    Regex pattern to match in comment body (required)
-  --author     Filter by author login (optional)
+  --pattern <regex>  Regex pattern to match in comment body
+  --review-summary   Pick the most representative review-summary comment
+                     ("View job" sticky → review-section comment → first
+                     comment by author). Mutually exclusive with --pattern;
+                     usually combined with --author.
+  --author <login>   Filter by author login
+
+Exactly one of --pattern or --review-summary is required.
 
 Output:
 {
@@ -30,14 +36,15 @@ Output:
   "url": "https://github.com/..."
 }
 
-Returns last matching comment. Empty object {} if no match.
+Returns last matching comment for --pattern (or the picked one for
+--review-summary). Empty object {} if no match.
 
 Examples:
-  # Find summary comment by current user
+  # Summary comment by current user
   find-comment.sh 23 --pattern "Recommendations.*Processed" --author "\$(gh api user -q .login)"
 
-  # Find any comment with pattern
-  find-comment.sh 23 --pattern "LGTM"
+  # Pull a review bot's summary (no pattern needed)
+  find-comment.sh 23 --author "review-bot[bot]" --review-summary
 EOF
 }
 
@@ -45,6 +52,7 @@ find_comment() {
     local pr_num=""
     local pattern=""
     local author=""
+    local review_summary="false"
 
     # Parse arguments
     while [[ $# -gt 0 ]]; do
@@ -69,6 +77,10 @@ find_comment() {
                 author="${1#--author=}"
                 shift
                 ;;
+            --review-summary)
+                review_summary="true"
+                shift
+                ;;
             *)
                 if [ -z "$pr_num" ]; then
                     pr_num="$1"
@@ -86,8 +98,12 @@ find_comment() {
         exit 1
     fi
 
-    if [ -z "$pattern" ]; then
-        echo '{"error": "--pattern required"}' >&2
+    if [ -z "$pattern" ] && [ "$review_summary" != "true" ]; then
+        echo '{"error": "--pattern or --review-summary required"}' >&2
+        exit 1
+    fi
+    if [ -n "$pattern" ] && [ "$review_summary" = "true" ]; then
+        echo '{"error": "--pattern and --review-summary are mutually exclusive"}' >&2
         exit 1
     fi
 
@@ -101,6 +117,25 @@ find_comment() {
     # Fetch comments
     local comments
     comments=$(gh_rest "repos/$owner/$repo/issues/$pr_num/comments") || exit 1
+
+    if [ "$review_summary" = "true" ]; then
+        # Selection priority for a "review summary" comment:
+        #   1. Sticky bearing the "View job" marker (Claude-style sticky)
+        #   2. Comment with a review-section header
+        #   3. The author's earliest comment (Codex-style submission comment)
+        # Returns {} if no comment by author exists.
+        echo "$comments" | jq -c --arg author "$author" '
+            (if $author == "" then . else map(select(.user.login == $author)) end) as $candidates |
+            (
+                ($candidates | map(select(.body | test("View job"; "i"))) | first) //
+                ($candidates | map(select(.body | test("## Review|### Inline|### Recommendation|Recommendation:"; "i"))) | last) //
+                ($candidates | first) //
+                null
+            ) |
+            if . then {id: .id, author: .user.login, body: .body, created_at: .created_at, updated_at: .updated_at, url: .html_url} else {} end
+        '
+        return
+    fi
 
     # Build jq filter
     local jq_filter='[.[]'

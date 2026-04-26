@@ -104,21 +104,28 @@ Wait for bot review to complete (sticky comment with verdict). CI is deferred vi
 
 ```bash
 WAIT_RESULT=$(.agents/skills/orchestration/scripts/bot-review-wait [PR_NUMBER] 15 600 --json --reviewers "$BOT_REVIEWERS")
-BOT_STATUS=$(echo "$WAIT_RESULT" | jq -r '.status')
+BOT_STATUS=$(echo "$WAIT_RESULT"  | jq -r '.status')
 BOT_VERDICT=$(echo "$WAIT_RESULT" | jq -r '.verdict')
+PENDING_REVIEWERS=$(echo "$WAIT_RESULT" | jq -r '.pending_reviewers | join(", ")')
 ```
 
-Waits for all configured bot reviewers (`$BOT_REVIEWERS` — e.g., `review-bot-a[bot],review-bot-b[bot]`). Auto-detects if not configured. Max wait 600s.
+Waits for all configured bot reviewers (`$BOT_REVIEWERS` — e.g., `review-bot-a[bot],chatgpt-codex-connector[bot]`). Auto-detects if not configured. Max wait 600s.
+
+`bot-review-wait` understands per-reviewer signaling:
+- **Claude-style** — formal review (APPROVED/CHANGES_REQUESTED) and/or sticky "View job" comment.
+- **Codex-style** — reactions on the PR body / earliest comment (👀 = pending, 👍 = approved) and inline review threads (= changes).
+
+`status=complete` is only emitted when **no reviewer is pending** (verdict will be `approved` or `changes`). If you need a reviewer to be ignored, pass `--skip "bot-login"` or set `BOT_SKIPPED_REVIEWERS`.
 
 **Route result**:
 
 | `status` | `verdict` | Action |
 |----------|-----------|--------|
-| `complete` | any | → § 3 |
+| `complete` | `approved` or `changes` | → § 3 |
 | `timeout` | `approved` or `changes` | → § 3 (terminal verdict, safe) |
-| `timeout` | `pending` | Extended poll below, then → § 3 |
+| `timeout` | `pending` | Show `pending_reviewers`; extended poll below, then ask user `Wait` \| `Skip pending bot` \| `Abort` |
 | `checklist_timeout` | `approved` or `changes` | Ask user (see below) |
-| `checklist_timeout` | `pending` | Extended poll below, then → § 3 |
+| `no_reviewers` | `pending` | No bot signal at all — ask user `Wait` \| `Proceed without bot review` |
 
 **`checklist_timeout` with terminal verdict** — the bot submitted its review but is still posting inline threads. Prompt the user:
 
