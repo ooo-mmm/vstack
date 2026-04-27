@@ -87,13 +87,16 @@ See `patterns/prompt-handlers.md` § Handler: `audit-relation-prompt`.
 
 ## § 6: Handler — `merge-now`
 
-The per-issue agent has prompted to merge its PR (review APPROVED, CI passing).
+The per-issue agent has prompted to merge its PR. Orchestration has already gated on review-approved, CI-passing, threads-resolved, and branch-protection — that's why this prompt exists. Master does NOT re-validate those gates; it answers the prompt.
 
-1. Re-fetch state: `gh pr view <PR> --json mergeable,mergeStateStatus,reviewDecision,statusCheckRollup`.
-2. If `mergeable == "MERGEABLE"` AND `mergeStateStatus == "CLEAN"` AND review APPROVED AND no failing checks → answer `Merge` (typically option `1`).
-3. If `mergeStateStatus == "UNKNOWN"` → transition to `merge-ready-but-unknown` substate (set `unknown_since` if null) and answer `Wait` if the prompt offers it; otherwise `Skip` and let the next cycle's poll catch the UNKNOWN handler.
-4. If `mergeable == "CONFLICTING"` → escalate (genuine conflict; agent's question doesn't match reality).
-5. Log decision.
+The only check master adds is one orchestration cannot see: cross-session conflict with other in-flight panes.
+
+1. Cross-session conflict check via `pr-conflict-graph <THIS_PR> <OTHER_LIVE_PRS...>`. If this PR's file set overlaps with another in-flight session whose PR is still open and unmerged → escalate (the right action is to land the other one first, or coordinate; master can't decide unilaterally).
+2. No conflict → answer `Merge` via `pane-respond <pane> --option <N>` where N is the merge option's index (typically 1).
+3. If the orchestrator's prompt also indicated `mergeStateStatus == "UNKNOWN"` (sometimes surfaced as a sub-message), defer to § 7 (`merge-ready-but-unknown`) — the orchestrator hasn't actually finished gating yet.
+4. Log decision.
+
+Opt-out: `FLIGHTDECK_AUTO_MERGE=0` escalates this prompt unconditionally instead of auto-answering. For sessions where the user wants the human gate (compliance review, big-blast-radius PR).
 
 ---
 
@@ -139,11 +142,30 @@ The agent's reconciliation pass found that a sibling issue's scope has been part
 
 ## § 10: Handler — `generic-multi-choice`
 
-No specific tag matched. The classifier returned a generic option-list.
+No specific tag matched. The classifier returned a generic option-list — bounded numeric options, possibly with a "(recommended)" marker on one option, possibly with a "Type something" free-text option at the end.
 
-1. **Always escalate**. Set `master_state.paused_for_user = {issue_id: <ISSUE>, reason: "novel-prompt-shape", prompt_text: <buffer-excerpt>}`.
-2. The watch loop yields. The user inspects, answers manually (or instructs flightdeck via a custom command), and re-invokes `watch`.
-3. After resumption, the prompt's hash will have changed (because the user's response advanced the agent), so debounce won't re-fire.
+Master tries to auto-decide before falling back to escalation. Escalation is reserved for genuine novelty, not for rubber-stamping bounded choices.
+
+### Auto-decide policy
+
+1. **Enumerate options** from the buffer. Each option is a numbered line; capture text per option and note any `(recommended)` marker.
+2. **Detect destructive options** — anything that would mutate `main` directly, force-push, abort the issue, revert the agent's work, or close a PR. If the only viable option is destructive, escalate.
+3. **Apply expansion bias** (see `patterns/decision-biases.md` § PR/branch expansion bias):
+   - Default action: pick the option that bundles the most into the current PR / advances the issue toward terminal state. Examples: "Apply all", "Delegate now", "Include in this PR".
+   - Override to a more conservative option ONLY when:
+     - `pr-conflict-graph` shows the proposed work touches files another in-flight session is also editing → split.
+     - Proposed work is clearly different scope (different module, different concern, different agent role) → defer to standalone follow-up.
+4. **Use the `(recommended)` marker as a SIGNAL, not an instruction**. The inner agent's "(recommended)" reflects its own conservatism. Master weighs it against expansion bias and the conflict graph; agreement is incidental, not the deciding factor.
+5. **Send via `pane-respond <pane> --option <N>`**. Log `{chosen_option, chosen_text, inner_recommended_option, agreed: bool, reason, conflict_graph_state}` to the decision log.
+
+### When to escalate
+
+- Cannot enumerate options reliably (buffer truncated, options span multiple lines unparseably).
+- All options are destructive or all are deferrals with no expand-now choice.
+- Cross-session conflict graph is itself ambiguous (some PRs UNKNOWN, can't compute overlap).
+- Buffer matches a shape no rule above covers (truly novel).
+
+On escalation: `master_state.paused_for_user = {issue_id: <ISSUE>, reason: "novel-prompt-shape" | "ambiguous-conflict" | "destructive-only", prompt_text: <buffer-excerpt>}`. The watch loop yields. After user resumption the prompt's hash will have changed, so debounce won't re-fire.
 
 ---
 

@@ -22,6 +22,12 @@ For prompts like `Apply the external review fix suggestions?` or `Apply fix sugg
 - If findings include a clear-defer reason (use the list above), pick the subset and create a follow-up issue for the deferred finding.
 - Never pick "None" unless every finding hits a defer reason.
 
+### The `(recommended)` marker is a signal, not an instruction
+
+Inner orchestrator agents often mark one option `(recommended)`. That recommendation reflects the inner agent's posture, which is generally **conservative** — it favors smaller PRs, splitting work, deferring follow-ups. Master's posture is **expansion / do-now**.
+
+If master always defers to the `(recommended)` option, it inherits the inner agent's conservatism and the expansion bias never fires. Treat the marker as data: read it, log it, weigh it. Pick the expansion option unless a concrete defer reason from the list above applies, regardless of what was marked recommended.
+
 ## Scope-creep detector
 
 **Rule**: an issue's PR should touch a file count proportional to its declared scope. If `actual > 2 × declared`, flag as scope creep and escalate to user.

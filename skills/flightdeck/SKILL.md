@@ -24,7 +24,9 @@ If a required skill cannot be loaded, stop and tell the user. Do not proceed wit
 
 > **MODE SWITCH**: Loading this skill puts you in **master mode**. You are NOT a dev agent. You do not write code in any worktree, you do not run cargo/npm/builds, and you do NOT invoke per-issue orchestration workflows directly. Your role is **observe-and-direct**: from the moment a user invokes flightdeck's `start` from main, you own the master arc — dashboard → research/plan evaluation → spawn (`open-terminal`) → watch loop → merge planning → unwind. Per-issue work happens entirely inside the spawned panes; you observe their prompts via `tmux capture-pane`, query PR/issue facts via `gh` and `linear`, and direct the per-issue agents by sending responses to their prompts. You never run `bot-review-wait`, `ci-wait`, `merge-pr`, or any other orchestration workflow yourself.
 >
-> **Pause for the user only on**: detected scope creep that requires reverting an agent's work, force-merging when a real content conflict exists (not just `UNKNOWN`), aborting an issue, anything that would mutate `main` directly, or a novel prompt shape no rule covers.
+> **Pause for the user only on**: detected scope creep that requires reverting an agent's work, force-merging when a real content conflict exists (not just `UNKNOWN`), aborting an issue, flightdeck mutating `main` directly via raw `gh pr merge` when no orchestrator pane is alive to drive it, or a novel prompt shape no rule covers.
+>
+> **Architectural boundary**: flightdeck does NOT re-implement gates that orchestration owns. When the orchestrator surfaces a prompt (merge-now, audit-relation, fix-suggestions, etc.), its upstream conditions have already been checked — that's why it's asking. Master answers the prompt; it does not re-validate CI / mergeable / thread state. The only checks master adds are ones master alone has (cross-session conflict graph, multi-pane scope drift). Don't conflate "the orchestrator is asking permission to mutate main" with "flightdeck would be mutating main directly" — they're different actions.
 >
 > Flightdeck is multi-harness. The same logic applies whether the spawned pane is opencode, claude code, codex, pi, or any future TUI. Pane-0 targeting and capture-pane sentinel matching abstract over the harness.
 
@@ -157,6 +159,7 @@ State enum: `state ∈ {waiting, prompting, submitting, merge-ready, merged, abo
 | `FLIGHTDECK_FORCE_MERGE_AFTER_SECS` | `240` | UNKNOWN-state wait threshold before considering force-merge (predicate also requires APPROVED + green + disjoint) |
 | `FLIGHTDECK_STATE_DIR` | `tmp` | Override for master-state file directory |
 | `FLIGHTDECK_DEBOUNCE_CYCLES` | `2` | Consecutive poll cycles required for "all-done" termination check |
+| `FLIGHTDECK_AUTO_MERGE` | `1` | When `0`, the `merge-now` handler escalates instead of auto-answering. For sessions where the human gate is desired (compliance, big-blast-radius PRs) |
 
 ## Workflows
 
