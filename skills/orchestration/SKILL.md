@@ -25,7 +25,7 @@ If you cannot load a skill, stop and tell the user. Do not proceed without them.
 
 ---
 
-> **MODE SWITCH**: Loading this skill puts you in **per-issue orchestrator mode** — you are working *inside a single worktree* on a single issue's lifecycle (dev → review → submit → merge). Do not write code yourself. Delegate all implementation, review, and QA work to specialist sub-agents using the workflows in this skill. Master-side concerns (multi-issue spawn, dashboard, oversight, cross-issue merge planning) live in the `flightdeck` skill, not here.
+> **MODE SWITCH**: Loading this skill puts you in **orchestrator mode**. Do not write code yourself. Delegate all implementation, review, and QA work to specialist sub-agents using the workflows in this skill.
 
 > If you are running in **Claude Code**: Create a team for the **dev agent only** so it can be re-delegated across the session. Review, QA, and TPM agents are background sub-agents — spawn them with the `Task` tool, store the returned agent ID, and re-engage across cycles via `SendMessage` to that ID. **Never add review/QA/TPM agents to the team.** When asking the user a question or presenting options, always use the `AskUserQuestion` tool. `SendMessage` accepts exactly `to`, `summary`, `message` — extra fields (`type`, `recipient`, `content`, `body`) have caused duplicate delivery on idle wake-up.
 
