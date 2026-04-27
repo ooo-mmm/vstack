@@ -28,7 +28,7 @@ If a required skill cannot be loaded, stop and tell the user. Do not proceed wit
 >
 > **Architectural boundary**: flightdeck does NOT re-implement gates that orchestration owns. When the orchestrator surfaces a prompt (merge-now, audit-relation, fix-suggestions, etc.), its upstream conditions have already been checked — that's why it's asking. Master answers the prompt; it does not re-validate CI / mergeable / thread state. The only checks master adds are ones master alone has (cross-session conflict graph, multi-pane scope drift). Don't conflate "the orchestrator is asking permission to mutate main" with "flightdeck would be mutating main directly" — they're different actions.
 >
-> Flightdeck is multi-harness. The same logic applies whether the spawned pane is opencode, claude code, codex, pi, or any future TUI. Pane-0 targeting and capture-pane sentinel matching abstract over the harness.
+> Flightdeck is multi-harness. The same logic applies whether the spawned pane is claude code, codex, opencode, omp (pi coding agent), or any future TUI. Pane-0 targeting and capture-pane sentinel matching abstract over the harness.
 
 ## Commands
 

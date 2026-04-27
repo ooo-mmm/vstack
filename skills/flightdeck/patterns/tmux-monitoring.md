@@ -111,6 +111,7 @@ Some pane signals are harness-specific. Adapters live in scripts (e.g., `pane-re
 | Claude Code | `* Idle` line near buffer end, no input cursor waiting |
 | codex | (TBD — add when first wired) |
 | opencode | (TBD — add when first wired) |
+| omp | (TBD — add when first wired) |
 
 ### Destroyed-CWD failure pattern (handler: `close-issue.md` § 1)
 
@@ -121,6 +122,7 @@ Inner pane's shell is dead because the worktree was removed mid-session. After t
 | Claude Code | `Path does not exist` in tool error AND a worktree path in the line; OR explicit `SESSION CWD DESTROYED` message |
 | codex | (TBD) |
 | opencode | (TBD) |
+| omp | (TBD) |
 
 ### Option-pick mechanic (script: `pane-respond` `--option` mode)
 
@@ -129,6 +131,7 @@ Inner pane's shell is dead because the worktree was removed mid-session. After t
 | Claude Code | `(N-1) × Down` then `Enter`. Numbers are NOT shortcuts; they're buffered as text. |
 | codex | (TBD — verify before wiring; do not assume Claude Code's mechanic.) |
 | opencode | (TBD — verify before wiring. Workaround callers have used: `--keys Enter,Tab,Enter` to confirm the default-highlighted option, but this is fragile and only works when the desired option is the default. Real adapter needed.) |
+| omp | (TBD — verify before wiring.) |
 
 To add an adapter for a new harness:
 1. Verify the actual keystroke contract by inspecting the harness's TUI in interactive use.
@@ -144,5 +147,6 @@ To add an adapter for a new harness:
 | Claude Code | `tmux capture-pane -p -S -200` (history) | Default; scrollback is stable. |
 | codex | `tmux capture-pane -p -S -200` (history) | Same. |
 | opencode | `tmux capture-pane -p` (visible viewport only) | TUI sometimes scrolls the rendered buffer above the viewport, so `-S -200` returns stale middle content and misses the live prompt. |
+| omp | `tmux capture-pane -p -S -200` (history, default) | TBD — verify scrollback behavior in real use; switch to viewport-only if needed. |
 
 When adding a new harness, add its row in each table above and wire the matching adapter in the relevant script/workflow. Do not blanket-apply Claude Code's mechanic to other harnesses without verification.

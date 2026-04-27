@@ -59,7 +59,7 @@ while [[ $# -gt 0 ]]; do
       echo "Usage: open-terminal ISSUE-1 [ISSUE-2 ...] [options]"
       echo ""
       echo "Options:"
-      echo "  --harness <name>    Harness to launch: claude, codex, opencode"
+      echo "  --harness <name>    Harness to launch: claude, codex, opencode, omp"
       echo "  --tmux              Open tmux windows (requires active tmux session)"
       echo "  --ghostty           Open Ghostty terminals"
       echo "  --cmd \"command\"     Custom command ({issue} is replaced). Overrides --harness."
@@ -69,6 +69,7 @@ while [[ $# -gt 0 ]]; do
       echo "  claude   → claude -n ISSUE --dangerously-skip-permissions --model 'opus[1m]' --effort max '/orchestration start ISSUE'"
       echo "  codex    → codex '\$orchestration start ISSUE'"
       echo "  opencode → opencode --prompt '/orchestration start ISSUE'"
+      echo "  omp      → omp --model opus --thinking xhigh '/orchestration start ISSUE'"
       echo ""
       echo "Environment:"
       echo "  GH_ISSUE_PATTERN          Regex for issue IDs (default: [A-Z]+-[0-9]+)"
@@ -121,7 +122,7 @@ if [[ ${#ISSUES[@]} -eq 0 ]]; then
 fi
 
 if [[ -z "$HARNESS" && -z "$CMD_TEMPLATE" ]]; then
-  echo "Error: --harness <claude|codex|opencode> is required (or use --cmd)" >&2
+  echo "Error: --harness <claude|codex|opencode|omp> is required (or use --cmd)" >&2
   exit 1
 fi
 
@@ -135,12 +136,13 @@ fi
 #
 # Set OPEN_TERMINAL_NO_BYPASS=1 to disable. Codex/opencode bypass flags need
 # per-harness verification before being added; left empty for now to avoid
-# passing an unsupported flag to those harnesses.
+# passing an unsupported flag to those harnesses. omp is yolo-by-default so
+# no flag is needed.
 bypass_flag_for_harness() {
   [[ -n "${OPEN_TERMINAL_NO_BYPASS:-}" ]] && return
   case "$1" in
     claude)   echo "--dangerously-skip-permissions" ;;
-    codex|opencode) echo "" ;;
+    codex|opencode|omp) echo "" ;;
   esac
 }
 
@@ -156,6 +158,7 @@ detect_start_cmd() {
     claude)   echo "claude -n \"$issue\" ${bypass} --model 'opus[1m]' --effort max '/orchestration start $issue'" ;;
     codex)    echo "codex '\$orchestration start $issue'" ;;
     opencode) echo "opencode --prompt '/orchestration start $issue'" ;;
+    omp)      echo "omp --model opus --thinking xhigh '/orchestration start $issue'" ;;
     *)        echo "" ;;
   esac
 }
