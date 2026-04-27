@@ -119,6 +119,11 @@ Otherwise, set `EXTERNAL_REVIEW_REQUESTED=true` → § 2.2.
 
 ## 2.2 Delegate Review Agents
 
+**Record delegation timestamp** before delegating — used by the § 3 watchdog to gate filesystem fallback so stale JSONs from earlier cycles cannot be misread as current returns:
+```bash
+.agents/skills/orchestration/scripts/workflow-state set [ISSUE_ID] review_delegated_at "$(date +%s)"
+```
+
 Delegate to each active review agent in `[AGENTS]` in parallel with the prompt below. **If `EXTERNAL_REVIEW_REQUESTED=true`**, launch the external review (block below) in the *same parallel batch* as the internal reviewers so the user does not wait for serialized completion.
 
 **Delegation prompt:** Follow exactly, fill placeholders, add nothing else. Omit lines/sections with empty placeholders.
@@ -161,19 +166,42 @@ fi
 
 **On failure**: Report error to user but **continue** — external review is advisory, not blocking. Do not halt the review pipeline.
 
-## 3. Collect & Present Results
+## 3. Collect Results (Watchdog)
 
-Wait for all review agents to complete. Do NOT shutdown — agents needed for potential re-review in § 4.
+Do NOT shutdown reviewers — they may be needed for re-review in § 4.
 
-Extract `Report` path and `Verdict` from each agent's return. If any agent fails to return expected format, halt and report error.
+### 3.1 Completion
 
-Overall verdict: `action_required` if any agent has blockers, `pass` otherwise.
+`OUTSTANDING = [AGENTS] ∪ ({external} if EXTERNAL_REVIEW_REQUESTED)`. An agent completes when *either*:
 
-**Update state**:
+- A return message arrives with `Verdict:` and `File:` lines, *or*
+- Latest `[WORKTREE_PATH]/tmp/review-[AGENT]-*.json` with `mtime >= review_delegated_at` validates with `jq -e '.verdict'`
+
+On completion, append the path and drop the agent from `OUTSTANDING`:
 ```bash
-# For each agent JSON path:
 .agents/skills/orchestration/scripts/workflow-state append [ISSUE_ID] json_paths "[PATH]"
 ```
+
+### 3.2 Watchdog Rules
+
+**Sweep filesystem on every event below** — catches silent finishers without delay.
+
+Per-agent deadline from `review_delegated_at`:
+- Perf reviewer (agent name contains `perf`): **25 min**
+- All others, including external: **15 min**
+
+| Event | Action |
+|-------|--------|
+| Return arrives | Append JSON, remove from `OUTSTANDING`. |
+| 2 min after first return (or 10 min from delegation if zero returns yet) — once per cycle | Send each outstanding agent one ping: `Status check on [ISSUE_ID] review — return your verdict if complete, or report blocker.` |
+| 2 min after ping | Mark each non-perf agent still in `OUTSTANDING` as `unresponsive`. |
+| Per-agent deadline reached | Mark that agent `unresponsive`. |
+
+Exit to § 3.3 when `OUTSTANDING` is empty (`unresponsive` counts as resolved).
+
+### 3.3 Present Results
+
+Extract `verdict` from each appended JSON. **Overall verdict**: `action_required` if any reviewer has blockers, `pass` otherwise. Unresponsive reviewers do not affect the overall verdict.
 
 <output_format>
 
@@ -186,6 +214,8 @@ Overall verdict: `action_required` if any agent has blockers, `pass` otherwise.
 | [AGENT] | `[verdict]` | `[path]` |
 | [If external review JSON exists in json_paths (agent field starts with "external-"):] |
 | [AGENT] | `[verdict]` | `[path]` |
+| [For each unresponsive agent:] |
+| [AGENT] | `unresponsive` | — |
 </output_format>
 
 **Route by verdict + items:**
