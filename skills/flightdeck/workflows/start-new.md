@@ -128,7 +128,7 @@ Always create as a parent + sub-issue pair. Parent coordinates, child implements
 4. **Create worktree**: `WT_PATH=$(.agents/skills/worktree/scripts/worktree create [ISSUE_ID])`
 
 5. **Launch**: Ask user which harness to launch: `claude` | `codex` | `opencode` | `I'll launch it myself`
-   - **Harness selected**: `.agents/skills/orchestration/scripts/open-terminal [ISSUE_ID] --harness [HARNESS]`
+   - **Harness selected**: `.agents/skills/flightdeck/scripts/open-terminal [ISSUE_ID] --harness [HARNESS]`
    - **Manual**: Show the command and worktree path so the user can run it themselves.
 
 → end

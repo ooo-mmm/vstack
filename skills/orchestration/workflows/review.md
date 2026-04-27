@@ -219,14 +219,14 @@ Est: 1 (hours) | 2 (half-day) | 3 (day) | 4 (2-3d) | 5 (week+)
 
 **Skip if** no issue suggestions selected AND no escalated items from § 4.1. → § 6
 
-1. **Build audit-input file** from selected issue suggestions and escalated items per `schemas/audit-issues-input.md`.
+1. **Build audit-input file** from selected issue suggestions and escalated items per `.agents/skills/project-management/schemas/audit-issues-input.md`.
    - `source`: `"review"`
    - `parent_issue`: [ISSUE_ID] if available, else null
    - `worktree`: [WT_PATH]
 
 2. **Write file**: `tmp/audit-review-YYYYMMDD-HHMMSS.json`
 
-3. **Run Workflow**: `⤵ workflows/audit-issues.md --issues [FILE_PATH] § 1-9 → § 6`
+3. **Run Workflow**: `⤵ .agents/skills/project-management/workflows/audit-issues.md --issues [FILE_PATH] § 1-9 → § 6`
 
 ---
 

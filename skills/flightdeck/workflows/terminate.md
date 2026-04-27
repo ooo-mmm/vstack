@@ -1,12 +1,12 @@
 # Workflow: `terminate` — Final Summary + Next-Cycle Recommendation
 
-End-of-session unwind. Composes a per-issue summary, the new-issues report, and a next-cycle recommendation. Marks master state terminated. Returns control to orchestration.
+End-of-session unwind. Composes a per-issue summary, the new-issues report, and a next-cycle recommendation. Marks master state terminated. Returns control to flightdeck's dashboard.
 
 **Inputs**: master state (every tracked issue is `merged | aborted | dead`; debounce satisfied).
 
 **Pre-conditions**: `watch.md` § 6 confirmed all-done across consecutive poll cycles.
 
-**Post-condition**: `tmp/flightdeck-summary-<SESSION>-<TS>.md` written; `master_state.terminated = true`; user-visible summary line emitted; control returned to orchestration's dashboard loop.
+**Post-condition**: `tmp/flightdeck-summary-<SESSION>-<TS>.md` written; `master_state.terminated = true`; user-visible summary line emitted; control returned to flightdeck's dashboard loop (`workflows/start.md` § 1).
 
 ---
 
@@ -137,4 +137,4 @@ The terminated master state means subsequent `watch` invocations on this `$TMUX_
 
 ## Returns
 
-To orchestration's dashboard loop (`workflows/start.md` § 1).
+To flightdeck's dashboard loop (`workflows/start.md` § 1).

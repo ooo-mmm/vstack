@@ -30,16 +30,15 @@ Initialize development session, display status, select work, evaluate research, 
 
    | Recommendation | Action |
    |----------------|--------|
-   | `ci-fix N` | `⤵ workflows/ci-fix.md N § 1-7 → § 1` |
-   | `review-pr-comments N` | `⤵ workflows/review-pr-comments.md N § 1-8 → § 1` |
-   | `merge-pr N` | `⤵ workflows/merge-pr.md N § 1-7 → § 1` |
-   | `research-complete [ISSUE_ID]` | `⤵ workflows/research-complete.md [ISSUE_ID] § 1-7 → § 1` |
-   | Complete [Project]: audit-issues project-order | Invoke workflow: `⤵ workflows/audit-issues.md project-order § 1-9 → § 1` |
-   | Activate project: audit-issues project-order | Invoke workflow: `⤵ workflows/audit-issues.md project-order § 1-9 → § 1` |
-   | Plan cycle: audit-issues → cycle-plan | Invoke workflow: `⤵ workflows/audit-issues.md project § 1-9`, then `⤵ workflows/cycle-plan.md § 1-6 → § 1` |
+   | `research-complete [ISSUE_ID]` | `⤵ .agents/skills/project-management/workflows/research-complete.md [ISSUE_ID] § 1-7 → § 1` |
+   | Complete [Project]: audit-issues project-order | `⤵ .agents/skills/project-management/workflows/audit-issues.md project-order § 1-9 → § 1` |
+   | Activate project: audit-issues project-order | `⤵ .agents/skills/project-management/workflows/audit-issues.md project-order § 1-9 → § 1` |
+   | Plan cycle: audit-issues → cycle-plan | `⤵ .agents/skills/project-management/workflows/audit-issues.md project § 1-9`, then `⤵ .agents/skills/project-management/workflows/cycle-plan.md § 1-6 → § 1` |
    | `parallel-check "Project"` | `⤵ workflows/parallel-check.md "Project" § 1-11 → § 1` |
    | Start in parallel: [ISSUE_ID], ... | Ask user: `Start [ISSUE_ID] only` (→ § 1.4) \| `Launch parallel group` (capture `[ISSUE_IDS]` → § 1.4) |
    | Start [ISSUE_ID] | Capture issue ID → § 1.4 |
+
+   Note: per-issue actions (`ci-fix`, `review-pr-comments`, `merge-pr`) are not surfaced here. Master directs the per-issue agent in its tmux pane to handle those — see `patterns/prompt-handlers.md`. If a PR genuinely needs out-of-session attention, the user invokes the orchestration command directly from a worktree pane.
 
 3. **Ask user** with recommended as first option. The `👉` line format is `👉 Label — reason`. Use text before `—` as the option label, text after `—` as the option description.
 
@@ -226,7 +225,7 @@ After all issues processed → § 3.
 
 ### 3.5 Create Research Issue(s) (if requested)
 
-Invoke workflow: `⤵ workflows/research-issue.md § 1-5 → § 1` with context:
+Invoke workflow: `⤵ .agents/skills/project-management/workflows/research-issue.md § 1-5 → § 1` with context:
 
 **If single issue**:
 - `topic`: from § 3.3 agent "Research:" response
@@ -268,7 +267,7 @@ Terminate the consultation agent if it's still running.
 
 1. **Check assets**: research prompt file exists for [ISSUE_ID]
 
-2. **If missing** → Invoke workflow: `⤵ workflows/research-issue.md § 2 → § 4.2` (Prepare Assets only)
+2. **If missing** → Invoke workflow: `⤵ .agents/skills/project-management/workflows/research-issue.md § 2 → § 4.2` (Prepare Assets only)
 
 3. **If complete** → Present: `Research Ready: [ISSUE_ID] | Assets: ✓ | Run research-complete after execution`
 
@@ -295,16 +294,14 @@ Worktree creation is idempotent: existing worktrees are reused (rebased onto lat
    ```
    For each active worktree issue: `.agents/skills/linear/scripts/linear.sh cache issues get [WT_ISSUE] --format=compact` → compare `agent` with current issue.
    - **No overlap** → continue
-   - **Same agent** → `.agents/skills/orchestration/scripts/parallel-groups needs-refresh [ISSUE_ID] [WT_ISSUE]`. If exit 1 (fresh, cached safe) → continue. Otherwise ask user: `orchestration parallel-check [ISSUE_ID] [WT_ISSUE]` | `Continue anyway`. If check → `⤵ workflows/parallel-check.md [ISSUE_ID] [WT_ISSUE] § 1-11 → § 4.3`. If conflicts verdict → warn with details, do not block.
+   - **Same agent** → `.agents/skills/flightdeck/scripts/parallel-groups needs-refresh [ISSUE_ID] [WT_ISSUE]`. If exit 1 (fresh, cached safe) → continue. Otherwise ask user: `flightdeck parallel-check [ISSUE_ID] [WT_ISSUE]` | `Continue anyway`. If check → `⤵ workflows/parallel-check.md [ISSUE_ID] [WT_ISSUE] § 1-11 → § 4.3`. If conflicts verdict → warn with details, do not block.
 
 5. **Create worktree**: `WT_PATH=$(.agents/skills/worktree/scripts/worktree create [ISSUE_ID])`
 
 6. **Launch**: Ask user which harness to launch: `claude` | `codex` | `opencode` | `I'll launch it myself`
-   - **Harness selected**: `.agents/skills/orchestration/scripts/open-terminal [ISSUE_ID] --harness [HARNESS]`
-     - **If `$TMUX` set**: `⤵ .agents/skills/flightdeck/workflows/watch.md [ISSUE_ID] § 1-7 → § 1` — transition to flightdeck master mode; oversee the spawned pane to merge or abort, then return here.
-     - **If `$TMUX` unset**: skip flightdeck (no-op); fall through to → § 1.
-   - **Manual**: Show the command and worktree path so the user can run it themselves.
-   - **→ § 1** (restart dashboard in current session).
+   - **Harness selected**: `.agents/skills/flightdeck/scripts/open-terminal [ISSUE_ID] --harness [HARNESS]`, then `⤵ workflows/watch.md [ISSUE_ID] § 1-7 → § 1` — enter master oversight loop until the spawned pane reaches a terminal state, then return to dashboard.
+   - **Manual**: Show the command and worktree path so the user can run it themselves. → § 1.
+   - **I'll launch it myself** → § 1.
 
 ### 4.4 Launch Issue(s)
 
@@ -319,13 +316,9 @@ Worktree creation is idempotent: existing worktrees are reused (rebased onto lat
    </output_format>
 
 3. **Ask user** which harness and: `Launch [N] issues` | `Select subset` | `I'll launch them myself` | `Cancel`
-   - **Launch**: `.agents/skills/orchestration/scripts/open-terminal [ISSUE_IDS] --harness [HARNESS]`
-     - **If `$TMUX` set**: `⤵ .agents/skills/flightdeck/workflows/watch.md [ISSUE_IDS] § 1-7 → § 1` — transition to flightdeck master mode; oversee the spawned set to merge or abort, then return here.
-     - **If `$TMUX` unset**: skip flightdeck (no-op); fall through to → § 1.
-   - **Select subset**: Ask user with individual issues as options (multiSelect) → `.agents/skills/orchestration/scripts/open-terminal [SELECTED_ISSUES] --harness [HARNESS]`
-     - **If `$TMUX` set**: `⤵ .agents/skills/flightdeck/workflows/watch.md [SELECTED_ISSUES] § 1-7 → § 1`.
-     - **If `$TMUX` unset**: skip flightdeck (no-op); fall through to → § 1.
-   - **Manual**: Show the command so the user can run it themselves.
+   - **Launch**: `.agents/skills/flightdeck/scripts/open-terminal [ISSUE_IDS] --harness [HARNESS]`, then `⤵ workflows/watch.md [ISSUE_IDS] § 1-7 → § 1` — enter master oversight loop for the spawned set, then return to dashboard.
+   - **Select subset**: Ask user with individual issues as options (multiSelect) → `.agents/skills/flightdeck/scripts/open-terminal [SELECTED_ISSUES] --harness [HARNESS]`, then `⤵ workflows/watch.md [SELECTED_ISSUES] § 1-7 → § 1`.
+   - **Manual**: Show the command so the user can run it themselves. → § 1.
    - **Cancel** → § 1
 
-4. **→ § 1** (restart dashboard in current session).
+4. **→ § 1** (restart dashboard in current session, only reached on Manual / Cancel paths).

@@ -38,13 +38,19 @@ See `patterns/prompt-handlers.md` § Handler: `cleanup-prompt`.
 
 See `patterns/prompt-handlers.md` § Handler: `bot-review-wait-stuck`.
 
-1. Re-run `bot-review-wait` against the issue's PR with `--json` to get fresh per-reviewer status.
-2. Apply decision matrix:
-   - All reviewers `approved | skipped` → answer `Skip` option.
-   - Any reviewer in `changes_reviewers` → escalate (review-feedback path, not bypass).
-   - Pending reviewer past wait threshold AND user-known-noisy → set `BOT_SKIPPED_REVIEWERS` and answer `Skip`.
-   - Pending reviewer that's blocking real review → escalate.
-3. Log decision.
+Master does NOT re-invoke `bot-review-wait` — that script runs inside per-issue agent contexts. Master observes the actual PR state via `gh`:
+
+1. Query: `gh pr view <PR> --json statusCheckRollup,reviewDecision,latestReviews,labels`.
+2. Parse:
+   - Bot check (e.g., `Claude Code claude` workflow's `claude` job) conclusion.
+   - `reviewDecision`: `APPROVED | CHANGES_REQUESTED | REVIEW_REQUIRED | null`.
+   - `latestReviews`: per-reviewer state.
+3. Apply decision matrix:
+   - Bot check `SUCCESS` AND `reviewDecision == APPROVED` (or no human reviewers required) → answer `Skip` option in the agent's prompt.
+   - Bot check `SUCCESS` AND `reviewDecision == CHANGES_REQUESTED` → escalate (review-feedback path, not bypass).
+   - Bot check `IN_PROGRESS | null` AND elapsed past wait threshold → escalate; the agent's wait was indeed stuck.
+   - Real human reviewer pending → escalate.
+4. Log decision via `pane-registry log-decision`.
 
 ---
 

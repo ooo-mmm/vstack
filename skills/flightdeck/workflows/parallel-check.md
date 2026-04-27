@@ -280,9 +280,9 @@ Persist regardless of verdict (prevents re-analysis on next `workflows/start.md`
 
    `children_fingerprints`: all children of any bundle in the group. Empty `{}` if no bundles.
 
-4. **Clear existing groups**: `.agents/skills/orchestration/scripts/parallel-groups clear`
+4. **Clear existing groups**: `.agents/skills/flightdeck/scripts/parallel-groups clear`
 
-5. **Write each group**: `.agents/skills/orchestration/scripts/parallel-groups write '$GROUP_JSON'`
+5. **Write each group**: `.agents/skills/flightdeck/scripts/parallel-groups write '$GROUP_JSON'`
 
 ---
 

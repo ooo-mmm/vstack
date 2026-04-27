@@ -48,12 +48,9 @@ See `patterns/decision-biases.md` § Smaller-PR-first merge order and § Merge-o
    gh pr view <PR> --json mergeable,mergeStateStatus,reviewDecision,statusCheckRollup
    ```
 3. Decision:
-   - `MERGEABLE` + `CLEAN` + APPROVED + all-checks-green → invoke orchestration's per-issue merge workflow:
-     ```
-     ⤵ ../orchestration/workflows/merge-pr.md <PR> → § 4
-     ```
+   - `MERGEABLE` + `CLEAN` + APPROVED + all-checks-green → **direct the per-issue agent**: the per-issue agent is the one that owns merging its own PR. If its pane is alive and idle, send a message instructing it to run its `merge-pr` workflow on its current PR (no `⤵` from flightdeck — flightdeck observes-and-directs). If its pane is dead or absent (rare edge case for a PR whose session already ended), perform the merge directly via `gh pr merge <PR> --squash --delete-branch` and apply post-merge Linear updates inline.
    - `UNKNOWN` AND elapsed since first observed < `FLIGHTDECK_FORCE_MERGE_AFTER_SECS` → push back to queue tail; return to § 1 (graph unchanged).
-   - `UNKNOWN` AND elapsed ≥ threshold AND force-merge predicate satisfied (see `patterns/conflict-detection.md`) → force-merge.
+   - `UNKNOWN` AND elapsed ≥ threshold AND force-merge predicate satisfied (see `patterns/conflict-detection.md`) → direct the per-issue agent to force-merge (or `gh pr merge --admin` directly if no live pane).
    - `DIRTY | BEHIND` with overlap → escalate (set `paused_for_user`); return to caller.
 4. On successful merge:
    - `pane-registry set-state <ISSUE_ID> merged`.

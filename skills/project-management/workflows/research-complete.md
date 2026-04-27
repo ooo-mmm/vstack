@@ -305,7 +305,7 @@ Count distinct domains across merged requirements from § 6.4. If 2+ domains, de
 1. **Group ALL requirements by domain** → one sub-issue per domain (including domains from original scope). Sub-issues must be in parent's project.
 2. **Title format**: `[Domain verb]: [scope] for [DECISION_ID]` (e.g., "Implement GBM tick generator for D012", "Add order panel view for D012")
 3. **Set labels**: `agent:[TYPE]` per domain, appropriate stack labels
-4. **Determine blocking order**: Read [agent-sequencing.md](agent-sequencing.md). Record as `blocks_items`/`blocked_by_items` for step 6.
+4. **Determine blocking order**: Read [agent-sequencing.md](../../orchestration/workflows/agent-sequencing.md). Record as `blocks_items`/`blocked_by_items` for step 6.
 5. **Include supplementary findings** from agent reports as requirements in the appropriate domain sub-issue -- don't create separate issues for small supplementary items that belong to the same domain
 6. **Build audit-input file** with formatted titles:
    - Schema: [audit-issues-input.md](../schemas/audit-issues-input.md)
@@ -346,10 +346,10 @@ Update each blocked issue (from § 1 `.blocks` array) to reflect research outcom
 6. **Invalidate parallel groups**: Description rewrites change issue scope, invalidating cached parallel-check results.
    ```bash
    for BLOCKED_ISSUE in [BLOCKED_ISSUES]; do
-     .agents/skills/orchestration/scripts/parallel-groups lookup $BLOCKED_ISSUE
+     .agents/skills/flightdeck/scripts/parallel-groups lookup $BLOCKED_ISSUE
    done
    ```
-   For each group found, clear it: `.agents/skills/orchestration/scripts/parallel-groups clear --group [GROUP_ID]`
+   For each group found, clear it: `.agents/skills/flightdeck/scripts/parallel-groups clear --group [GROUP_ID]`
 
 ### 6.7 Post Research Summary Comment
 

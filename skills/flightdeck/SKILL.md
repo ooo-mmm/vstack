@@ -1,14 +1,14 @@
 ---
 name: flightdeck
-description: "Autonomous mission-control oversight of multi-issue parallel dev sessions: watches tmux panes, answers prompts, plans merges, drives every issue to merged or aborted."
+description: "Master session lifecycle for multi-issue parallel dev work: dashboard, spawn, oversee tmux panes, answer prompts, plan merges, drive every tracked issue to merged or aborted."
 license: MIT
 user-invocable: true
 dependencies:
-  required: [orchestration, github, linear]
+  required: [github, linear, project-management]
   optional: [worktree]
 metadata:
   author: vanillagreen
-  version: "0.1.0"
+  version: "0.2.0"
 ---
 
 # Flightdeck
@@ -16,15 +16,13 @@ metadata:
 ## STOP — Required Setup
 
 1. Verify `$TMUX` is set. If unset, **exit immediately with no-op**: print `Flightdeck requires tmux; skipping.` and return control to the caller. Flightdeck does nothing outside tmux.
-2. Verify `github` and `linear` skills are loaded.
-   - **Auto-invoked from orchestration's `start.md`**: already loaded by orchestration's STOP block — proceed.
-   - **Manual re-entry** (e.g., invoking flightdeck's `watch` workflow directly after compaction or standalone — exact invocation syntax depends on harness): load them now if not present. A redundant load is a no-op.
+2. Load `github`, `linear`, and `project-management` skills if not already loaded. Redundant loads are no-ops.
 
 If a required skill cannot be loaded, stop and tell the user. Do not proceed without them.
 
 ---
 
-> **MODE SWITCH**: Loading this skill puts you in **master mode**. You are NOT a dev agent. You do not write code in any worktree, you do not edit files in spawned issue branches, you do not run cargo/npm/builds. You are the same agent that just executed orchestration's `start` workflow and spawned the issue panes; loading flightdeck shifts your role from spawner to overseer. Your job: watch every tmux window you just spawned, classify their prompts, send responses (with sub-agent guidance combined where required), monitor PR state, plan merge order against a live conflict graph, and drive each tracked issue to a terminal state (`merged` or `aborted`).
+> **MODE SWITCH**: Loading this skill puts you in **master mode**. You are NOT a dev agent. You do not write code in any worktree, you do not run cargo/npm/builds, and you do NOT invoke per-issue orchestration workflows directly. Your role is **observe-and-direct**: from the moment a user invokes flightdeck's `start` from main, you own the master arc — dashboard → research/plan evaluation → spawn (`open-terminal`) → watch loop → merge planning → unwind. Per-issue work happens entirely inside the spawned panes; you observe their prompts via `tmux capture-pane`, query PR/issue facts via `gh` and `linear`, and direct the per-issue agents by sending responses to their prompts. You never run `bot-review-wait`, `ci-wait`, `merge-pr`, or any other orchestration workflow yourself.
 >
 > **Pause for the user only on**: detected scope creep that requires reverting an agent's work, force-merging when a real content conflict exists (not just `UNKNOWN`), aborting an issue, anything that would mutate `main` directly, or a novel prompt shape no rule covers.
 >
@@ -32,10 +30,26 @@ If a required skill cannot be loaded, stop and tell the user. Do not proceed wit
 
 ## Commands
 
+### Session
+
 | Command | Arguments | Workflow | Notes |
 |---------|-----------|----------|-------|
-| `watch` | `[ISSUE_IDS]` | `workflows/watch.md` | Begin master loop. Auto-invoked from orchestration's `start.md` after `open-terminal` returns. Can be re-entered manually after compaction or to resume after a manual pause. |
+| `start` | `[ISSUE_ID]` | `workflows/start.md` | From-main entry. Dashboard, issue selection, research evaluation, parallel-check, spawn (`open-terminal`), enter watch loop. |
+| `start new` | `[title]` | `workflows/start-new.md` | Create new issue + spawn. |
+| `start self` | — | inline | Initialize master session only, await further commands. |
+| `parallel-check` | `[ISSUE_IDS]` | `workflows/parallel-check.md` | Verify a candidate set is safe to spawn in parallel. |
+| `watch` | `[ISSUE_IDS]` | `workflows/watch.md` | Master oversight loop. Invoked at the end of `start.md` after spawn; can be re-entered manually after compaction. |
 | `status` | — | inline | Print current pane registry + state machine snapshot from `tmp/flightdeck-state-<TMUX_SESSION>.json`. Read-only. |
+
+### Planning (cross-call to `project-management`)
+
+| Command | Workflow | Notes |
+|---------|----------|-------|
+| `cycle-plan` | `⤵ .agents/skills/project-management/workflows/cycle-plan.md` | TPM-driven cycle planning |
+| `audit-issues` | `⤵ .agents/skills/project-management/workflows/audit-issues.md` | Issue audit (project / project-order / issue [IDs] / --issues file) |
+| `roadmap plan` / `create` | `⤵ .agents/skills/project-management/workflows/roadmap-plan.md` / `roadmap-create.md` | Roadmap planning + execution |
+| `research-spike` | `⤵ .agents/skills/project-management/workflows/research-spike.md` | Initiate a research issue with assets |
+| `research-complete` | `⤵ .agents/skills/project-management/workflows/research-complete.md` | Route a completed research issue |
 
 ## Skill Rules
 
@@ -55,7 +69,7 @@ Lessons distilled from real multi-issue session experience are grouped by domain
 
 - **Cleanup scope** — for prompts asking about worktree/branch cleanup, answer YES iff the target path equals the asking pane's registered worktree. NEVER answer YES for sibling worktrees. Some agents propose batch cleanup; that's wrong because parallel sessions are still using them.
 - **Combine guidance with response** — when a prompt-option pick triggers immediate sub-agent delegation (rebase resolution, fix delegation), guidance for the sub-agent must be in the SAME input as the option pick. Use "Type your own answer" / "Chat about this" to combine. Follow-up messages arrive after delegation has already left and are too late to influence the sub-agent.
-- **Bot-review-wait status interpretation** — orchestration's `bot-review-wait` understands multiple signaling modes (formal review APPROVED/CHANGES_REQUESTED, sticky comments, reactions on PR body 👀/👍, inline threads). It returns per-reviewer status (`pending|approved|changes|skipped|unknown`) plus an aggregate verdict. When the per-issue agent prompts Skip / Wait / Abort, base the decision on the script's JSON: if all configured reviewers are `approved` or `skipped` → Skip is safe; if any reviewer is genuinely `pending` past the wait threshold → escalate or use `--skip`/`BOT_SKIPPED_REVIEWERS` to opt that reviewer out explicitly.
+- **Bot-review prompt response** — when a per-issue agent's `bot-review-wait` times out and surfaces a Skip/Wait/Abort prompt, master decides based on the **actual PR check state** queried via `gh pr view <PR> --json statusCheckRollup,reviewDecision,labels`. If the bot's check (e.g., `Claude Code claude`) is `SUCCESS` and reviewDecision is `APPROVED` (or unset and no requested reviewers pending), Skip is safe. If a real reviewer is genuinely pending → escalate. Master does NOT re-invoke `bot-review-wait` — that script runs inside per-issue agent contexts.
 - **Rebase-multi-choice guidance template** — when a rebase prompt requires preserving sibling-PR logic, the combined payload must follow the **preserve / apply / verify** triplet:
   - **Preserve**: name the function signatures, parameter splits, or new wrappers that arrived from the upstream merge and must NOT be reverted
   - **Apply**: name the field renames, type updates, or local refactors that go ON TOP of the preserved upstream shape
@@ -86,6 +100,8 @@ Lessons distilled from real multi-issue session experience are grouped by domain
 
 | Script | Purpose |
 |--------|---------|
+| `open-terminal` | Launch worktree(s) for one or more issues with auto-detected harness — **never hand-roll tmux/terminal commands; use this for every session spawn** |
+| `parallel-groups` | Read/manage parallel issue groups |
 | `flightdeck-state` | Master-state CRUD wrapper — atomic init/get/set/append/increment for `tmp/flightdeck-state-<TMUX_SESSION>.json` |
 | `pane-registry` | Issue↔pane mapping CRUD (init from spawned issue list, list, update state per issue) |
 | `pane-poll` | Single-window status read: bell flag + `capture-pane -t <session>:<window>.0 -p -S -200` + classify |
@@ -93,8 +109,6 @@ Lessons distilled from real multi-issue session experience are grouped by domain
 | `pane-clear-bell` | Atomic chained-command bell clear (no flicker) |
 | `pr-conflict-graph` | Build file-intersection adjacency for a list of PR numbers via `gh pr view --json files` |
 | `prompt-classify` | Regex/sentinel matcher mapping a captured prompt buffer to a handler tag (`cleanup-prompt`, `bot-review-wait-stuck`, `rebase-multi-choice`, `audit-relation-prompt`, `merge-ready-but-unknown`, `scope-creep-detected`, `generic-multi-choice`, `rendering`) |
-
-Reused without copying: orchestration's `open-terminal` (does the spawn before flightdeck starts), `bot-review-wait`, `ci-wait`, `parallel-groups`, `workflow-state` primitives.
 
 ## Schema — master state
 
@@ -148,7 +162,10 @@ State enum: `state ∈ {waiting, prompting, submitting, merge-ready, merged, abo
 
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
-| `workflows/watch.md` | `watch` (entry) or auto from orchestration `start.md` | Master loop — initialize, poll, route prompts, plan merges, terminate |
+| `workflows/start.md` | `start` (from main) | From-main entry: dashboard, issue selection, research evaluation, parallel-check, spawn, enter watch |
+| `workflows/start-new.md` | `start new` | Create new issue from main + spawn |
+| `workflows/parallel-check.md` | `parallel-check` (also nested from `start.md` § 4) | Verify candidate issue set is safe to spawn in parallel |
+| `workflows/watch.md` | `watch` (entry) or invoked at end of `start.md` after spawn | Master oversight loop — initialize state, poll panes, route prompts, plan merges, terminate |
 | `workflows/handle-prompt.md` | Nested invocation from `watch` § 3 | Per-pane prompt classification + response |
 | `workflows/merge-plan.md` | Nested invocation from `watch` § 4 | Conflict-graph build + smallest-first merge ordering |
 | `workflows/terminate.md` | Nested invocation from `watch` § 6 | Final summary, new-issues report, next-cycle recommendation, master-state finalization |

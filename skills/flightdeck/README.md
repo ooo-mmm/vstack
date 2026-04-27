@@ -55,6 +55,8 @@ Every script in `scripts/` appears in `SKILL.md`'s Scripts table. No hidden scri
 
 | Script | What it does |
 |--------|--------------|
+| `open-terminal` | Launch worktree(s) with auto-detected harness — never hand-roll tmux/terminal commands |
+| `parallel-groups` | Read/manage parallel issue groups |
 | `flightdeck-state` | Atomic CRUD on `tmp/flightdeck-state-<TMUX_SESSION>.json` |
 | `pane-registry` | Issue↔pane mapping wrapper |
 | `pane-poll` | Bell + capture-pane (pane 0 explicit) + classify |

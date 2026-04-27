@@ -493,9 +493,9 @@ Issue suggestions: [N] items → § 9 audit
    - Discovered work items (from step 2, `origin: "discovered"`)
 
 5. **Write file**: `[WORKTREE_PATH]/tmp/audit-start-YYYYMMDD-HHMMSS.json`
-   - Schema: `schemas/audit-issues-input.md`
+   - Schema: `.agents/skills/project-management/schemas/audit-issues-input.md`
 
-6. **Run Workflow**: `⤵ workflows/audit-issues.md --issues [FILE_PATH] § 1-9 → § 9 step 7`
+6. **Run Workflow**: `⤵ .agents/skills/project-management/workflows/audit-issues.md --issues [FILE_PATH] § 1-9 → § 9 step 7`
 
 7. **Update state** — for each created issue from audit output:
    ```bash

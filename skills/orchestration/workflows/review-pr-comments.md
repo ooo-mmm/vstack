@@ -379,8 +379,8 @@ Issue suggestions: [N] items → § 6.2 audit
 **Skip if** no issue suggestions AND no blocked items.
 
 1. **Build audit-input file** from issue suggestions + blocked items
-2. **Write file**: `[WORKTREE_PATH]/tmp/audit-pr-comments-YYYYMMDD-HHMMSS.json` per `schemas/audit-issues-input.md`
-3. **Invoke workflow**: `⤵ workflows/audit-issues.md --issues [FILE_PATH] § 1-9 → § 6.3`
+2. **Write file**: `[WORKTREE_PATH]/tmp/audit-pr-comments-YYYYMMDD-HHMMSS.json` per `.agents/skills/project-management/schemas/audit-issues-input.md`
+3. **Invoke workflow**: `⤵ .agents/skills/project-management/workflows/audit-issues.md --issues [FILE_PATH] § 1-9 → § 6.3`
 
 ### 6.3 Wait for New Comments & Re-Triage
 

@@ -21,7 +21,7 @@ The `defer-ci` GitHub label is the project's "hold heavy CI until bot review" me
 ### Implication for flightdeck
 
 When a pane is in `submitting` state with `defer-ci` set:
-- Bot review status is read via `bot-review-wait --json` (which understands formal reviews, sticky comments, reactions, and threads across multiple bot styles), not by hand-grepping a single check name.
+- Bot review status is read by master via `gh pr view <PR> --json statusCheckRollup,reviewDecision`. Master never invokes `bot-review-wait` — that script runs inside per-issue agent contexts.
 - Heavy CI lanes show as `SKIPPED` until `defer-ci` is removed.
 - Don't classify the SKIPPED checks as failures — they're awaiting label removal.
 
@@ -34,10 +34,10 @@ Once `defer-ci` is removed (after all configured bot reviewers are in `approved 
 labels=$(gh pr view <N> --json labels --jq '.labels[].name')
 echo "$labels" | grep -q '^defer-ci$' && echo "defer-ci ON"
 
-# Per-reviewer bot status (multi-bot aware)
-.agents/skills/orchestration/scripts/bot-review-wait <N> 5 30 --json | jq '.verdict, .pending_reviewers'
-# verdict=approved means all reviewers are done (approved or skipped)
-# pending_reviewers=[] means none still pending
+# Bot check + review state (no script invocation; master observes via gh)
+gh pr view <N> --json statusCheckRollup,reviewDecision \
+  --jq '{review:.reviewDecision, bot:(.statusCheckRollup[]|select(.name|test("claude|codex|review-bot";"i"))|{name,conclusion})}'
+# reviewDecision==APPROVED + bot.conclusion==SUCCESS → safe to drop defer-ci
 ```
 
 ## File-level conflict graph

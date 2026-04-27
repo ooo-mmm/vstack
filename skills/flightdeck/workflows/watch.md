@@ -2,11 +2,11 @@
 
 Master mode entry point. Polls every spawned issue pane, classifies their prompts, routes to handlers, plans merges, and drives every tracked issue to a terminal state.
 
-**Inputs**: `[ISSUE_IDS]` — the issue list spawned by orchestration's `start.md` (auto-passed at handoff). Auto-detect `$TMUX_SESSION` via `tmux display-message -p '#S'`.
+**Inputs**: `[ISSUE_IDS]` — the issue list spawned by flightdeck's `start.md` (auto-passed at handoff). Auto-detect `$TMUX_SESSION` via `tmux display-message -p '#S'`.
 
-**Pre-conditions**: `$TMUX` set; orchestration just returned from `open-terminal` for one or more issues; `github` and `linear` skills loaded.
+**Pre-conditions**: `$TMUX` set; flightdeck's `start.md` § 4 just returned from `open-terminal` for one or more issues; `github` and `linear` skills loaded.
 
-**Post-condition**: master state `terminated: true`, summary file written, control returned to orchestration's dashboard loop.
+**Post-condition**: master state `terminated: true`, summary file written, control returned to flightdeck's dashboard loop.
 
 ---
 
@@ -21,7 +21,7 @@ Master mode entry point. Polls every spawned issue pane, classifies their prompt
 3. For each `ISSUE_ID` in the spawn batch, build / refresh registry entry:
    - Look up the spawned window by name (`open-terminal` names windows after the issue ID, lowercased).
    - Determine harness from the agent process running in pane 0 (`tmux list-panes -t <session>:<window> -F '#{pane_index} #{pane_current_command}'`).
-   - Determine worktree path (passed by orchestration; cross-check `git worktree list`).
+   - Determine worktree path (passed by `start.md`; cross-check `git worktree list`).
    - Pin the orchestrator-pane index by fingerprinting (see `patterns/tmux-monitoring.md` § Pane-0 rule). If only one pane, index 0.
    - Register:
      ```
@@ -132,4 +132,4 @@ Master state persists on every mutation. On `watch` re-entry after compaction (o
 
 ## Returns
 
-To orchestration's dashboard loop, after `terminate.md` writes the summary and emits the user-visible line.
+To flightdeck's dashboard loop (`workflows/start.md` § 1), after `terminate.md` writes the summary and emits the user-visible line.

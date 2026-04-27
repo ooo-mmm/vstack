@@ -1,23 +1,49 @@
 ---
 name: project-management
-description: "TPM analysis workflows: roadmap planning, cycle planning, prioritization, and progress tracking. Returns JSON."
+description: "TPM-orchestrated planning, audit, roadmap, and research-driven decomposition. Owns the user-facing wrappers (cycle-plan, audit-issues, roadmap-*, research-*) and the underlying TPM execution workflows."
 license: MIT
 user-invocable: true
 dependencies:
-  required: [linear]
+  required: [linear, github]
   optional: [decider]
 metadata:
   author: vanillagreen
-  version: "1.1.0"
+  version: "2.0.0"
 ---
 
 # Project Management
 
-TPM methodology for roadmap planning, cycle planning, issue auditing, and progress tracking. Workflows analyze state and return structured JSON recommendations — the orchestrator or user handles execution.
+User-facing wrappers and TPM-execution workflows for project-level planning, audit, roadmap, and research-driven decomposition. Loaded by the master (flightdeck) when surfacing planning commands from the dashboard, and by per-issue review (orchestration) when reviewers escalate audit findings.
+
+## Commands
+
+| Command | Arguments | Workflow |
+|---------|-----------|----------|
+| `cycle-plan` | — | `workflows/cycle-plan.md` |
+| `audit-issues` | `project` \| `project "Name"` \| `issue [IDs]` \| `--issues [file]` \| `project-order` | `workflows/audit-issues.md` |
+| `roadmap plan` | `[feature]` \| `[feature] @[research-path]` | `workflows/roadmap-plan.md` |
+| `roadmap create` | `@[plan-file]` | `workflows/roadmap-create.md` |
+| `research-spike` | — | `workflows/research-spike.md` |
+| `research-complete` | `[ISSUE_ID]` | `workflows/research-complete.md` |
+| `research-issue` | — | `workflows/research-issue.md` (internal — invoked by `research-spike`) |
 
 ## Workflows
 
-TPM workflows return JSON recommendations only. Orchestrator or user handles interaction and execution.
+### User-facing wrappers
+
+| Workflow | Purpose |
+|----------|---------|
+| [cycle-plan](workflows/cycle-plan.md) | User dialog + Linear actions for cycle planning; delegates analysis to `tpm-cycle-plan` |
+| [audit-issues](workflows/audit-issues.md) | User dialog + Linear actions for issue/project audits; delegates to `tpm-audit` / `tpm-audit-project-order` |
+| [roadmap-plan](workflows/roadmap-plan.md) | Specialist consultation + research gating; delegates to `tpm-roadmap-plan` |
+| [roadmap-create](workflows/roadmap-create.md) | Execute a roadmap plan: project + issue creation via audit |
+| [research-spike](workflows/research-spike.md) | User-initiated research with consultation + asset prep |
+| [research-complete](workflows/research-complete.md) | Route a completed research issue (Targeted / Pervasive / Strategic) |
+| [research-issue](workflows/research-issue.md) | Create research issue + assets (called by `research-spike`) |
+
+### TPM-execution (called by the wrappers)
+
+TPM workflows return JSON recommendations only.
 
 | Workflow | Purpose |
 |----------|---------|
@@ -25,6 +51,24 @@ TPM workflows return JSON recommendations only. Orchestrator or user handles int
 | [tpm-roadmap-plan](workflows/tpm-roadmap-plan.md) | Cross-project analysis, architecture gaps |
 | [tpm-audit](workflows/tpm-audit.md) | Audit issues/projects for relations, hierarchy |
 | [tpm-audit-project-order](workflows/tpm-audit-project-order.md) | Analyze project dependencies and ordering |
+
+## Templates
+
+| Template | Purpose |
+|----------|---------|
+| [issue-description-template](templates/issue-description-template.md) | Standard markdown for issue descriptions |
+| [parent-issue-template](templates/parent-issue-template.md) | Parent/bundle issues with sub-issue coordination |
+
+## Schemas
+
+| Schema | Purpose |
+|--------|---------|
+| [audit-issues-input](schemas/audit-issues-input.md) | Input for issue audit workflows |
+| [roadmap-plan-input](schemas/roadmap-plan-input.md) | Input for roadmap planning |
+| [cycle-plan-output](schemas/cycle-plan-output.md) | TPM cycle plan output |
+| [roadmap-plan-output](schemas/roadmap-plan-output.md) | TPM roadmap analysis output |
+| [audit-output](schemas/audit-output.md) | TPM audit output |
+| [audit-project-order-output](schemas/audit-project-order-output.md) | TPM project-order audit output |
 
 ## References
 
@@ -41,15 +85,6 @@ TPM workflows return JSON recommendations only. Orchestrator or user handles int
 
 - Execute all workflow sections in order. The workflow decides what to skip via "**Skip if**" conditions — never skip based on your own scope assessment.
 - `<delegation_format>` and `<output_format>` tags are literal templates: fill `[PLACEHOLDERS]`, omit empty lines, add nothing else, do not paraphrase.
-
-## Output Schemas
-
-| Workflow | Schema |
-|----------|--------|
-| Cycle planning | [cycle-plan-output.md](schemas/cycle-plan-output.md) |
-| Roadmap analysis | [roadmap-plan-output.md](schemas/roadmap-plan-output.md) |
-| Issue/project audit | [audit-output.md](schemas/audit-output.md) |
-| Project order audit | [audit-project-order-output.md](schemas/audit-project-order-output.md) |
 
 ## Hierarchy
 

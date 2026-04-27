@@ -1,14 +1,13 @@
 ---
 name: orchestration
-description: "Multi-agent session coordination: issue workflows, delegation, review pipelines, cycle planning, and research spikes."
+description: "Per-issue inside-worktree lifecycle: dev → review → submit → merge, with delegation to specialist sub-agents and review pipelines."
 license: MIT
 user-invocable: true
 dependencies:
   required: [linear, github, worktree, issue-lifecycle, project-management, decider]
-  optional: [flightdeck]
 metadata:
   author: vanillagreen
-  version: "1.1.0"
+  version: "2.0.0"
 ---
 
 # Orchestration
@@ -26,7 +25,7 @@ If you cannot load a skill, stop and tell the user. Do not proceed without them.
 
 ---
 
-> **MODE SWITCH**: Loading this skill puts you in **orchestrator mode**. Do not write code yourself. Delegate all implementation, review, and QA work to specialist sub-agents using the workflows in this skill.
+> **MODE SWITCH**: Loading this skill puts you in **per-issue orchestrator mode** — you are working *inside a single worktree* on a single issue's lifecycle (dev → review → submit → merge). Do not write code yourself. Delegate all implementation, review, and QA work to specialist sub-agents using the workflows in this skill. Master-side concerns (multi-issue spawn, dashboard, oversight, cross-issue merge planning) live in the `flightdeck` skill, not here.
 
 > If you are running in **Claude Code**: Create a team for the **dev agent only** so it can be re-delegated across the session. Review, QA, and TPM agents are background sub-agents — spawn them with the `Task` tool, store the returned agent ID, and re-engage across cycles via `SendMessage` to that ID. **Never add review/QA/TPM agents to the team.** When asking the user a question or presenting options, always use the `AskUserQuestion` tool. `SendMessage` accepts exactly `to`, `summary`, `message` — extra fields (`type`, `recipient`, `content`, `body`) have caused duplicate delivery on idle wake-up.
 
@@ -57,15 +56,11 @@ When invoked with `<command> [args]`, route to the corresponding workflow.
 | Command | Arguments | Workflow | Notes |
 |---------|-----------|----------|-------|
 | `start` | `[ISSUE_ID]` | See routing below | Context-aware routing |
-| `start` | `new [title]` | `workflows/start-new.md` | Create new issue + worktree |
-| `start` | `self` | `workflows/initialize.md` | Initialize only, await instructions |
-| `initialize` | `[ISSUE_ID]` | `workflows/initialize.md` | Team setup, auth, cache, state |
+| `initialize` | `[ISSUE_ID]` | `workflows/initialize.md` | Team setup, auth, cache, state (standalone) |
 
 **`start` routing logic:**
-1. Argument is `new` → `workflows/start-new.md`
-2. Argument is `self` → `workflows/initialize.md` (extract issue from branch), then stop
-3. Current directory is a worktree (git common dir differs from `.git`) → `workflows/start-worktree.md`
-4. Otherwise → `workflows/start.md`
+1. Current directory is a worktree (git common dir differs from `.git`) → `workflows/start-worktree.md`
+2. Otherwise (running from main repo) → emit a redirect message (`From main, use 'flightdeck start [ISSUE_ID]' — that command lives in the flightdeck skill.`) and stop. orchestration's role is per-issue inside-worktree work; master-side kickoff lives in flightdeck.
 
 ### Development
 
@@ -84,41 +79,19 @@ When invoked with `<command> [args]`, route to the corresponding workflow.
 | `review-pr-comments` | `PR_NUMBER` \| `BRANCH` | `workflows/review-pr-comments.md` | Triage PR comments |
 | `submit-pr` | `[PR_NUMBER]` | `workflows/submit-pr.md` | Push, create PR, bot review, CI |
 | `merge-pr` | `PR_NUMBER` \| `all` | `workflows/merge-pr.md` | Verify and merge |
-
-### Planning & Analysis
-
-| Command | Arguments | Workflow | Notes |
-|---------|-----------|----------|-------|
-| `audit-issues` | `project` \| `project "Name"` \| `issue [IDs]` \| `--issues [file]` | `workflows/audit-issues.md` | Audit issues for relations, hierarchy |
-| `cycle-plan` | — | `workflows/cycle-plan.md` | Prioritized cycle plan |
-| `roadmap` | `plan [feature]` | `workflows/roadmap-plan.md` | Consult specialists, analyze |
-| `roadmap` | `create @[plan-file]` | `workflows/roadmap-create.md` | Execute plan |
-| `parallel-check` | `[ISSUE_IDS]` \| `"Project Name"` | `workflows/parallel-check.md` | Verify parallel safety |
 | `fix-reconcile` | — | `workflows/fix-reconcile.md` | Internal (not user-invocable) |
 | `post-summary` | `[ISSUE_ID]` | `workflows/post-summary.md` | Post summary comments |
 
-**`roadmap` routing logic:**
-- `plan [feature]` → `workflows/roadmap-plan.md`
-- `plan [feature] @[research-path]` → `workflows/roadmap-plan.md` with research context
-- `create @[plan-file]` → `workflows/roadmap-create.md`
-- `create` (no file) → Error: requires plan file from `roadmap plan`
-- (empty) → Error: specify `plan [feature]` or `create @file`
+### Master-side commands (moved)
 
-### Research
+The following commands moved to other skills:
 
-| Command | Arguments | Workflow | Notes |
-|---------|-----------|----------|-------|
-| `research-complete` | `[ISSUE_ID]` | `workflows/research-complete.md` | Route completed research |
-| `research-spike` | — | `workflows/research-spike.md` | Quick exploration |
-| `research-issue` | — | `workflows/research-issue.md` | Internal (not user-invocable) |
+| Command | Now in |
+|---------|--------|
+| `start` (from main), `start new`, `parallel-check` | `flightdeck` |
+| `audit-issues`, `cycle-plan`, `roadmap plan`/`create`, `research-spike`, `research-complete` | `project-management` |
 
-### Retrospective
-
-| Command | Arguments | Workflow | Notes |
-|---------|-----------|----------|-------|
-| `start-retro` | — | Inline (see below) | Analyze workflow execution |
-
-**`start-retro`**: Review the just-completed session for: workflow execution issues (skipped steps, incorrect skip-if evaluations, ad-hoc substitutions), rule deviations, errors, judgment calls, and knowledge gaps. Categorize by severity, perform root cause analysis, propose fixes at the appropriate level (SKILL.md, workflow, agent definition, scripts), present recommendations, and apply approved changes. Runs inline — no external workflow file.
+These are still callable when their owning skill is loaded.
 
 ### Execution Mode
 
@@ -156,25 +129,12 @@ When executing a command's workflow, follow ALL [Workflow Execution](#workflow-e
 | `workflows/submit-pr.md` | `submit-pr` | Push, create PR, bot review, comment triage, CI |
 | `workflows/merge-pr.md` | `merge-pr` | Verify conditions and merge PR(s) |
 
-### Planning & Analysis
+### Per-Issue Lifecycle
 
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
-| `workflows/audit-issues.md` | `audit-issues` | Audit issues for relations, hierarchy, gaps |
 | `workflows/fix-reconcile.md` | `fix-reconcile` | Check if fixes address existing open issues |
 | `workflows/post-summary.md` | `post-summary` | Post summary and handoff comments |
-| `workflows/parallel-check.md` | `parallel-check` | Verify parallel work safety |
-| `workflows/cycle-plan.md` | `cycle-plan` | Plan development cycles |
-| `workflows/roadmap-plan.md` | `roadmap plan` | Consult specialists, analyze roadmap |
-| `workflows/roadmap-create.md` | `roadmap create` | Execute roadmap plan |
-
-### Research
-
-| Workflow | Trigger | Purpose |
-|----------|---------|---------|
-| `workflows/research-issue.md` | `research-issue` | Create research issue with assets |
-| `workflows/research-complete.md` | `research-complete` | Route completed research to workflows |
-| `workflows/research-spike.md` | `research-spike` | Quick research exploration |
 
 ### Reference
 
@@ -182,13 +142,6 @@ When executing a command's workflow, follow ALL [Workflow Execution](#workflow-e
 |----------|---------|
 | `workflows/agent-sequencing.md` | Cross-domain blocking relations and delegation order |
 | `workflows/recommendation-bias.md` | Review finding categorization (fix vs issue) |
-
-### Templates
-
-| Template | Purpose |
-|----------|---------|
-| `templates/issue-description-template.md` | Standard markdown for issue descriptions |
-| `templates/parent-issue-template.md` | Parent/bundle issues with sub-issue coordination |
 
 ## Scripts
 
@@ -199,11 +152,9 @@ When executing a command's workflow, follow ALL [Workflow Execution](#workflow-e
 | Script | Purpose |
 |--------|---------|
 | `workflow-state` | Persistent state read/write/append (survives compaction) |
-| `open-terminal` | Launch worktree(s) for one or more issues with auto-detected harness — **dev sessions only**. Never hand-roll tmux/terminal commands; never use this for review/QA/TPM agents (they are background sub-agents). When `$TMUX` is set, `start.md` § 4.3/4.4 hands off to the `flightdeck` skill (optional dep) after spawn — it oversees the spawned panes to merge or abort. |
-| `parallel-groups` | Read/manage parallel issue groups |
-| `bot-review-wait` | Block until bot review posts on a PR |
-| `ci-wait` | Block until CI completes on a PR |
-| `session-init` | Initialize session state for a new worktree |
+| `bot-review-wait` | Block until bot review posts on a PR — invoked by per-issue agents inside their submit-pr flow |
+| `ci-wait` | Block until CI completes on a PR — same |
+| `session-init` | Initialize session state for a new worktree (called by `initialize.md`) |
 
 ### `workflow-state` actions
 
@@ -217,29 +168,19 @@ When executing a command's workflow, follow ALL [Workflow Execution](#workflow-e
 | `append <ID> <field> <value>` | Append to array field |
 | `increment <ID> <field>` | Increment counter |
 
-### `open-terminal` usage
-
-```bash
-.agents/skills/orchestration/scripts/open-terminal ISSUE-1 [ISSUE-2 ...] --harness <claude|codex|opencode> [--tmux | --ghostty]
-```
-
-Auto-detects terminal (tmux if `$TMUX` set, else GUI). Creates the worktree (reuses existing), pre-trusts the directory in Claude config, and launches the harness with `/orchestration start ISSUE` as the initial prompt. **Use this any time the user asks to spawn / launch / start dev sessions for issues. Never use it for review, QA, or TPM agents — those spawn as background sub-agents inside the orchestrator session.**
-
 ## Schemas
 
 | Schema | Purpose |
 |--------|---------|
 | `schemas/workflow-state.md` | Persistent state file schema (survives compaction) |
 | `schemas/review-finding.md` | Review/QA agent JSON output format |
-| `schemas/audit-issues-input.md` | Input for issue audit workflows |
-| `schemas/roadmap-plan-input.md` | Input for roadmap planning |
 
 Key fields per schema:
 
 - **Workflow State**: `issue_id`, `sub_issues`, `agent`, `worktree`, `branch`, `team_name`, `child_sessions`, `review_agents`, `cycles`, `json_paths`, `fixed_items`, `escalated_items`, `audit_issues_created`
 - **Review Finding**: `blockers[]` (block merge), `suggestions[]` (fix or issue), `questions[]` (PR triage). Each item: id, title, location, description, recommendation, priority, estimate
-- **Audit Issues Input**: Sources: review suggestions, escalated blockers, discovered work, roadmap items. Each item includes dependency tracking (blocks_items, blocked_by_items)
-- **Roadmap Plan Input**: Proposed issues with dependency tracking, breaking changes, and doc update requirements
+
+The `audit-issues-input` and `roadmap-plan-input` schemas live in `project-management/schemas/`. Per-issue review workflows that build audit input read from there via cross-skill path.
 
 ## Configuration
 

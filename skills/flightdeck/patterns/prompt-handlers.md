@@ -53,34 +53,34 @@ Extraction:
 
 ## Handler: `bot-review-wait-stuck`
 
-Orchestration's `bot-review-wait` script understands per-reviewer signaling for multiple bot styles (formal `APPROVED`/`CHANGES_REQUESTED` reviews, sticky comments, reactions like 👀/👍 on the PR body, inline review threads). It emits a JSON object with per-reviewer status (`pending|approved|changes|skipped|unknown`), aggregate verdict, and an exit code (`0` complete, `1` timeout-with-pending, `2` checklist-timeout, etc.).
+When a per-issue agent's bot-review wait times out, it surfaces a Skip/Wait/Abort prompt. The per-issue agent owns the bot-review-wait script invocation; master never re-runs it. Master decides what to answer based on the **actual PR state** queried via `gh`.
 
-A Skip/Wait/Abort prompt only appears when the script returns timeout. The decision to Skip is no longer automatic — it depends on what the script's JSON actually reports.
-
-### Read the JSON, not the prompt text
-
-When this prompt class is detected, fetch the most recent bot-review-wait result (the agent prints it before timing out, or re-run with `--json`):
+### Query the PR state directly
 
 ```bash
-.agents/skills/orchestration/scripts/bot-review-wait <PR> 5 30 --json
+gh pr view <PR> --json statusCheckRollup,reviewDecision,latestReviews,labels --jq '.'
 ```
 
-Look at `pending_reviewers`, `approved_reviewers`, `changes_reviewers`, `skipped_reviewers`.
+Inspect:
+- `statusCheckRollup`: find the bot's check (e.g., the workflow named `Claude Code` with job `claude`). Its `conclusion` is `SUCCESS | FAILURE | IN_PROGRESS | null`.
+- `reviewDecision`: `APPROVED | CHANGES_REQUESTED | REVIEW_REQUIRED | null`.
+- `latestReviews`: per-human-reviewer state, useful when there are required human reviewers.
+- `labels`: confirm `defer-ci` is or isn't set.
 
 ### Decision matrix
 
-- All configured reviewers are `approved` or `skipped` → **Skip is safe**. Pick the Skip option; defer-ci is removed; heavy CI lanes spin up.
-- Any reviewer in `changes_reviewers` → **Don't skip**. Handle the review-feedback prompt class instead (those need fixes applied, not bypass).
-- A reviewer in `pending_reviewers` past the wait threshold AND that reviewer is the user-known-noisy/transient kind → **Skip with `BOT_SKIPPED_REVIEWERS=<bot>`** so the script records the opt-out explicitly. Don't blanket-skip every pending reviewer.
-- A reviewer in `pending_reviewers` AND it's a real review needed → **escalate to user**. The PR isn't really ready.
+- Bot check `SUCCESS` AND (`reviewDecision == APPROVED` OR no required human reviewers) → **Skip is safe**. Pick the Skip option in the agent's prompt; agent will remove `defer-ci` and CI will spin up.
+- Bot check `SUCCESS` AND `reviewDecision == CHANGES_REQUESTED` → **don't skip**. Escalate (review-feedback path, not bypass).
+- Bot check `IN_PROGRESS | null` AND elapsed past wait threshold → escalate. The bot is genuinely stuck or hasn't started.
+- Real human reviewer pending → escalate. PR isn't ready.
 
 ### What happens after Skip
 
-Agent removes `defer-ci` label. GitHub's heavy CI lanes spin up. Watch state transitions to `submitting`.
+The per-issue agent removes `defer-ci`. GitHub's heavy CI lanes spin up. The pane transitions to `submitting (CI running)`. Master continues polling.
 
 ### Multi-bot setups
 
-If the project has multiple bot reviewers (Claude Code + Codex, etc.), the JSON shows each separately. Skipping requires all of them to be in `approved | skipped`, not just one.
+If the project has multiple bot reviewers (e.g., Claude Code + Codex), inspect each in `statusCheckRollup`. All must be `SUCCESS` for Skip to be safe.
 
 ## Handler: `rebase-multi-choice`
 
