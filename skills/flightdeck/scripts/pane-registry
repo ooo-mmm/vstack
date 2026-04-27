@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+# Issue↔pane registry CRUD. Wraps flightdeck-state for the .issues map.
+#
+# Usage:
+#   pane-registry init <ISSUE> --window <name> --harness <h> --worktree <path> [--pane-index <N>] [--pr <N>]
+#   pane-registry list
+#   pane-registry get <ISSUE>
+#   pane-registry set-state <ISSUE> <state>             # waiting|prompting|submitting|merge-ready|merged|aborted|dead
+#   pane-registry set-substate <ISSUE> <substate>      # tag string from prompt-classify
+#   pane-registry set <ISSUE> <field> <json-value>      # arbitrary field write
+#   pane-registry log-decision <ISSUE> <prompt-tag> <answer>
+#   pane-registry remove <ISSUE>
+#
+# All commands operate on the master state for the current $TMUX session
+# (override via FLIGHTDECK_STATE_DIR + flightdeck-state --session).
+#
+# Exit codes:
+#   0 - success
+#   1 - issue not found (where applicable)
+#   2 - bad arguments
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+FD_STATE="$SCRIPT_DIR/flightdeck-state"
+
+ACTION="${1:-}"
+[[ -z "$ACTION" ]] && { echo "Usage: pane-registry <action> [args]" >&2; exit 2; }
+shift
+
+now() { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
+
+case "$ACTION" in
+  init)
+    ISSUE="${1:-}"; shift || true
+    [[ -z "$ISSUE" ]] && { echo "Usage: pane-registry init <ISSUE> [flags]" >&2; exit 2; }
+
+    WINDOW=""; HARNESS=""; WORKTREE=""; PANE_INDEX="0"; PR=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --window) WINDOW="$2"; shift 2 ;;
+        --harness) HARNESS="$2"; shift 2 ;;
+        --worktree) WORKTREE="$2"; shift 2 ;;
+        --pane-index) PANE_INDEX="$2"; shift 2 ;;
+        --pr) PR="$2"; shift 2 ;;
+        *) echo "Unknown flag: $1" >&2; exit 2 ;;
+      esac
+    done
+    [[ -z "$WINDOW" || -z "$HARNESS" || -z "$WORKTREE" ]] && {
+      echo "init requires --window, --harness, --worktree" >&2; exit 2; }
+
+    "$FD_STATE" init >/dev/null
+    SESSION=$(tmux display-message -p '#S' 2>/dev/null || echo unknown)
+    PANE_TARGET="${SESSION}:${WINDOW}.${PANE_INDEX}"
+
+    issue_obj=$(jq -n \
+      --arg window "$WINDOW" \
+      --arg pane_target "$PANE_TARGET" \
+      --arg harness "$HARNESS" \
+      --arg worktree "$WORKTREE" \
+      --arg pr "$PR" \
+      --arg now "$(now)" \
+      '{
+        window: $window,
+        pane_target: $pane_target,
+        harness: $harness,
+        worktree: $worktree,
+        pr_number: ($pr | if . == "" then null else (. | tonumber) end),
+        state: "waiting",
+        substate: null,
+        unknown_since: null,
+        last_capture_hash: null,
+        last_response_at: null,
+        last_polled_at: $now,
+        scope_files_declared: null,
+        scope_files_actual: null,
+        decisions_log: []
+      }')
+
+    "$FD_STATE" set ".issues[\"$ISSUE\"]" "$issue_obj"
+    ;;
+
+  list)
+    "$FD_STATE" get '.issues // {} | to_entries | map({issue: .key} + .value)'
+    ;;
+
+  get)
+    ISSUE="${1:-}"
+    [[ -z "$ISSUE" ]] && { echo "Usage: pane-registry get <ISSUE>" >&2; exit 2; }
+    out=$("$FD_STATE" get ".issues[\"$ISSUE\"] // empty")
+    [[ -z "$out" || "$out" == "null" ]] && exit 1
+    echo "$out"
+    ;;
+
+  set-state)
+    ISSUE="${1:-}"; STATE="${2:-}"
+    [[ -z "$ISSUE" || -z "$STATE" ]] && { echo "Usage: set-state <ISSUE> <state>" >&2; exit 2; }
+    case "$STATE" in
+      waiting|prompting|submitting|merge-ready|merged|aborted|dead) ;;
+      *) echo "Unknown state: $STATE" >&2; exit 2 ;;
+    esac
+    "$FD_STATE" set ".issues[\"$ISSUE\"].state" "\"$STATE\""
+    ;;
+
+  set-substate)
+    ISSUE="${1:-}"; SUB="${2:-}"
+    [[ -z "$ISSUE" || -z "$SUB" ]] && { echo "Usage: set-substate <ISSUE> <substate>" >&2; exit 2; }
+    "$FD_STATE" set ".issues[\"$ISSUE\"].substate" "\"$SUB\""
+    ;;
+
+  set)
+    ISSUE="${1:-}"; FIELD="${2:-}"; VALUE="${3:-}"
+    [[ -z "$ISSUE" || -z "$FIELD" || -z "$VALUE" ]] && {
+      echo "Usage: set <ISSUE> <field> <json-value>" >&2; exit 2; }
+    "$FD_STATE" set ".issues[\"$ISSUE\"].$FIELD" "$VALUE"
+    ;;
+
+  log-decision)
+    ISSUE="${1:-}"; TAG="${2:-}"; ANSWER="${3:-}"
+    [[ -z "$ISSUE" || -z "$TAG" || -z "$ANSWER" ]] && {
+      echo "Usage: log-decision <ISSUE> <prompt-tag> <answer>" >&2; exit 2; }
+    entry=$(jq -n \
+      --arg ts "$(now)" --arg tag "$TAG" --arg ans "$ANSWER" \
+      '{ts: $ts, prompt_tag: $tag, answer: $ans}')
+    "$FD_STATE" append ".issues[\"$ISSUE\"].decisions_log" "$entry"
+    ;;
+
+  remove)
+    ISSUE="${1:-}"
+    [[ -z "$ISSUE" ]] && { echo "Usage: remove <ISSUE>" >&2; exit 2; }
+    "$FD_STATE" set ".issues" "(.issues | del(.[\"$ISSUE\"]))"
+    ;;
+
+  *)
+    echo "Unknown action: $ACTION" >&2
+    echo "Actions: init | list | get | set-state | set-substate | set | log-decision | remove" >&2
+    exit 2
+    ;;
+esac

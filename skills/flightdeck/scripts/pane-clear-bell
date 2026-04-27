@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Clear the bell flag on a tmux window without disturbing the user's focus.
+#
+# Uses the chained-command idiom: select-window to the target, then
+# select-window back to the original. Both are issued in a single tmux
+# command so the client coalesces them — no flicker for the attached client.
+#
+# Usage:
+#   pane-clear-bell <window-target>
+#
+# Examples:
+#   pane-clear-bell HT:cc-463
+#   pane-clear-bell my-session:my-window
+#
+# Exit codes:
+#   0 - bell cleared (or target missing — idempotent)
+#   2 - bad arguments / not in tmux
+set -euo pipefail
+
+if [[ -z "${TMUX:-}" ]]; then
+  echo "Error: not inside a tmux session" >&2
+  exit 2
+fi
+
+TARGET="${1:-}"
+if [[ -z "$TARGET" ]]; then
+  echo "Usage: pane-clear-bell <window-target>" >&2
+  exit 2
+fi
+
+# Capture currently-focused window id so we can return to it.
+ORIG=$(tmux display-message -p '#{window_id}' 2>/dev/null)
+
+# Verify target window exists; idempotent no-op if not.
+if ! tmux list-windows -t "${TARGET%:*}" -F '#{window_index}:#{window_name}' 2>/dev/null \
+     | grep -q -F "${TARGET#*:}"; then
+  exit 0
+fi
+
+# Atomic chained command — client never renders the intermediate state.
+tmux select-window -t "$TARGET" \; select-window -t "$ORIG" 2>/dev/null || true

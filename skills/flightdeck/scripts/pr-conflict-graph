@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# Build a file-intersection conflict graph for a list of PR numbers.
+#
+# For each pair of PRs, computes the intersection of changed file paths.
+# PRs that share at least one file are recorded as an edge; otherwise no
+# edge. Output is a JSON object keyed for consumption by merge-plan.md.
+#
+# Usage:
+#   pr-conflict-graph <PR> [<PR> ...]
+#
+# Output:
+#   {
+#     "computed_at": "<ISO8601>",
+#     "prs": [{"number": <int>, "file_count": <int>}],
+#     "edges": [
+#       {"prs": [<a>, <b>], "shared_files": ["path1", "path2"]}
+#     ]
+#   }
+#
+# Exit codes:
+#   0 - graph emitted
+#   2 - bad arguments
+set -euo pipefail
+
+if ! command -v gh >/dev/null 2>&1; then
+  echo "Error: gh (GitHub CLI) not found on PATH" >&2
+  exit 2
+fi
+
+if [[ $# -lt 1 ]]; then
+  echo "Usage: pr-conflict-graph <PR> [<PR> ...]" >&2
+  exit 2
+fi
+
+# Collect file lists per PR
+declare -A FILES_OF
+PRS=()
+for pr in "$@"; do
+  if ! [[ "$pr" =~ ^[0-9]+$ ]]; then
+    echo "Error: '$pr' is not a PR number" >&2
+    exit 2
+  fi
+  files=$(gh pr view "$pr" --json files --jq '.files[].path' 2>/dev/null | sort -u)
+  FILES_OF["$pr"]="$files"
+  PRS+=("$pr")
+done
+
+# Build edges
+edges_json="[]"
+for ((i = 0; i < ${#PRS[@]}; i++)); do
+  for ((j = i + 1; j < ${#PRS[@]}; j++)); do
+    a="${PRS[$i]}"
+    b="${PRS[$j]}"
+    shared=$(comm -12 <(echo "${FILES_OF[$a]}") <(echo "${FILES_OF[$b]}") || true)
+    if [[ -n "$shared" ]]; then
+      shared_json=$(printf '%s\n' "$shared" | jq -R . | jq -s .)
+      edge=$(jq -n --argjson a "$a" --argjson b "$b" --argjson sf "$shared_json" \
+        '{prs: [$a, $b], shared_files: $sf}')
+      edges_json=$(jq --argjson e "$edge" '. + [$e]' <<< "$edges_json")
+    fi
+  done
+done
+
+# PR metadata block
+prs_json="[]"
+for pr in "${PRS[@]}"; do
+  count=$(printf '%s' "${FILES_OF[$pr]}" | grep -c . || echo 0)
+  pr_obj=$(jq -n --argjson n "$pr" --argjson c "$count" '{number: $n, file_count: $c}')
+  prs_json=$(jq --argjson p "$pr_obj" '. + [$p]' <<< "$prs_json")
+done
+
+computed_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+jq -n \
+  --arg computed_at "$computed_at" \
+  --argjson prs "$prs_json" \
+  --argjson edges "$edges_json" \
+  '{computed_at: $computed_at, prs: $prs, edges: $edges}'

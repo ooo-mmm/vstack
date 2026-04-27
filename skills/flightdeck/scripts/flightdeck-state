@@ -1,0 +1,165 @@
+#!/usr/bin/env bash
+# Master-state CRUD wrapper for flightdeck.
+#
+# Atomic init/get/set/append/increment on the per-tmux-session master-state
+# file (`tmp/flightdeck-state-<TMUX_SESSION>.json` by default). Modeled on
+# orchestration/scripts/workflow-state — same locking primitives, different
+# file naming convention (session-scoped instead of issue-scoped).
+#
+# Usage:
+#   flightdeck-state init                                    # uses $TMUX session id
+#   flightdeck-state init --session <name>                   # explicit
+#   flightdeck-state get [--session <name>] <jq-path>        # e.g. .issues
+#   flightdeck-state set [--session <name>] <field> <value>  # value is JSON
+#   flightdeck-state append [--session <name>] <field> <value>
+#   flightdeck-state increment [--session <name>] <field>
+#   flightdeck-state path [--session <name>]                 # print state file path
+#
+# Environment:
+#   FLIGHTDECK_STATE_DIR  - state file directory (default: tmp)
+#
+# Exit codes:
+#   0 - success
+#   1 - lookup miss / no state file
+#   2 - bad arguments
+set -euo pipefail
+
+PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
+if [[ -z "$PROJECT_ROOT" ]]; then
+  echo "Error: not inside a git repository" >&2
+  exit 2
+fi
+
+# Inside a worktree, resolve to main repo root
+_git_common_dir=$(git -C "$PROJECT_ROOT" rev-parse --git-common-dir 2>/dev/null)
+if [[ "$_git_common_dir" != ".git" && -n "$_git_common_dir" ]]; then
+  PROJECT_ROOT="$(cd "$PROJECT_ROOT" && cd "$(dirname "$_git_common_dir")" && pwd)"
+fi
+
+ENV_FILE="$PROJECT_ROOT/.env.local"
+if [[ -f "$ENV_FILE" ]]; then
+  # shellcheck source=/dev/null
+  source "$ENV_FILE"
+elif [[ -f "$PROJECT_ROOT/.env" ]]; then
+  # shellcheck source=/dev/null
+  source "$PROJECT_ROOT/.env"
+fi
+
+STATE_DIR="${FLIGHTDECK_STATE_DIR:-tmp}"
+STATE_BASE="$PROJECT_ROOT/$STATE_DIR"
+mkdir -p "$STATE_BASE"
+
+# Resolve session id
+resolve_session() {
+  local explicit="${1:-}"
+  if [[ -n "$explicit" ]]; then
+    echo "$explicit"
+    return
+  fi
+  if [[ -n "${TMUX:-}" ]]; then
+    tmux display-message -p '#S' 2>/dev/null
+  else
+    echo "Error: no \$TMUX session and no --session given" >&2
+    exit 2
+  fi
+}
+
+state_path() {
+  echo "$STATE_BASE/flightdeck-state-$1.json"
+}
+
+# Atomic update via flock + tmp-file rename
+update_state() {
+  local file="$1" jq_filter="$2"
+  local lock="${file}.lock"
+  local tmp="${file}.tmp.$$"
+
+  exec 9>"$lock"
+  flock 9
+
+  if [[ -f "$file" ]]; then
+    jq "$jq_filter" "$file" > "$tmp"
+  else
+    echo '{}' | jq "$jq_filter" > "$tmp"
+  fi
+  mv "$tmp" "$file"
+
+  exec 9>&-
+}
+
+# --- Argument parsing -----------------------------------------------------
+
+ACTION="${1:-}"
+[[ -z "$ACTION" ]] && { echo "Usage: flightdeck-state <action> [args]" >&2; exit 2; }
+shift
+
+SESSION=""
+ARGS=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --session) SESSION="$2"; shift 2 ;;
+    --session=*) SESSION="${1#--session=}"; shift ;;
+    *) ARGS+=("$1"); shift ;;
+  esac
+done
+
+SESSION=$(resolve_session "$SESSION")
+FILE=$(state_path "$SESSION")
+
+case "$ACTION" in
+  path)
+    echo "$FILE"
+    ;;
+
+  init)
+    if [[ -f "$FILE" ]]; then
+      # Idempotent — don't clobber existing state
+      exit 0
+    fi
+    started_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    jq -n \
+      --arg session_id "$SESSION" \
+      --arg started_at "$started_at" \
+      '{
+        session_id: $session_id,
+        started_at: $started_at,
+        terminated: false,
+        issues: {},
+        merge_queue: [],
+        conflict_graph: {edges: [], computed_at: null},
+        paused_for_user: null
+      }' > "$FILE"
+    ;;
+
+  get)
+    [[ ${#ARGS[@]} -lt 1 ]] && { echo "Usage: get <jq-path>" >&2; exit 2; }
+    [[ ! -f "$FILE" ]] && exit 1
+    jq -r "${ARGS[0]}" "$FILE"
+    ;;
+
+  set)
+    [[ ${#ARGS[@]} -lt 2 ]] && { echo "Usage: set <field> <json-value>" >&2; exit 2; }
+    field="${ARGS[0]}"
+    value="${ARGS[1]}"
+    update_state "$FILE" ". | $field = ($value)"
+    ;;
+
+  append)
+    [[ ${#ARGS[@]} -lt 2 ]] && { echo "Usage: append <field> <json-value>" >&2; exit 2; }
+    field="${ARGS[0]}"
+    value="${ARGS[1]}"
+    update_state "$FILE" ". | $field += [($value)]"
+    ;;
+
+  increment)
+    [[ ${#ARGS[@]} -lt 1 ]] && { echo "Usage: increment <field>" >&2; exit 2; }
+    field="${ARGS[0]}"
+    update_state "$FILE" ". | $field = (($field // 0) + 1)"
+    ;;
+
+  *)
+    echo "Unknown action: $ACTION" >&2
+    echo "Actions: init | get | set | append | increment | path" >&2
+    exit 2
+    ;;
+esac

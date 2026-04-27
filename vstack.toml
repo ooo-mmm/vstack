@@ -104,6 +104,7 @@ tpm = ""
 
 [skill-instructions]
 decider = ""
+flightdeck = ""
 github = ""
 iced-rs = ""
 iced-shadcn = ""
@@ -134,6 +135,7 @@ worktree = ""
 
 # ── Installed skills (reference) ─────────────────────
 #   decider
+#   flightdeck
 #   github
 #   iced-rs
 #   iced-shadcn

@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# Poll a single tracked window — read bell flag, capture pane 0, classify.
+#
+# Outputs a single JSON object describing the window's current observable
+# state. Intended to be called per-tracked-window in the watch loop.
+#
+# Usage:
+#   pane-poll <window-target>
+#   pane-poll HT:cc-463
+#
+# JSON fields:
+#   {
+#     "window": "HT:cc-463",
+#     "pane_target": "HT:cc-463.0",
+#     "bell": true|false,
+#     "activity": true|false,
+#     "silence": true|false,
+#     "tag": "rebase-multi-choice" | "rendering" | "idle" | ...,
+#     "capture_hash": "sha256:..."
+#   }
+#
+# Exit codes:
+#   0 - success (window exists, captured, classified)
+#   1 - window not found
+#   2 - bad arguments / not in tmux
+set -euo pipefail
+
+if [[ -z "${TMUX:-}" ]]; then
+  echo "Error: not inside a tmux session" >&2
+  exit 2
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+TARGET="${1:-}"
+if [[ -z "$TARGET" ]]; then
+  echo "Usage: pane-poll <window-target>" >&2
+  exit 2
+fi
+
+# Optional: pinned pane index (default 0)
+PANE_INDEX="${2:-0}"
+PANE_TARGET="${TARGET}.${PANE_INDEX}"
+
+# Verify window exists; emit dead state if not.
+if ! tmux list-windows -t "${TARGET%:*}" -F '#{window_index}:#{window_name}' 2>/dev/null \
+     | awk -F: -v w="${TARGET#*:}" '$2 == w {found=1} END {exit !found}'; then
+  jq -n --arg w "$TARGET" --arg p "$PANE_TARGET" '{window:$w, pane_target:$p, dead:true, tag:"dead"}'
+  exit 0
+fi
+
+# Read window flags
+flags_line=$(tmux list-windows -t "${TARGET%:*}" \
+  -F '#{window_name}|#{window_bell_flag}|#{window_activity_flag}|#{window_silence_flag}' 2>/dev/null \
+  | awk -F'|' -v w="${TARGET#*:}" '$1 == w {print; exit}')
+
+bell=$(awk -F'|' '{print $2}' <<< "$flags_line")
+activity=$(awk -F'|' '{print $3}' <<< "$flags_line")
+silence=$(awk -F'|' '{print $4}' <<< "$flags_line")
+
+# Capture and classify
+buf=$(tmux capture-pane -t "$PANE_TARGET" -p -S -200 2>/dev/null || echo "")
+capture_hash=$(printf '%s' "$buf" | sha256sum | awk '{print "sha256:"$1}')
+tag=$(printf '%s' "$buf" | "$SCRIPT_DIR/prompt-classify" 2>/dev/null || echo "idle")
+
+jq -n \
+  --arg window "$TARGET" \
+  --arg pane "$PANE_TARGET" \
+  --argjson bell "$([ "${bell:-0}" = "1" ] && echo true || echo false)" \
+  --argjson activity "$([ "${activity:-0}" = "1" ] && echo true || echo false)" \
+  --argjson silence "$([ "${silence:-0}" = "1" ] && echo true || echo false)" \
+  --arg tag "$tag" \
+  --arg capture_hash "$capture_hash" \
+  '{
+    window: $window,
+    pane_target: $pane,
+    bell: $bell,
+    activity: $activity,
+    silence: $silence,
+    tag: $tag,
+    capture_hash: $capture_hash
+  }'

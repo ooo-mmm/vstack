@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# Send a response to a pane's per-issue orchestrator UI.
+#
+# Always targets pane 0 explicitly (or whatever index was pinned during
+# registry init via fingerprinting). Validates rebase-multi-choice payloads
+# include the preserve/apply/verify triplet. Submits with Enter. Clears the
+# window's bell flag after submission.
+#
+# Usage:
+#   pane-respond <pane-target> <payload> [--tag <classification-tag>]
+#
+# Examples:
+#   pane-respond HT:cc-463.0 "1"
+#   pane-respond HT:cc-463.0 "Rebase + force push.\n\nPRESERVE: ..." --tag rebase-multi-choice
+#
+# Flags:
+#   --tag <tag>   Classification tag — triggers payload validation for known shapes.
+#                 Currently enforced: rebase-multi-choice (must include PRESERVE/APPLY/VERIFY).
+#   --no-enter    Send without trailing Enter (for partial input).
+#   --no-clear    Skip bell clearing (for batched sends).
+#
+# Exit codes:
+#   0 - sent successfully
+#   1 - validation failure (bad payload for declared tag)
+#   2 - bad arguments / not in tmux
+set -euo pipefail
+
+if [[ -z "${TMUX:-}" ]]; then
+  echo "Error: not inside a tmux session" >&2
+  exit 2
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+TARGET="${1:-}"
+PAYLOAD="${2:-}"
+if [[ -z "$TARGET" || -z "$PAYLOAD" ]]; then
+  echo "Usage: pane-respond <pane-target> <payload> [--tag <tag>] [--no-enter] [--no-clear]" >&2
+  exit 2
+fi
+shift 2
+
+TAG=""
+SEND_ENTER=1
+CLEAR_BELL=1
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --tag) TAG="$2"; shift 2 ;;
+    --tag=*) TAG="${1#--tag=}"; shift ;;
+    --no-enter) SEND_ENTER=0; shift ;;
+    --no-clear) CLEAR_BELL=0; shift ;;
+    *) echo "Unknown flag: $1" >&2; exit 2 ;;
+  esac
+done
+
+# Enforce explicit pane index (pane-0 rule)
+if [[ "$TARGET" != *"."* ]]; then
+  echo "Error: target must include explicit pane index (e.g., HT:cc-463.0)" >&2
+  exit 2
+fi
+
+# Tag-specific payload validation
+case "$TAG" in
+  rebase-multi-choice)
+    missing=()
+    grep -q -F "PRESERVE:" <<< "$PAYLOAD" || missing+=("PRESERVE")
+    grep -q -F "APPLY:"    <<< "$PAYLOAD" || missing+=("APPLY")
+    grep -q -F "VERIFY:"   <<< "$PAYLOAD" || missing+=("VERIFY")
+    if [[ ${#missing[@]} -gt 0 ]]; then
+      echo "Error: rebase-multi-choice payload missing required section(s): ${missing[*]}" >&2
+      echo "       Each rebase response must include PRESERVE / APPLY / VERIFY (see patterns/prompt-handlers.md)." >&2
+      exit 1
+    fi
+    ;;
+  "" | *)
+    : # no validation for other tags
+    ;;
+esac
+
+# Send via load-buffer for safety with multi-line / special-char payloads.
+buf_name="flightdeck-respond-$$"
+printf '%s' "$PAYLOAD" | tmux load-buffer -b "$buf_name" -
+tmux paste-buffer -b "$buf_name" -t "$TARGET" -p
+tmux delete-buffer -b "$buf_name" 2>/dev/null || true
+
+if [[ $SEND_ENTER -eq 1 ]]; then
+  tmux send-keys -t "$TARGET" Enter
+fi
+
+# Clear bell on the window (strip the .pane suffix to get window target).
+if [[ $CLEAR_BELL -eq 1 ]]; then
+  WINDOW_TARGET="${TARGET%.*}"
+  "$SCRIPT_DIR/pane-clear-bell" "$WINDOW_TARGET" || true
+fi

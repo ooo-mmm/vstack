@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+# Classify a captured pane buffer into a flightdeck handler tag.
+#
+# Reads the buffer (from --buffer-file or stdin), runs sentinel matchers in
+# specificity order, and prints the tag. If no terminator (footer or cursor)
+# is present, returns `rendering` so the caller re-polls instead of acting
+# on a partial buffer.
+#
+# Usage:
+#   prompt-classify --buffer-file <path>
+#   tmux capture-pane -t HT:cc-463.0 -p -S -200 | prompt-classify
+#   prompt-classify --buffer-file /tmp/buf.txt --dry-run    # print tag + matched line
+#
+# Tags (in match-priority order):
+#   rendering                  - prompt isn't fully painted yet
+#   force-merge-confirm        - "Force merge?" dialog after extended UNKNOWN
+#   merge-ready-but-unknown    - "Mergeable status still UNKNOWN"
+#   merge-now                  - "PR ... is approved with CI passing. Merge now?"
+#   bot-review-wait-stuck      - bot-review-wait timeout with Skip/Wait/Abort options
+#   rebase-multi-choice        - merge-conflict resolution prompt
+#   cleanup-prompt             - worktree cleanup post-merge / on abort
+#   audit-relation-prompt      - issue-audit creating new issues with structure column
+#   descope-related            - reconciliation suggesting child-issue descope
+#   external-fix-suggestions   - external/PR review fix-suggestion application
+#   cycle-fix-suggestions      - in-cycle review fix-suggestion application
+#   scope-creep-detected       - computed externally; classifier never returns this from buffer alone
+#   generic-multi-choice       - has option list but no specific match
+#   idle                       - no prompt detected
+#
+# Exit code: 0 (always; tag goes to stdout)
+set -euo pipefail
+
+DRY_RUN=0
+BUFFER_FILE=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --buffer-file) BUFFER_FILE="$2"; shift 2 ;;
+    --buffer-file=*) BUFFER_FILE="${1#--buffer-file=}"; shift ;;
+    --dry-run) DRY_RUN=1; shift ;;
+    *) echo "Unknown flag: $1" >&2; exit 2 ;;
+  esac
+done
+
+if [[ -n "$BUFFER_FILE" ]]; then
+  buf=$(<"$BUFFER_FILE")
+else
+  buf=$(cat)
+fi
+
+emit() {
+  local tag="$1" matched="${2:-}"
+  if [[ $DRY_RUN -eq 1 && -n "$matched" ]]; then
+    printf '%s\t%s\n' "$tag" "$matched"
+  else
+    printf '%s\n' "$tag"
+  fi
+  exit 0
+}
+
+# Terminator check — must see a known prompt-end before classifying.
+# Common terminators across opencode, claude code, codex:
+#   "Enter to select" / "↑↓ to navigate" / "esc dismiss" footers
+#   Final "❯ " cursor on its own line at buffer end
+if ! grep -qE '(Enter to (select|toggle|submit)|↑.*↓ (to )?navigate|esc.*dismiss|↑↓ select)' <<< "$buf"; then
+  # No prompt footer detected. Could be idle or rendering.
+  if grep -qE '(❯|>|■■■|⠋|⠙|⠸|⠴|⠦|⠧)\s*$' <<< "$buf"; then
+    emit idle
+  fi
+  emit rendering
+fi
+
+# Specific-shape sentinels in priority order. Most specific first.
+
+# force-merge after sustained UNKNOWN
+if grep -qE 'Mergeable status still UNKNOWN.*Force merge|UNKNOWN.* Force merge' <<< "$buf"; then
+  emit force-merge-confirm "force-merge dialog"
+fi
+
+# merge-ready-but-unknown (initial UNKNOWN report, before extended wait)
+if grep -qE 'Mergeable status (stuck|still) UNKNOWN|GitHub mergeable status (stuck|still) at UNKNOWN' <<< "$buf"; then
+  emit merge-ready-but-unknown "UNKNOWN-state notice"
+fi
+
+# merge-now offer
+if grep -qE 'is approved.*CI passing.*Merge( it)? now|approved with CI passing.*Merge now' <<< "$buf"; then
+  emit merge-now "merge-ready confirmation"
+fi
+
+# bot-review-wait stuck
+if grep -qE 'No bot review comments were found|Bot review hasn.t started|bot review verdict.*pending' <<< "$buf"; then
+  emit bot-review-wait-stuck "bot-review timeout"
+fi
+
+# rebase-multi-choice
+if grep -qE 'merge conflicts|How should I resolve.*conflicts|Rebase \+ force push' <<< "$buf"; then
+  emit rebase-multi-choice "rebase-conflict prompt"
+fi
+
+# cleanup-prompt (post-merge or on-abort worktree removal)
+if grep -qE 'Cleanup the .* worktree|Worktree for .* exists\. Cleanup|Remove (these .* )?worktree' <<< "$buf"; then
+  emit cleanup-prompt "worktree-cleanup prompt"
+fi
+
+# audit-relation-prompt (issue audit creating new issues)
+if grep -qE 'Create (these )?audit(ed)? (follow-up )?issues|ISSUE AUDIT|Issue Audit\b' <<< "$buf"; then
+  emit audit-relation-prompt "issue-audit creation"
+fi
+
+# descope-related
+if grep -qE 'Descope CC?-?[A-Z0-9-]+|FIX RECONCILIATION' <<< "$buf"; then
+  emit descope-related "descope reconciliation"
+fi
+
+# external-fix-suggestions (post-cycle external review)
+if grep -qE 'Apply the external review fix suggestions|external review fix' <<< "$buf"; then
+  emit external-fix-suggestions "external-review fixes"
+fi
+
+# cycle-fix-suggestions
+if grep -qE 'Apply (the )?fix suggestions|Apply fixes\?' <<< "$buf"; then
+  emit cycle-fix-suggestions "cycle-review fixes"
+fi
+
+# Generic option-list shape (numbered options + footer)
+if grep -qE '^\s*[1-9]\. ' <<< "$buf"; then
+  emit generic-multi-choice "unmatched option list"
+fi
+
+emit idle

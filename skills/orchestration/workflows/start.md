@@ -301,6 +301,8 @@ Worktree creation is idempotent: existing worktrees are reused (rebased onto lat
 
 6. **Launch**: Ask user which harness to launch: `claude` | `codex` | `opencode` | `I'll launch it myself`
    - **Harness selected**: `.agents/skills/orchestration/scripts/open-terminal [ISSUE_ID] --harness [HARNESS]`
+     - **If `$TMUX` set**: `⤵ .agents/skills/flightdeck/workflows/watch.md [ISSUE_ID] § 1-7 → § 1` — transition to flightdeck master mode; oversee the spawned pane to merge or abort, then return here.
+     - **If `$TMUX` unset**: skip flightdeck (no-op); fall through to → § 1.
    - **Manual**: Show the command and worktree path so the user can run it themselves.
    - **→ § 1** (restart dashboard in current session).
 
@@ -318,7 +320,11 @@ Worktree creation is idempotent: existing worktrees are reused (rebased onto lat
 
 3. **Ask user** which harness and: `Launch [N] issues` | `Select subset` | `I'll launch them myself` | `Cancel`
    - **Launch**: `.agents/skills/orchestration/scripts/open-terminal [ISSUE_IDS] --harness [HARNESS]`
+     - **If `$TMUX` set**: `⤵ .agents/skills/flightdeck/workflows/watch.md [ISSUE_IDS] § 1-7 → § 1` — transition to flightdeck master mode; oversee the spawned set to merge or abort, then return here.
+     - **If `$TMUX` unset**: skip flightdeck (no-op); fall through to → § 1.
    - **Select subset**: Ask user with individual issues as options (multiSelect) → `.agents/skills/orchestration/scripts/open-terminal [SELECTED_ISSUES] --harness [HARNESS]`
+     - **If `$TMUX` set**: `⤵ .agents/skills/flightdeck/workflows/watch.md [SELECTED_ISSUES] § 1-7 → § 1`.
+     - **If `$TMUX` unset**: skip flightdeck (no-op); fall through to → § 1.
    - **Manual**: Show the command so the user can run it themselves.
    - **Cancel** → § 1
 

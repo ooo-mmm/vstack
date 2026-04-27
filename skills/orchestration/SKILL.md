@@ -5,6 +5,7 @@ license: MIT
 user-invocable: true
 dependencies:
   required: [linear, github, worktree, issue-lifecycle, project-management, decider]
+  optional: [flightdeck]
 metadata:
   author: vanillagreen
   version: "1.1.0"
@@ -198,7 +199,7 @@ When executing a command's workflow, follow ALL [Workflow Execution](#workflow-e
 | Script | Purpose |
 |--------|---------|
 | `workflow-state` | Persistent state read/write/append (survives compaction) |
-| `open-terminal` | Launch worktree(s) for one or more issues with auto-detected harness — **dev sessions only**. Never hand-roll tmux/terminal commands; never use this for review/QA/TPM agents (they are background sub-agents). |
+| `open-terminal` | Launch worktree(s) for one or more issues with auto-detected harness — **dev sessions only**. Never hand-roll tmux/terminal commands; never use this for review/QA/TPM agents (they are background sub-agents). When `$TMUX` is set, `start.md` § 4.3/4.4 hands off to the `flightdeck` skill (optional dep) after spawn — it oversees the spawned panes to merge or abort. |
 | `parallel-groups` | Read/manage parallel issue groups |
 | `bot-review-wait` | Block until bot review posts on a PR |
 | `ci-wait` | Block until CI completes on a PR |
