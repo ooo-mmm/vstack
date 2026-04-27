@@ -100,11 +100,11 @@ After reconciliation, store only the active reviewer set in state:
   .agents/skills/orchestration/scripts/workflow-state set [ISSUE_ID] review_agent_ids '[AGENT_ID_MAP_JSON]'
   ```
 
-**Do NOT delegate yet.** Continue to § 2.1 to make the external review decision *before* any reviewer is spawned.
+**Do NOT delegate yet.** Continue to § 2.1 to resolve external review availability *before* any reviewer is spawned.
 
-## 2.1 External Review Decision (Optional)
+## 2.1 External Review Availability
 
-**This subsection MUST run before any internal reviewer delegation in § 2.2.** Sub-agent task calls are blocking — asking the user after § 2.2 means the prompt fires only after every internal reviewer has already completed.
+External review runs automatically alongside internal reviewers whenever the second-opinion skill is installed and a target is detected — no user prompt. Treated identically to internal reviewers in review and re-review cycles.
 
 **Skip if** second-opinion skill is not installed (`.agents/skills/second-opinion/scripts/second-opinion` does not exist). Set `EXTERNAL_REVIEW_REQUESTED=false` → § 2.2.
 
@@ -115,16 +115,7 @@ EXTERNAL_TARGET=$(.agents/skills/second-opinion/scripts/second-opinion detect 2>
 
 **Skip if** `EXTERNAL_TARGET` is empty or `"none"`. Set `EXTERNAL_REVIEW_REQUESTED=false` → § 2.2.
 
-→ Ask user:
-
-| Question | Type |
-|----------|------|
-| `In addition to internal agent reviews, request an external code review from [EXTERNAL_TARGET]? (typically 1-3 min)` | `Yes` \| `No` |
-
-| Answer | Action |
-|--------|--------|
-| No | Set `EXTERNAL_REVIEW_REQUESTED=false` → § 2.2 |
-| Yes | Set `EXTERNAL_REVIEW_REQUESTED=true` → § 2.2 |
+Otherwise, set `EXTERNAL_REVIEW_REQUESTED=true` → § 2.2.
 
 ## 2.2 Delegate Review Agents
 
