@@ -72,19 +72,17 @@ Pane registry entry is left in place for the end-of-session report (see `termina
 
 ## § 5: Emit Completion Line
 
-Single-line user-visible message:
+Per SKILL.md "Format Tags Are Literal": fill placeholders, omit empty fields, add nothing else.
 
-```
-<ISSUE_ID> ✅ <outcome> — PR #<N> (<merge_commit_short>) — window closed
-```
+<output_format>
+[For merged:]
+[ISSUE_ID] ✅ merged — PR #[N] ([MERGE_COMMIT_SHORT]) — window closed
 
-Or for aborted:
+[For aborted:]
+[ISSUE_ID] ⨯ aborted — window closed
+</output_format>
 
-```
-<ISSUE_ID> ⨯ aborted — window closed
-```
-
-This line goes through the same channel as the watch loop's other status output.
+Goes through the same channel as the watch loop's other status output.
 
 ---
 

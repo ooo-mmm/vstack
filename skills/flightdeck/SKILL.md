@@ -174,6 +174,29 @@ State enum: `state ∈ {waiting, prompting, submitting, merge-ready, merged, abo
 | `workflows/merge-plan.md` | Nested invocation from `watch` § 4 | Conflict-graph build + smallest-first merge ordering |
 | `workflows/terminate.md` | Nested invocation from `watch` § 6 | Final summary, new-issues report, next-cycle recommendation, master-state finalization |
 
+## Workflow Execution
+
+These rules apply to flightdeck's boundary workflows (`start.md`, `start-new.md`, `terminate.md`, `close-issue.md`, and per-tag handlers in `handle-prompt.md`). The `watch.md` loop body is reactive by nature — its inner decisions are judgment calls and not subject to these rules.
+
+### Sequential Section Execution
+
+Process sections sequentially. Execute all sub-sections within a section before proceeding to the next. Never skip steps because the outcome seems predictable, or rationalize skipping based on visible state ("nothing changed since last poll", "the summary is obvious", "the user can see this"). The workflow text is the decision authority, not the agent's assessment.
+
+### Nested Workflow Invocation
+
+Nested workflows (marked with `⤵`) must be invoked through the harness's workflow invocation mechanism — never inlined or substituted with ad-hoc commands. If the marker includes a return point (`→ § X`), record it before invoking.
+
+### Format Tags Are Literal
+
+`<output_format>`, `<recommendation_format>`, `<launch_now_format>`, and any other XML-tagged content blocks define exact content for emission. When emitting tagged content:
+
+1. **Fill `[PLACEHOLDERS]`** with actual values.
+2. **Omit lines/sections** where the placeholder value is empty or not applicable.
+3. **Add nothing else** — no commentary, no extra fields, no rewording, no explanations before or after the content.
+4. **Do not paraphrase** — use the exact structure, headings, and field names from the tag.
+
+The user-visible output blocks at the end of `terminate.md` and `close-issue.md` are `<output_format>` tagged for this reason: the agent must emit them in full, not collapse to a summary line.
+
 ## Skill Rules — Implementation Constraints
 
 1. **Pane-0 rule applies to every read**. Never call `tmux capture-pane` without an explicit pane index. The `pane-poll` script enforces this.

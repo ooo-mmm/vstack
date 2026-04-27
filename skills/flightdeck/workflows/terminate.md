@@ -117,17 +117,81 @@ Persist a pointer to the summary file path in master state for inspection later.
 
 ## § 6: User-Visible Output
 
-Emit a single line to the user, e.g.:
+Emit the full session summary inline using the `<output_format>` block below. Do not collapse to a single line. Do not skip the new-issues table when issues were created. Do not skip the next-cycle recommendation when § 3 produced one. Per SKILL.md "Format Tags Are Literal": fill placeholders, omit empty sections, add nothing else.
 
-```
-Flightdeck: 5 merged, 0 aborted, 7 new issues (3 children, 4 follow-ups), 2 recommended for next cycle. Summary: tmp/flightdeck-summary-<SESSION>-<TS>.md
-```
+<output_format>
+### ✈️ Flightdeck session complete
 
-The recommendation is a recommendation — the user decides whether to start a new flightdeck session on the proposed issues immediately or stick with the planned cycle.
+**Outcomes**
+
+| Issue | State | PR | Merge commit | Decisions |
+|-------|-------|----|--------------|-----------|
+| [ISSUE_ID] | [merged | aborted | dead] | #[N] | [SHORT_SHA] | [N] |
+
+**Issues created this session**
+
+Children absorbed into parent PRs:
+| Issue | Title | Parent | Project | Priority |
+|-------|-------|--------|---------|----------|
+| [ISSUE_ID] | [TITLE] | [PARENT_ID] | [PROJECT] | [PRIORITY] |
+
+Standalone follow-ups:
+| Issue | Title | Project | Priority | Linear state |
+|-------|-------|---------|----------|--------------|
+| [ISSUE_ID] | [TITLE] | [PROJECT] | [PRIORITY] | [Backlog | Todo] |
+
+**Next-cycle recommendation**
+
+[For each recommended issue from § 3:]
+- **[ISSUE_ID]** ([PRIORITY], [PROJECT]) — [ONE_LINE_RATIONALE]
+
+[Or, if no follow-ups warrant precedence:]
+- Stick with planned cycle — no created issues warrant precedence.
+
+**Counts**: [N] merged · [N] aborted · [N] children · [N] follow-ups · [N] recommended next
+
+Summary file: `tmp/flightdeck-summary-<SESSION>-<TS>.md`
+</output_format>
+
+Sections with no data (e.g., no children created, no standalone follow-ups, no recommendations) are omitted entirely per the format-tags rule. Never substitute a one-liner.
 
 ---
 
-## § 7: Pane Lifecycle
+## § 7: Launch Recommended Follow-ups
+
+**Skip if** § 3 produced an empty recommendation list.
+
+Ask the user whether to launch any of the recommended follow-ups now and continue the flightdeck session. The new issue(s) are spawned via `start.md`'s spawn path; the watch loop resumes with the new pane(s) added to the registry.
+
+Use the harness's user-question primitive (Claude Code: `AskUserQuestion`) with options derived from § 3's recommendation list:
+
+<launch_now_format>
+**Launch follow-ups now?**
+
+Recommended issues from this session:
+[For each recommended issue:]
+- [ISSUE_ID] — [TITLE]
+
+Options:
+- Launch [ISSUE_ID] (one option per recommended issue)
+- Launch all recommended
+- Stick with planned cycle / Done
+</launch_now_format>
+
+On launch:
+1. For each issue chosen, if its Linear state is `Backlog`, promote to `Todo` first:
+   ```
+   linear issues update <ISSUE_ID> --status Todo
+   ```
+2. Invoke the spawn path: `⤵ workflows/start.md § 1.4 → § 5` (or equivalent — same flow `flightdeck start <ISSUE_ID>` would take).
+3. The new pane is added to the registry; the watch loop's next cycle picks it up.
+4. Re-enter `watch.md § 2`. Do NOT proceed to § 8 (Pane Lifecycle) — session continues.
+
+On "Stick with planned cycle / Done": proceed to § 8.
+
+---
+
+## § 8: Pane Lifecycle
 
 Do **not** close panes. Pane lifecycle stays with the user — they may want to inspect transcripts post-session, or resume a paused issue manually.
 
