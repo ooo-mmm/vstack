@@ -137,7 +137,7 @@ merge. Detach them first.
    .agents/skills/linear/scripts/linear.sh cache issues children [ISSUE] --pending --recursive
    ```
    - **safe** — `state_type` is `backlog` or `unstarted` (Todo). Capture IDs as `[SAFE_IDS]`.
-   - **active** — `state_type` is `started` (In Progress, In Review, any custom started state). Capture id + title + state name as `[ACTIVE]`.
+   - **active** — anything else (`started` = In Progress / In Review / custom started states; `triage`; any non-terminal custom type). Capture id + title + state name as `[ACTIVE]`.
 
    Both empty → § 5.
 

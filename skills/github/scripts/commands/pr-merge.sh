@@ -177,7 +177,7 @@ print_blocked() {
     echo "$check_result" | jq -r '.warnings[]' | sed 's/^/  ⚠ /' >&2
     echo "" >&2
     if [ "$transient" = "true" ]; then
-        echo "Hint: $(basename "$(dirname "$SCRIPT_DIR")")/github.sh await-mergeable $pr_num && retry" >&2
+        echo "Hint: github.sh await-mergeable $pr_num && retry" >&2
     fi
     echo "Use --auto to queue for auto-merge, or --force to merge anyway." >&2
 }
