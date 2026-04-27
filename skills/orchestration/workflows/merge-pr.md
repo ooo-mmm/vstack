@@ -124,6 +124,86 @@ If worktree exists: Ask user `"Cleanup worktree for [ISSUE_ID]?"` → store for 
 
 If `false`: Ask user: `Merge as current user` | `Abort`
 
+### 4.3 Detach Orphaned Children (Cascade-Done Guard)
+
+Linear cascade-marks all sub-issues `Done` when the parent moves to `Done`.
+If audit-issues created `make_child` issues under the in-flight parent and
+those children were *not* delivered in this PR, merging will silently flip
+them to `Done` and drop the work. Detach and rebundle them first.
+
+**Skip if** no `[ISSUE]` extracted in § 4.1.
+
+1. **Query pending children of the merging issue:**
+   ```bash
+   ORPHANS=$(.agents/skills/linear/scripts/linear.sh cache issues children [ISSUE] --pending --recursive --format=ids)
+   ```
+
+2. **Skip if** `ORPHANS` empty → § 5.
+
+3. **Otherwise — rebundle under a new parent so cascade-Done cannot reach them:**
+
+   a. Read parent metadata:
+      ```bash
+      PARENT_JSON=$(.agents/skills/linear/scripts/linear.sh cache issues get [ISSUE])
+      PARENT_TITLE=$(echo "$PARENT_JSON" | jq -r '.title')
+      PARENT_PROJECT=$(echo "$PARENT_JSON" | jq -r '.project.id // .project.name // empty')
+      PARENT_LABELS=$(echo "$PARENT_JSON" | jq -r '[.labels.nodes[].name] | join(",")')
+      ```
+
+   b. Compute max priority across orphans (Linear: 1=Urgent ... 4=Low; lower number = higher priority):
+      ```bash
+      BUNDLE_PRIORITY=$(for o in $ORPHANS; do
+          .agents/skills/linear/scripts/linear.sh cache issues get "$o" | jq -r '.priority // 0'
+      done | awk '$1 > 0 { if (min == "" || $1 < min) min = $1 } END { print (min == "" ? 3 : min) }')
+      ```
+
+   c. Build the new bundle parent using `.agents/skills/project-management/templates/parent-issue-template.md`. Synthesize summary from the orphans' titles. Title: `"[PARENT_TITLE] follow-ups"`.
+
+      ```bash
+      BUNDLE_DESC=$(cat <<EOF
+      [SUMMARY — synthesized from orphan titles, 1-2 sentences]
+
+      ## Sub-Issues
+
+      [For each ORPHAN_ID: "- [ORPHAN_ID]: [orphan title] (agent:X)"]
+
+      ## Context
+
+      - Detached from [ISSUE] before merge to prevent Linear cascade-Done. See related link to [ISSUE] for original audit context.
+      EOF
+      )
+
+      NEW_BUNDLE=$(.agents/skills/linear/scripts/linear.sh issues create \
+          --title "$PARENT_TITLE follow-ups" \
+          --description "$BUNDLE_DESC" \
+          --project "$PARENT_PROJECT" \
+          --labels "$PARENT_LABELS" \
+          --priority "$BUNDLE_PRIORITY" \
+          --format=ids)
+      ```
+
+      If creation fails, **abort the merge** and surface the error to the user — do not proceed and let cascade-Done destroy the orphans.
+
+   d. Reparent each orphan (replaces existing `parent_id`):
+      ```bash
+      for o in $ORPHANS; do
+          .agents/skills/linear/scripts/linear.sh issues update "$o" --parent "$NEW_BUNDLE"
+      done
+      ```
+
+   e. Add a `related` link from the new bundle to the merging issue so the audit trail survives:
+      ```bash
+      .agents/skills/linear/scripts/linear.sh issues add-relation "$NEW_BUNDLE" --related [ISSUE]
+      ```
+
+   f. Comment on the merging issue:
+      ```bash
+      .agents/skills/linear/scripts/linear.sh comments create [ISSUE] \
+          --body "Pending children rebundled under $NEW_BUNDLE before merge to avoid cascade-Done."
+      ```
+
+4. Proceed to § 5.
+
 ## 5. Execute Merge
 
 **Note**: Some harnesses reset cwd after each shell call. Use `cd && ...` chains or absolute paths — standalone `cd` does not persist.
