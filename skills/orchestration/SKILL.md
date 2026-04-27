@@ -275,6 +275,20 @@ The delegation message (containing the `<delegation_format>` content) follows as
 
 Work is organized in visually distinct layers: orchestrator workflow steps, nested sub-workflows, and agent tasks. Agents only act on their own assigned work — they never touch orchestrator or sub-workflow items.
 
+**Every task must specify an explicit owner.** Tasks without an owner are claimable by any agent in the team — sub-agents' autonomous loops will pull workflow-section tasks (review cycle, submit PR, finalize) that belong to the orchestrator and start executing them, breaking the layering. This regresses the moment a sub-agent shares context with the orchestrator (e.g., when a sub-agent spawns in-context instead of in its own pane).
+
+When creating tasks in harnesses that support assignment (Claude Code: `TaskCreate(... owner: <name>)`):
+
+| Task kind | Owner |
+|-----------|-------|
+| Orchestrator workflow section (`§ N: ...`) | The orchestrator / team-lead identity for the harness |
+| Nested sub-workflow step | Same as parent workflow's owner |
+| Delegated dev work | The dev agent's name (e.g., `rust`, `iced`) |
+| Delegated review/QA/TPM work | The reviewer/QA/TPM agent's name |
+| Re-delegation after fix cycle | The same dev agent (re-use existing identity, do not omit owner) |
+
+Never create an unowned task. If the harness does not support per-task ownership, scope by spawn-mode: ensure each sub-agent runs in its own pane (separate task-list context) so cross-claim cannot occur.
+
 #### No Duplicate Agent Spawns
 
 Never spawn a fresh agent when the same role/name is already alive. Read workflow state first, reuse by stored agent/session ID when possible, and only respawn after one recovery attempt or confirmed stuck/closed status.
