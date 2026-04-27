@@ -14,15 +14,11 @@
 #   (default)      Auto-detect: tmux if $TMUX set, else ghostty/GUI terminal
 #
 # Environment:
-#   GH_ISSUE_PATTERN                   - Regex pattern matching issue IDs (default: "[A-Z]+-[0-9]+")
-#   OPEN_TERMINAL_NO_BYPASS=1          - Do not pass per-harness permission-bypass flags to spawned
-#                                        agents. Default off (bypass enabled). Inner agents need bypass
-#                                        to silently spawn sub-agent panes via tmux without prompting
-#                                        the (often absent) human at the master pane.
-#   OPEN_TERMINAL_NO_BYPASS_SETTINGS=1 - Do not write a permissive settings file into the worktree
-#                                        pre-launch. Default off (settings written). Belt-and-braces
-#                                        with the CLI flag — covers harnesses that don't yet have a
-#                                        bypass flag and survives if the CLI flag is dropped.
+#   GH_ISSUE_PATTERN          - Regex pattern matching issue IDs (default: "[A-Z]+-[0-9]+")
+#   OPEN_TERMINAL_NO_BYPASS=1 - Do not pass per-harness permission-bypass flags to spawned
+#                               agents. Default off (bypass enabled). Inner agents need bypass
+#                               to silently spawn sub-agent panes via tmux without prompting
+#                               the (often absent) human at the master pane.
 
 set -euo pipefail
 
@@ -166,34 +162,6 @@ detect_start_cmd() {
 
 # --- Terminal launchers -------------------------------------------------------
 
-# Write a permissive settings file into the worktree so the inner harness boots
-# with broad-bypass perms. Bounded to the worktree's lifetime (removed when the
-# worktree is removed). Per-harness because settings file format is harness-specific.
-#
-# Set OPEN_TERMINAL_NO_BYPASS_SETTINGS=1 to skip.
-inject_bypass_settings() {
-  [[ -n "${OPEN_TERMINAL_NO_BYPASS_SETTINGS:-}" ]] && return 0
-  local harness="$1" worktree="$2"
-  case "$harness" in
-    claude)
-      local settings_dir="$worktree/.claude"
-      local settings_file="$settings_dir/settings.local.json"
-      [[ -f "$settings_file" ]] && return 0
-      mkdir -p "$settings_dir"
-      cat > "$settings_file" <<'JSON'
-{
-  "permissions": {
-    "defaultMode": "bypassPermissions"
-  }
-}
-JSON
-      ;;
-    codex|opencode)
-      : # per-harness equivalents not yet wired
-      ;;
-  esac
-}
-
 # Pre-trust directory in Claude Code config so the trust dialog is skipped
 pretrust_claude_dir() {
   local dir="$1"
@@ -304,8 +272,6 @@ for ISSUE in "${ISSUES[@]}"; do
   rm -f "$_wt_err"
 
   START_CMD=$(detect_start_cmd "$ISSUE")
-
-  inject_bypass_settings "$HARNESS" "$WT_PATH"
 
   # Only pretrust for Claude harness
   if command -v claude &>/dev/null; then
