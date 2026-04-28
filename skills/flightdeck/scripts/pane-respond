@@ -7,6 +7,11 @@
 #                         option, or for plain text input.
 #   --option N            Numeric option pick — navigates to option N (1-indexed) using
 #                         the harness's option-list mechanic and submits.
+#   --option-multi N1,N2,... Toggle multiple items in a checkbox-tab UI (claude code's
+#                         multi-select-tabbed shape). Walks Down to each row, presses
+#                         Space to toggle, then Right + Enter to submit. Picks are
+#                         sorted ascending; only walks the list once. Use for the
+#                         multi-select-tabbed classifier tag.
 #   --keys k1,k2,...      Raw key sequence — sends each key name through tmux send-keys.
 #                         Use for multi-step forms (e.g., toggle then advance page then
 #                         submit). Recognized: Up Down Left Right Enter Tab Space Escape.
@@ -67,6 +72,7 @@ shift
 PAYLOAD=""
 MODE="payload"
 OPTION_N=""
+OPTION_MULTI_CSV=""
 KEYS_CSV=""
 TAG=""
 HARNESS="claude"
@@ -85,6 +91,8 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --option) MODE="option"; OPTION_N="$2"; shift 2 ;;
     --option=*) MODE="option"; OPTION_N="${1#--option=}"; shift ;;
+    --option-multi) MODE="option-multi"; OPTION_MULTI_CSV="$2"; shift 2 ;;
+    --option-multi=*) MODE="option-multi"; OPTION_MULTI_CSV="${1#--option-multi=}"; shift ;;
     --keys) MODE="keys"; KEYS_CSV="$2"; shift 2 ;;
     --keys=*) MODE="keys"; KEYS_CSV="${1#--keys=}"; shift ;;
     --tag) TAG="$2"; shift 2 ;;
@@ -106,6 +114,23 @@ case "$MODE" in
       echo "Error: --option requires a positive integer" >&2; exit 2; }
     [[ -n "$PAYLOAD" ]] && {
       echo "Error: --option is mutually exclusive with positional payload" >&2; exit 2; }
+    # Tag-aware guardrail: multi-select-tabbed shape needs --option-multi.
+    # Sending --option N would walk Down the list and toggle items along
+    # the way (Round 4 broke CC-489's checkbox-tabbed prompt this way).
+    if [[ "$TAG" == "multi-select-tabbed" ]]; then
+      echo "Error: tag 'multi-select-tabbed' requires --option-multi N1,N2,..., not --option N" >&2
+      echo "       --option walks the list and toggles items along the path." >&2
+      exit 1
+    fi
+    ;;
+  option-multi)
+    [[ -z "$OPTION_MULTI_CSV" ]] && {
+      echo "Error: --option-multi requires a comma-separated list of integers" >&2; exit 2; }
+    if ! [[ "$OPTION_MULTI_CSV" =~ ^[1-9][0-9]*(,[1-9][0-9]*)*$ ]]; then
+      echo "Error: --option-multi must be CSV of positive integers (e.g. 1,3,4)" >&2; exit 2
+    fi
+    [[ -n "$PAYLOAD" ]] && {
+      echo "Error: --option-multi is mutually exclusive with positional payload" >&2; exit 2; }
     ;;
   keys)
     [[ -z "$KEYS_CSV" ]] && { echo "Error: --keys requires a comma-separated list" >&2; exit 2; }
@@ -187,6 +212,49 @@ select_option_for_harness() {
   esac
 }
 
+# Multi-select on Claude Code's checkbox-tab UI: cursor starts on row 1
+# of the items tab. For each pick (sorted ascending so we only walk Down):
+# move Down to the row, Space to toggle. After all toggles, Right advances
+# to the Submit tab; Enter confirms. Sorting prevents toggling rows along
+# a back-walk path (which Claude Code's UI doesn't support cleanly).
+claude_select_option_multi() {
+  local pane="$1" csv="$2"
+  local IFS=,
+  local -a picks
+  read -ra picks <<< "$csv"
+  # Sort ascending + dedupe; we only walk Down.
+  local -a sorted_picks
+  while IFS= read -r p; do sorted_picks+=("$p"); done < <(printf '%s\n' "${picks[@]}" | sort -un)
+
+  local prev=1
+  local n
+  for n in "${sorted_picks[@]}"; do
+    local steps=$(( n - prev ))
+    if (( steps > 0 )); then
+      local _i
+      for _i in $(seq 1 "$steps"); do
+        tmux send-keys -t "$pane" Down
+      done
+    fi
+    tmux send-keys -t "$pane" Space
+    prev=$n
+  done
+  tmux send-keys -t "$pane" Right
+  tmux send-keys -t "$pane" Enter
+}
+
+select_option_multi_for_harness() {
+  local harness="$1" pane="$2" csv="$3"
+  case "$harness" in
+    claude) claude_select_option_multi "$pane" "$csv" ;;
+    *)
+      echo "Error: --option-multi not yet supported for harness '$harness'" >&2
+      echo "       Add an adapter in pane-respond before using." >&2
+      return 1
+      ;;
+  esac
+}
+
 # Allowed key names for --keys mode. Reject anything else so we don't smuggle
 # arbitrary text through this path; multi-character input belongs in payload mode.
 KEYS_ALLOWED='^(Up|Down|Left|Right|Enter|Tab|Space|Escape|BSpace)$'
@@ -262,6 +330,9 @@ fi
 case "$MODE" in
   option)
     select_option_for_harness "$HARNESS" "$TARGET" "$OPTION_N"
+    ;;
+  option-multi)
+    select_option_multi_for_harness "$HARNESS" "$TARGET" "$OPTION_MULTI_CSV"
     ;;
   keys)
     send_keys_sequence "$TARGET" "$KEYS_CSV"

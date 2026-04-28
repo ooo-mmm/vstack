@@ -27,6 +27,7 @@
 #   external-fix-suggestions   - external/PR review fix-suggestion application
 #   cycle-fix-suggestions      - in-cycle review fix-suggestion application
 #   scope-creep-detected       - computed externally; classifier never returns this from buffer alone
+#   multi-select-tabbed        - tabbed checkbox UI; needs --option-multi (NOT --option)
 #   generic-multi-choice       - has option list but no specific match
 #   idle                       - no prompt detected
 #
@@ -157,6 +158,15 @@ fi
 # "Apply <topic> fix from <reviewer-name>?".
 if grep -qE 'Apply (the )?fix suggestions|Apply fixes\?|Apply\s+[A-Za-z0-9 \-]{1,40}\s+(fix|suggestion)s?\s+from\s+reviewer[- ]' <<< "$buf"; then
   emit cycle-fix-suggestions "cycle-review fixes"
+fi
+
+# Multi-select with tab navigation (claude code's checkbox-tab UI). The
+# arrow-tab pair `←` / `→` plus a checkbox glyph (☐/☒/✔/✓) marks this as
+# the shape that needs --option-multi (per-item Space toggle), NOT
+# --option N (which would mis-toggle items along the path). Match before
+# generic-multi-choice so the more specific tag wins.
+if grep -qE '(←|→).*(☐|☒|✔|✓)|(☐|☒|✔|✓).*(←|→)' <<< "$buf"; then
+  emit multi-select-tabbed "tabbed checkbox select"
 fi
 
 # Generic option-list shape (numbered options + footer)

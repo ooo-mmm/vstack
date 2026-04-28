@@ -103,6 +103,7 @@ CANONICAL_TAGS=(
   cleanup-prompt
   rebase-multi-choice
   generic-multi-choice
+  multi-select-tabbed
   bash-permission-prompt
   modal-prompt
   bot-review-wait-stuck
