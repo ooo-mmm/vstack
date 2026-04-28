@@ -15,6 +15,7 @@
 #   flightdeck-state increment [--session <name>] <field>
 #   flightdeck-state archive [--session <name>]              # rotate live file to <file>-<ts>.archive
 #   flightdeck-state path [--session <name>]                 # print state file path
+#   flightdeck-state phase <ISSUE_ID>                        # derive orchestration phase from workflow-state-<ID>.json
 #
 # Environment:
 #   FLIGHTDECK_STATE_DIR  - state file directory (default: tmp)
@@ -195,6 +196,47 @@ case "$ACTION" in
     [[ ${#ARGS[@]} -lt 1 ]] && { echo "Usage: increment <field>" >&2; exit 2; }
     field=$(normalize_path "${ARGS[0]}")
     update_state "$FILE" "$field = (($field // 0) + 1)"
+    ;;
+
+  phase)
+    # Derive a one-line orchestration phase descriptor for the dashboard.
+    # Reads the issue's workflow-state-<ID>.json (if present) and composes
+    # a phase string from existing fields. Falls back to the flightdeck
+    # registry's own state field when no orchestration state file exists.
+    [[ ${#ARGS[@]} -lt 1 ]] && { echo "Usage: phase <ISSUE_ID>" >&2; exit 2; }
+    issue="${ARGS[0]}"
+    orch_state_dir="${ORCH_STATE_DIR:-tmp}"
+    orch_file="$PROJECT_ROOT/$orch_state_dir/workflow-state-$issue.json"
+    if [[ -f "$orch_file" ]]; then
+      cycles=$(jq -r '.cycles // 0' "$orch_file" 2>/dev/null)
+      review_count=$(jq -r '.review_agents // [] | length' "$orch_file" 2>/dev/null)
+      escalated=$(jq -r '.escalated_items // [] | length' "$orch_file" 2>/dev/null)
+      pr_review=$(jq -r '.pr_comment_review.iterations // 0' "$orch_file" 2>/dev/null)
+      child_count=$(jq -r '.child_sessions // {} | length' "$orch_file" 2>/dev/null)
+      parts=()
+      (( cycles > 0 ))      && parts+=("cycle=$cycles")
+      (( review_count > 0 )) && parts+=("reviewers=$review_count")
+      (( pr_review > 0 ))   && parts+=("pr-review=$pr_review")
+      (( child_count > 0 )) && parts+=("children=$child_count")
+      (( escalated > 0 ))   && parts+=("escalated=$escalated")
+      if (( ${#parts[@]} == 0 )); then
+        echo "pre-cycle"
+      else
+        (IFS=' '; echo "${parts[*]}")
+      fi
+    else
+      # No orchestration state — use flightdeck's own view.
+      if [[ -f "$FILE" ]]; then
+        fd_state=$(jq -r ".issues[\"$issue\"].state // empty" "$FILE" 2>/dev/null)
+        if [[ -n "$fd_state" ]]; then
+          echo "fd:$fd_state"
+        else
+          echo "unknown"
+        fi
+      else
+        echo "unknown"
+      fi
+    fi
     ;;
 
   archive)

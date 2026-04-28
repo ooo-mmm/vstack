@@ -166,7 +166,7 @@ At the end of each poll cycle:
 Emit a per-cycle dashboard summarizing the current state of every tracked issue. The user (and any second-party reviewer of the master pane scrollback) reads this to understand what the master agent is doing without inspecting state files. Per SKILL.md "Format Tags Are Literal": fill placeholders, omit empty rows, add nothing else.
 
 For each tracked issue, gather:
-- **Phase** — read from `tmp/workflow-state-<ISSUE>.json` (orchestration's own state). Falls back to flightdeck's `state` field if no orchestration state file exists.
+- **Phase** — invoke `flightdeck-state phase <ISSUE>` which reads `tmp/workflow-state-<ISSUE>.json` (orchestration's own state) and composes a phase descriptor (e.g., `cycle=2 reviewers=3 pr-review=1`). Falls back to `fd:<state>` from the flightdeck registry when no orchestration state file exists, or `unknown` if neither is present. Do NOT short-cut to `state == "rendering"` from flightdeck's view alone — that hides orchestration progress.
 - **Last prompt** — most recent `decisions_log[-1].prompt_tag` from registry, plus a short prompt-text excerpt (truncated to ~50 chars). `—` if no decisions yet.
 - **Answer** — most recent `decisions_log[-1].answer` (truncated to ~40 chars). `—` if none.
 - **PR** — `registry.<ISSUE>.pr_number`. `—` if not yet opened.
