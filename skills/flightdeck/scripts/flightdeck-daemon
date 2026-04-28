@@ -59,6 +59,8 @@
 #   FD_HEARTBEAT_TICKS  60          Ticks between heartbeat log lines.
 #   FD_MAX_LIFETIME     14400       Seconds before daemon exec()s itself
 #                                   for a fresh process. 0 disables.
+#   FD_SPAWN_MODE       detach      "detach" (setsid+nohup, default) or
+#                                   "tmux-window" (spawn in tmux session).
 set -euo pipefail
 
 # Resolve daemon state dir + session-keyed file paths via shared helper so
@@ -112,17 +114,24 @@ is_canonical_tag() {
 
 usage() { cat >&2 <<EOF
 Usage:
-  flightdeck-daemon start  --session <S> --master <pane> --inner <p1>[,<p2>...] [--foreground]
-  flightdeck-daemon stop   --session <S>
-  flightdeck-daemon status --session <S>
-  flightdeck-daemon health --session <S>     # operator-friendly diagnosis
-  flightdeck-daemon events --session <S>     # drain events JSONL (turn-start)
-  flightdeck-daemon ack    --session <S>     # drain + clear pending (turn-end)
+  flightdeck-daemon start       --session <S> --master <pane> --inner <p1>[,<p2>...] [--foreground|--in-tmux-window]
+  flightdeck-daemon stop        --session <S>
+  flightdeck-daemon status      --session <S>
+  flightdeck-daemon health      --session <S>     # operator-friendly diagnosis
+  flightdeck-daemon find-window --session <S>     # tmux window-id of daemon (tmux-window mode)
+  flightdeck-daemon events      --session <S>     # drain events JSONL (turn-start)
+  flightdeck-daemon ack         --session <S>     # drain + clear pending (turn-end)
 
-start defaults to detached mode: forks via setsid + nohup, waits for the
-child to write its PID file, then returns. Caller does NOT need to use
-'&' or harness-specific backgrounding. --foreground keeps the process
-attached (used by tmux-window spawn mode and by ops debugging).
+start spawn modes:
+  default (detach)   — setsid + nohup; survives caller shell. Recommended
+                       for Claude Code. Set FD_SPAWN_MODE=tmux-window to
+                       change the default.
+  --in-tmux-window   — spawn a dedicated tmux window in the same session
+                       running 'start --foreground'. Lifetime ties to the
+                       tmux session. Recommended for codex/opencode/omp
+                       harnesses where backgrounding is unreliable.
+  --foreground       — keep the process attached. Used internally by both
+                       spawn modes; pass directly for ops debugging.
 EOF
 exit 2; }
 
@@ -134,12 +143,14 @@ ACTION="${1:-}"; [[ -z "$ACTION" ]] && usage; shift
 
 SESSION_NAME="" MASTER_TARGET="" INNER_TARGETS=""
 FOREGROUND=0
+SPAWN_MODE="${FD_SPAWN_MODE:-detach}"  # detach | tmux-window
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --session) SESSION_NAME="$2"; shift 2 ;;
     --master)  MASTER_TARGET="$2"; shift 2 ;;
     --inner)   INNER_TARGETS="$2"; shift 2 ;;
     --foreground|--no-detach) FOREGROUND=1; shift ;;
+    --in-tmux-window) SPAWN_MODE="tmux-window"; shift ;;
     *) echo "unknown arg: $1" >&2; usage ;;
   esac
 done
@@ -877,37 +888,71 @@ case "$ACTION" in
     [[ -z "$MASTER_TARGET" || -z "$INNER_TARGETS" ]] && { echo "start needs --master and --inner" >&2; usage; }
     [[ -z "$SESSION_ID" ]] && { echo "Error: tmux session '$SESSION_NAME' not found" >&2; exit 2; }
 
-    # --- Detach (default): re-exec ourselves with --foreground via setsid +
-    # nohup so the daemon survives the calling shell's lifecycle without
-    # depending on harness-specific backgrounding (Claude Code's
-    # run_in_background, opencode/codex/omp equivalents, & + disown, etc.).
-    # Block until the child writes its PID file so the caller can know the
+    # --- Spawn mode dispatch:
+    #   detach (default)  → re-exec self with --foreground via setsid + nohup.
+    #                        Survives the calling shell. Recommended for
+    #                        Claude Code (which has reliable
+    #                        run_in_background reparenting).
+    #   tmux-window       → spawn a dedicated tmux window inside the same
+    #                        session running 'start --foreground'.
+    #                        Recommended for codex/opencode/omp where
+    #                        backgrounding semantics vary; the tmux session
+    #                        is the natural lifetime boundary for a
+    #                        flightdeck session anyway.
+    # Block until the child writes its PID file so the caller knows the
     # daemon is alive before returning.
     if (( FOREGROUND == 0 )); then
       script_path=$(readlink -f "$0" 2>/dev/null || echo "$0")
-      child_args=("${ORIG_ARGS[@]}" --foreground)
-      # Detach stdio entirely; child appends to LOG via its own log() helper.
-      setsid nohup "$script_path" "${child_args[@]}" \
-        </dev/null >>"$LOG" 2>&1 &
-      child_pid=$!
+      # Build child args: original invocation minus mode-selection flags
+      # (we'd loop and re-detach), plus --foreground.
+      child_args=()
+      for a in "${ORIG_ARGS[@]}"; do
+        case "$a" in
+          --in-tmux-window|--foreground|--no-detach) ;;
+          *) child_args+=("$a") ;;
+        esac
+      done
+      child_args+=(--foreground)
+
+      case "$SPAWN_MODE" in
+        tmux-window)
+          # Spawn a detached tmux window in the master's session running
+          # 'start --foreground ...'. The window's lifetime ties to the
+          # tmux session; killing the session reaps the daemon.
+          window_name="flightdeck-daemon-${SESSION_KEY}"
+          # Build the command string for tmux to execute; quote each arg.
+          cmd_str=$(printf '%q ' "$script_path" "${child_args[@]}")
+          if ! tmux new-window -d -t "$SESSION_ID" -n "$window_name" "$cmd_str" 2>/dev/null; then
+            echo "Error: failed to spawn flightdeck-daemon tmux window" >&2
+            exit 1
+          fi
+          ;;
+        detach|*)
+          # Detach stdio entirely; child appends to LOG via its own log() helper.
+          setsid nohup "$script_path" "${child_args[@]}" \
+            </dev/null >>"$LOG" 2>&1 &
+          child_pid=$!
+          ;;
+      esac
 
       deadline=$((SECONDS + 10))
       while (( SECONDS < deadline )); do
         if [[ -f "$PID_FILE" ]]; then
           written_pid=$(cat "$PID_FILE" 2>/dev/null || echo "")
           if [[ "$written_pid" =~ ^[1-9][0-9]*$ ]] && kill -0 "$written_pid" 2>/dev/null; then
-            echo "daemon detached pid=$written_pid session=$SESSION_NAME"
+            echo "daemon spawned pid=$written_pid session=$SESSION_NAME mode=$SPAWN_MODE"
             exit 0
           fi
         fi
-        # Bail early if the child died before writing the PID file.
-        if ! kill -0 "$child_pid" 2>/dev/null; then
-          echo "Error: detached child (pid=$child_pid) exited before writing PID file; check $LOG" >&2
+        # Bail early if the detach child died before writing the PID file.
+        # tmux-window mode has no parent PID to check (window owns lifetime).
+        if [[ "$SPAWN_MODE" == "detach" ]] && ! kill -0 "${child_pid:-0}" 2>/dev/null; then
+          echo "Error: detached child (pid=${child_pid:-?}) exited before writing PID file; check $LOG" >&2
           exit 1
         fi
         sleep 0.2
       done
-      echo "Error: detach timed out after 10s; child pid=$child_pid; check $LOG" >&2
+      echo "Error: spawn timed out after 10s ($SPAWN_MODE); check $LOG" >&2
       exit 1
     fi
 
@@ -1027,6 +1072,19 @@ case "$ACTION" in
 
   ack)
     ack_and_drain
+    ;;
+
+  find-window)
+    # Print the tmux window-id of the daemon's window if it was spawned in
+    # tmux-window mode. Empty output (exit 1) when not found.
+    [[ -z "$SESSION_ID" ]] && { echo "Error: tmux session '$SESSION_NAME' not found" >&2; exit 1; }
+    window_name="flightdeck-daemon-${SESSION_KEY}"
+    wid=$(tmux list-windows -t "$SESSION_ID" -F '#{window_id} #{window_name}' 2>/dev/null \
+          | awk -v n="$window_name" '$2==n {print $1; exit}')
+    if [[ -z "$wid" ]]; then
+      exit 1
+    fi
+    echo "$wid"
     ;;
 
   health)
