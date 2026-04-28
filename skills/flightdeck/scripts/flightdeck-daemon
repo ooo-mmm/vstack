@@ -57,6 +57,8 @@
 #   FD_WAKE_PENDING_TTL 300         Stale wake-pending recovery threshold.
 #   FD_VERBOSE          0           Log non-canonical/no-action classifies.
 #   FD_HEARTBEAT_TICKS  60          Ticks between heartbeat log lines.
+#   FD_MAX_LIFETIME     14400       Seconds before daemon exec()s itself
+#                                   for a fresh process. 0 disables.
 set -euo pipefail
 
 # Resolve daemon state dir + session-keyed file paths via shared helper so
@@ -78,6 +80,7 @@ CLASSIFIER="${FD_CLASSIFIER:-$_default_classifier}"
 VERBOSE="${FD_VERBOSE:-0}"
 WAKE_PENDING_TTL="${FD_WAKE_PENDING_TTL:-300}"
 HEARTBEAT_TICKS="${FD_HEARTBEAT_TICKS:-60}"
+MAX_LIFETIME="${FD_MAX_LIFETIME:-14400}"  # 4h; 0 disables
 
 # Canonical classifier tag allowlist for stable-wake. Only these wake the
 # master from a stable buffer. Bell wake is independent and unconditional.
@@ -224,6 +227,7 @@ gc_orphan_state() {
         rm -f "$STATE_DIR/fd-daemon-${key}.pid" \
               "$STATE_DIR/fd-daemon-${key}.lock" \
               "$STATE_DIR/fd-daemon-${key}.log" \
+              "$STATE_DIR/fd-daemon-${key}.heartbeat" \
               "$STATE_DIR/fd-master-${key}.busy"
       fi
     fi
@@ -674,6 +678,8 @@ run_loop() {
   done
 
   local HEARTBEAT_COUNTER=0
+  local START_EPOCH; START_EPOCH=$(date +%s)
+  local HEARTBEAT_FILE; HEARTBEAT_FILE=$(fd_heartbeat_file "$STATE_DIR" "$SESSION_KEY")
   log start "pid=$$ session_id=$SESSION_ID name=$SESSION_NAME master_id=$master_id inner_ids=${INNER_IDS[*]}"
   # Separate traps:
   #   - EXIT: cleanup only (called on natural exit too).
@@ -681,11 +687,38 @@ run_loop() {
   #     terminates the daemon, not just runs handler then continues).
   # Both use non-blocking SESSION_LOCK to avoid self-deadlock if signal fires
   # while we already hold the lock.
-  _on_exit() { rm -f "$PID_FILE"; locked_state_cleanup --nonblock; log stop "pid=$$"; }
+  _on_exit() {
+    rm -f "$PID_FILE" "$HEARTBEAT_FILE"
+    locked_state_cleanup --nonblock
+    log stop "pid=$$"
+  }
   trap '_on_exit' EXIT
   trap '_on_exit; exit 0' INT TERM
 
   while true; do
+    # Watchdog: touch the heartbeat file every tick. Master can read its
+    # mtime during watch re-entry to detect a hung daemon (compare to
+    # date +%s; stale > FD_HEARTBEAT_TICKS * FD_POLL_SEC + slack means
+    # the daemon needs a kick).
+    touch "$HEARTBEAT_FILE" 2>/dev/null || true
+
+    # Max-lifetime guard — exec self with the same args after MAX_LIFETIME
+    # seconds so long sessions don't accumulate subshell drift, FD bloat,
+    # or tmux-query overhead. PID + lock + state files survive exec
+    # (same PID, FDs inherited unless CLOEXEC); the new instance just
+    # reads through the same setup again with fresh in-memory state.
+    if (( MAX_LIFETIME > 0 )); then
+      local elapsed=$(( $(date +%s) - START_EPOCH ))
+      if (( elapsed >= MAX_LIFETIME )); then
+        log max-lifetime "elapsed=${elapsed}s >= MAX_LIFETIME=${MAX_LIFETIME}s; exec self for fresh process"
+        # Note: we already hold flock on FD 200 (PID_LOCK). flock survives
+        # exec for the same PID, so the new instance's flock -n succeeds
+        # (it inherits the lock). PID_FILE keeps our PID, which is correct
+        # since exec preserves it.
+        exec "$0" "${ORIG_ARGS[@]}"
+      fi
+    fi
+
     # Self-exit on session gone.
     if ! session_alive; then
       log session-gone "session_id=$SESSION_ID gone; exiting"
@@ -1029,11 +1062,20 @@ case "$ACTION" in
     if [[ -f "$EVENTS_FILE" ]]; then
       events_count=$(wc -l < "$EVENTS_FILE" 2>/dev/null || echo 0)
     fi
+    heartbeat_file=$(fd_heartbeat_file "$STATE_DIR" "$SESSION_KEY")
+    heartbeat_age="(missing)"
+    if [[ -f "$heartbeat_file" ]]; then
+      hb_mtime=$(stat -c %Y "$heartbeat_file" 2>/dev/null || stat -f %m "$heartbeat_file" 2>/dev/null || echo "")
+      if [[ -n "$hb_mtime" ]]; then
+        heartbeat_age="$(( $(date +%s) - hb_mtime ))s"
+      fi
+    fi
     cat <<EOF
 session=$SESSION_NAME session_id=$SESSION_ID daemon_pid=$pid alive=true
 state_dir=$STATE_DIR
 last_log_ts=${last_log_ts:-"(none)"}
 last_log=${last_log_line:-"(empty)"}
+heartbeat_age=$heartbeat_age
 wake_pending=$wp_state${wp_in_flight:+ in_flight=$wp_in_flight}
 busy_lock=$bf_state${bf_pid:+ master_pid=$bf_pid}
 events_queued=$events_count
