@@ -1,0 +1,154 @@
+#!/usr/bin/env bash
+# Phase 4 smoke test — codex app-server + bridge end-to-end.
+#
+# Verifies: codex app-server spawn (ws://127.0.0.1:<PORT>), per-pane
+# `codex --remote` TUI, thread/loaded/list discovery, turn/start
+# delivery via the vendored bun bridge, thread/turns/list reads back
+# user + assistant content. Cleanup tears down the app-server.
+#
+# Requires: $TMUX, codex (>=0.125.0), bun, jq.
+
+set -euo pipefail
+
+TEST_NAME="codex-bridge-smoke"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+SCRIPTS="$SKILL_DIR/scripts"
+
+# shellcheck source=../scripts/lib/codex-paths.sh
+source "$SCRIPTS/lib/codex-paths.sh"
+
+red()    { printf '\033[31m%s\033[0m\n' "$*" >&2; }
+green()  { printf '\033[32m%s\033[0m\n' "$*"; }
+note()   { printf '  %s\n' "$*"; }
+fail()   { red "FAIL[$TEST_NAME]: $*"; cleanup; exit 1; }
+
+[[ -z "${TMUX:-}" ]] && fail "must run inside a tmux session"
+for cmd in jq sha256sum bun curl; do
+  command -v "$cmd" >/dev/null 2>&1 || fail "missing required cmd: $cmd"
+done
+CX_BIN=$(cx_resolve_codex_bin) || fail "codex binary not found"
+note "codex=$CX_BIN ($("$CX_BIN" --version 2>&1 | head -n1))"
+
+# Isolation: override FD_STATE_DIR for state files; codex app-server +
+# --remote panes will run in user's tmux for visibility.
+TEST_TMPDIR=$(mktemp -d -t fd-cx-smoke-XXXXXX)
+WORKTREE="$TEST_TMPDIR/worktree"; mkdir -p "$WORKTREE"
+ABS_WORKTREE=$(cd "$WORKTREE" && pwd)
+export FD_STATE_DIR="$TEST_TMPDIR/state"
+mkdir -p "$FD_STATE_DIR"; chmod 0700 "$FD_STATE_DIR"
+
+SERVER_WIN=""; TUI_WIN=""; ALLOC_PORT=""
+
+cleanup() {
+  [[ -n "$TUI_WIN"    ]] && tmux kill-window -t "$TUI_WIN" 2>/dev/null || true
+  [[ -n "$SERVER_WIN" ]] && tmux kill-window -t "$SERVER_WIN" 2>/dev/null || true
+  if [[ -n "$ALLOC_PORT" ]]; then
+    pkill -f "codex app-server --listen ws://127.0.0.1:$ALLOC_PORT" 2>/dev/null || true
+    sleep 0.5
+    pkill -9 -f "codex app-server --listen ws://127.0.0.1:$ALLOC_PORT" 2>/dev/null || true
+  fi
+  rm -rf "$TEST_TMPDIR"
+}
+trap cleanup EXIT INT TERM
+
+# --- Step 1: spawn app-server in dedicated tmux window ----------------------
+note "step 1: spawn codex app-server in dedicated tmux window"
+SESSION_NAME=$(tmux display-message -p '#S')
+SESSION_ID=$(tmux display-message -p '#{session_id}')
+SESSION_KEY=$(fd_session_key_from_id "$SESSION_ID")
+
+# Allocate a port directly (don't use codex-app-server-spawn — it's
+# session-singleton; the smoke runs in the user's session and we don't
+# want to interfere with any real per-session app-server).
+ALLOC_PORT=$(cx_alloc_port "smoke-$$") || fail "no free port in $CX_PORT_RANGE_START-$CX_PORT_RANGE_END"
+WS_URL="ws://127.0.0.1:$ALLOC_PORT"
+SERVER_WIN_NAME="cx-smoke-srv-$$"
+LOG="$FD_STATE_DIR/cx-srv-smoke.log"
+tmux new-window -d -t "$SESSION_ID" -n "$SERVER_WIN_NAME" \
+  "exec $CX_BIN app-server --listen $WS_URL >>$LOG 2>&1"
+SERVER_WIN="$SESSION_NAME:$SERVER_WIN_NAME"
+note "  server window=$SERVER_WIN url=$WS_URL"
+
+# Wait for ws to accept connections.
+deadline=$((SECONDS + 30))
+while (( SECONDS < deadline )); do
+  if ! cx_port_is_free "$ALLOC_PORT"; then break; fi
+  sleep 0.5
+done
+cx_port_is_free "$ALLOC_PORT" && fail "app-server did not accept connections on $ALLOC_PORT"
+note "  server up"
+
+# --- Step 2: spawn per-pane TUI bound to server -----------------------------
+note "step 2: spawn codex --remote TUI in test tmux window"
+TUI_WIN_NAME="cx-smoke-tui-$$"
+tmux new-window -d -t "$SESSION_ID" -n "$TUI_WIN_NAME" -c "$ABS_WORKTREE" \
+  "exec $CX_BIN --remote $WS_URL"
+TUI_WIN="$SESSION_NAME:$TUI_WIN_NAME"
+note "  TUI window=$TUI_WIN"
+
+# --- Step 3: thread/loaded/list — find new thread ---------------------------
+note "step 3: thread/loaded/list — discover thread id"
+THREAD_ID=""
+deadline=$((SECONDS + 30))
+while (( SECONDS < deadline )); do
+  list_out=$(cx_bridge_run list --url "$WS_URL" 2>/dev/null || echo "")
+  if [[ -n "$list_out" ]]; then
+    THREAD_ID=$(jq -r '
+      ( .data // .items // .threads // [] ) as $arr
+      | ($arr | last) as $entry
+      | if $entry == null then empty
+        elif ($entry | type) == "string" then $entry
+        else ($entry.threadId // $entry.id // empty) end
+    ' <<< "$list_out" 2>/dev/null)
+    if [[ -n "$THREAD_ID" && "$THREAD_ID" != "null" ]]; then break; fi
+  fi
+  sleep 1
+done
+[[ -z "$THREAD_ID" || "$THREAD_ID" == "null" ]] \
+  && fail "thread discovery timed out"
+note "  thread_id=$THREAD_ID"
+
+# --- Step 4: send a smoke message + verify in turns/list --------------------
+note "step 4: turn/start with smoke-XYZ + verify turns/list contains it"
+SMOKE_MSG="smoke-$$-XYZ"
+send_resp=$(cx_bridge_run send --url "$WS_URL" --thread "$THREAD_ID" -- "$SMOKE_MSG" 2>&1) \
+  || fail "bridge send failed: $send_resp"
+note "  send ok"
+
+deadline=$((SECONDS + 30))
+saw_user=0
+while (( SECONDS < deadline )); do
+  turns=$(cx_bridge_run turns --url "$WS_URL" --thread "$THREAD_ID" 2>/dev/null || echo "")
+  if [[ -n "$turns" ]]; then
+    if jq -e --arg msg "$SMOKE_MSG" '
+      [ ( .data // [] ) | .[]? | (.items // [])[] | select(.type == "userMessage") ]
+      | any(
+          ( .content // [] | map(.text // "") | join("") | contains($msg) )
+          // false
+        )
+    ' <<< "$turns" >/dev/null 2>&1; then
+      saw_user=1
+      break
+    fi
+  fi
+  sleep 1
+done
+(( saw_user == 1 )) || fail "smoke message not found in turns/list within 30s"
+note "  user message landed in turns"
+
+# --- Step 5: teardown -------------------------------------------------------
+note "step 5: kill TUI + server, release port"
+tmux kill-window -t "$TUI_WIN" 2>/dev/null || true
+TUI_WIN=""
+tmux kill-window -t "$SERVER_WIN" 2>/dev/null || true
+SERVER_WIN=""
+sleep 1
+pkill -f "codex app-server --listen ws://127.0.0.1:$ALLOC_PORT" 2>/dev/null || true
+sleep 0.5
+pkill -9 -f "codex app-server --listen ws://127.0.0.1:$ALLOC_PORT" 2>/dev/null || true
+cx_release_port "$ALLOC_PORT"
+ALLOC_PORT=""
+note "  cleanup done"
+
+green "PASS[$TEST_NAME]"

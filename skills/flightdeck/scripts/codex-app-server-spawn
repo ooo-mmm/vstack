@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+# Spawn (or attach to) the codex app-server for this flightdeck session.
+# Idempotent: if a server is already running for the current session,
+# returns its URL. Otherwise allocates a port, spawns the server in a
+# dedicated tmux window (`cx-srv-<SESSION_KEY>`), and waits for healthz.
+#
+# Usage: codex-app-server-spawn
+# Stdout: the WS URL (ws://127.0.0.1:<PORT>) on success.
+# Exit:   0 success, 1 failure.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/codex-paths.sh
+source "$SCRIPT_DIR/lib/codex-paths.sh"
+
+SESSION_NAME=$(tmux display-message -p '#S' 2>/dev/null || echo unknown)
+SESSION_ID=$(tmux display-message -p '#{session_id}' 2>/dev/null || echo "\$0")
+SESSION_KEY=$(fd_session_key_from_id "$SESSION_ID")
+
+STATE_FILE=$(cx_app_server_file "$SESSION_KEY")
+
+# If existing state file points at a live server, reuse it.
+if [[ -f "$STATE_FILE" ]]; then
+  EXISTING_URL=$(jq -r '.url // ""' "$STATE_FILE" 2>/dev/null)
+  EXISTING_PORT=$(jq -r '.port // ""' "$STATE_FILE" 2>/dev/null)
+  EXISTING_PID=$(jq -r '.pid // ""' "$STATE_FILE" 2>/dev/null)
+  if [[ -n "$EXISTING_URL" && -n "$EXISTING_PID" ]] \
+     && [[ "$EXISTING_PID" =~ ^[1-9][0-9]*$ ]] \
+     && kill -0 "$EXISTING_PID" 2>/dev/null \
+     && [[ -n "$EXISTING_PORT" ]] \
+     && ! cx_port_is_free "$EXISTING_PORT"; then
+    echo "$EXISTING_URL"
+    exit 0
+  fi
+  # Stale — drop and reallocate.
+  rm -f "$STATE_FILE"
+fi
+
+CX_BIN=$(cx_resolve_codex_bin) || {
+  echo "codex-app-server-spawn: codex binary not found" >&2; exit 1
+}
+
+PORT=$(cx_alloc_port "$SESSION_KEY") || {
+  echo "codex-app-server-spawn: no free port in $CX_PORT_RANGE_START-$CX_PORT_RANGE_END" >&2; exit 1
+}
+
+URL="ws://127.0.0.1:$PORT"
+LOG=$(cx_app_server_log "$SESSION_KEY")
+WIN_NAME="cx-srv-$SESSION_KEY"
+
+# Spawn in a dedicated tmux window in the same session for visibility +
+# natural lifetime tied to the tmux session.
+tmux new-window -d -t "$SESSION_ID" -n "$WIN_NAME" "exec $CX_BIN app-server --listen $URL >>$LOG 2>&1" 2>/dev/null \
+  || { cx_release_port "$PORT"; echo "codex-app-server-spawn: failed to create tmux window" >&2; exit 1; }
+
+# Wait for ws to accept connections.
+deadline=$((SECONDS + 30))
+while (( SECONDS < deadline )); do
+  if ! cx_port_is_free "$PORT"; then break; fi
+  sleep 0.5
+done
+if cx_port_is_free "$PORT"; then
+  echo "codex-app-server-spawn: server failed to start on port $PORT (check $LOG)" >&2
+  cx_release_port "$PORT"
+  tmux kill-window -t "$SESSION_ID:$WIN_NAME" 2>/dev/null || true
+  exit 1
+fi
+
+# Resolve the actual server pid via pgrep (the tmux-window child is
+# bash; the codex app-server it execs has a different pid).
+SERVER_PID=$(pgrep -u "$(id -u)" -f "codex app-server --listen ws://127\.0\.0\.1:$PORT" | head -n 1)
+[[ -z "$SERVER_PID" ]] && SERVER_PID=0
+
+cx_register_port_pid "$PORT" "${SERVER_PID:-0}"
+
+jq -nc \
+  --arg url "$URL" \
+  --argjson port "$PORT" \
+  --argjson pid "${SERVER_PID:-0}" \
+  --arg session_key "$SESSION_KEY" \
+  --arg log "$LOG" \
+  --arg ts "$(date -Iseconds)" \
+  '{url:$url, port:$port, pid:$pid, session_key:$session_key, log:$log, started_at:$ts}' \
+  > "$STATE_FILE"
+
+echo "$URL"

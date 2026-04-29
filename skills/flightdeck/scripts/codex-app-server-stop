@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Counterpart to codex-app-server-spawn. Stops the per-session codex
+# app-server and cleans up state. Wired into terminate.md § 5.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/codex-paths.sh
+source "$SCRIPT_DIR/lib/codex-paths.sh"
+
+SESSION_ID=$(tmux display-message -p '#{session_id}' 2>/dev/null || echo "\$0")
+SESSION_KEY=$(fd_session_key_from_id "$SESSION_ID")
+
+STATE_FILE=$(cx_app_server_file "$SESSION_KEY")
+[[ ! -f "$STATE_FILE" ]] && exit 0
+
+PORT=$(jq -r '.port // ""' "$STATE_FILE" 2>/dev/null)
+PID=$(jq -r '.pid // ""' "$STATE_FILE" 2>/dev/null)
+
+if [[ "$PID" =~ ^[1-9][0-9]*$ ]] && kill -0 "$PID" 2>/dev/null; then
+  kill -- -"$PID" 2>/dev/null || kill "$PID" 2>/dev/null || true
+  for _ in 1 2 3 4 5; do
+    kill -0 "$PID" 2>/dev/null || break
+    sleep 0.2
+  done
+  if kill -0 "$PID" 2>/dev/null; then
+    kill -9 -- -"$PID" 2>/dev/null || kill -9 "$PID" 2>/dev/null || true
+  fi
+fi
+
+# Kill the tmux window if still present.
+WIN_NAME="cx-srv-$SESSION_KEY"
+tmux kill-window -t "$SESSION_ID:$WIN_NAME" 2>/dev/null || true
+
+[[ -n "$PORT" ]] && cx_release_port "$PORT"
+rm -f "$STATE_FILE"

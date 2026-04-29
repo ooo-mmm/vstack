@@ -37,6 +37,8 @@ source "$SCRIPT_DIR/lib/oc-paths.sh"
 source "$SCRIPT_DIR/lib/cc-channel-paths.sh"
 # shellcheck source=lib/pi-bridge-paths.sh
 source "$SCRIPT_DIR/lib/pi-bridge-paths.sh"
+# shellcheck source=lib/codex-paths.sh
+source "$SCRIPT_DIR/lib/codex-paths.sh"
 
 ACTION="${1:-}"
 [[ -z "$ACTION" ]] && { echo "Usage: pane-registry <action> [args]" >&2; exit 2; }
@@ -59,6 +61,7 @@ case "$ACTION" in
     OC_URL=""; OC_SESSION_ID=""; OC_PORT=""
     CC_URL=""; CC_SESSION_UUID=""; CC_PORT=""; CC_TRANSCRIPT=""
     PI_BRIDGE_PID=""; PI_BRIDGE_SOCKET=""; PI_SESSION_ID=""
+    CX_WS=""; CX_THREAD_ID=""
     while [[ $# -gt 0 ]]; do
       case "$1" in
         --window) WINDOW="$2"; shift 2 ;;
@@ -76,6 +79,8 @@ case "$ACTION" in
         --pi-bridge-pid) PI_BRIDGE_PID="$2"; shift 2 ;;
         --pi-bridge-socket) PI_BRIDGE_SOCKET="$2"; shift 2 ;;
         --pi-session-id) PI_SESSION_ID="$2"; shift 2 ;;
+        --cx-ws) CX_WS="$2"; shift 2 ;;
+        --cx-thread-id) CX_THREAD_ID="$2"; shift 2 ;;
         *) echo "Unknown flag: $1" >&2; exit 2 ;;
       esac
     done
@@ -111,6 +116,14 @@ case "$ACTION" in
         PI_SESSION_ID=$(jq -r '.session_id // ""' "$_pi_spawn_file" 2>/dev/null || echo "")
       fi
     fi
+    # Auto-hydrate codex bridge metadata.
+    if [[ "$HARNESS" == "codex" && -z "$CX_WS" ]]; then
+      _cx_spawn_file="$(cx_spawn_file "$ISSUE")"
+      if [[ -f "$_cx_spawn_file" ]]; then
+        CX_WS=$(jq -r '.url // ""' "$_cx_spawn_file" 2>/dev/null || echo "")
+        CX_THREAD_ID=$(jq -r '.thread_id // ""' "$_cx_spawn_file" 2>/dev/null || echo "")
+      fi
+    fi
 
     "$FD_STATE" init >/dev/null
     SESSION=$(tmux display-message -p '#S' 2>/dev/null || echo unknown)
@@ -132,6 +145,8 @@ case "$ACTION" in
       --arg pi_bridge_pid "$PI_BRIDGE_PID" \
       --arg pi_bridge_socket "$PI_BRIDGE_SOCKET" \
       --arg pi_session_id "$PI_SESSION_ID" \
+      --arg cx_ws "$CX_WS" \
+      --arg cx_thread_id "$CX_THREAD_ID" \
       --arg now "$(now)" \
       '{
         window: $window,
@@ -149,6 +164,8 @@ case "$ACTION" in
         pi_bridge_pid: ($pi_bridge_pid | if . == "" then null else (. | tonumber) end),
         pi_bridge_socket: ($pi_bridge_socket | if . == "" then null else . end),
         pi_session_id: ($pi_session_id | if . == "" then null else . end),
+        cx_ws: ($cx_ws | if . == "" then null else . end),
+        cx_thread_id: ($cx_thread_id | if . == "" then null else . end),
         state: "waiting",
         substate: null,
         unknown_since: null,
@@ -274,6 +291,10 @@ case "$ACTION" in
     # user closes the pane, pi exits and the bridge cleans up its
     # registry entry naturally.
     rm -f "$(pi_spawn_file "$ISSUE")" 2>/dev/null || true
+    # Codex cleanup: drop spawn file. Server is per-session (not per-
+    # pane); kept alive via codex-app-server-spawn idempotency until
+    # terminate.md § 5 calls codex-app-server-stop.
+    rm -f "$(cx_spawn_file "$ISSUE")" 2>/dev/null || true
     "$FD_STATE" set ".issues" "(.issues | del(.[\"$ISSUE\"]))"
     ;;
 
@@ -318,6 +339,19 @@ case "$ACTION" in
       if pi_bridge_is_fresh "$pid" "$socket" 2>/dev/null; then
         printf -- "--pid %s --socket %s\n" "$pid" "$socket"
       fi
+    fi
+    ;;
+
+  cx-bridge-args)
+    # Print "--url <U> --thread <T>" when both are set for the given
+    # codex issue. Empty stdout when missing.
+    ISSUE="${1:-}"
+    [[ -z "$ISSUE" ]] && { echo "Usage: cx-bridge-args <ISSUE>" >&2; exit 2; }
+    line=$("$FD_STATE" get ".issues[\"$ISSUE\"] // {} | [(.cx_ws // \"\"), (.cx_thread_id // \"\")] | @tsv" 2>/dev/null | tr -d '"')
+    url=$(awk -F'\t' '{print $1}' <<< "$line")
+    thread=$(awk -F'\t' '{print $2}' <<< "$line")
+    if [[ -n "$url" && -n "$thread" && "$url" != "null" && "$thread" != "null" ]]; then
+      printf -- "--url %s --thread %s\n" "$url" "$thread"
     fi
     ;;
 

@@ -81,6 +81,8 @@ source "$_daemon_script_dir/lib/oc-paths.sh"
 source "$_daemon_script_dir/lib/cc-channel-paths.sh"
 # shellcheck source=lib/pi-bridge-paths.sh
 source "$_daemon_script_dir/lib/pi-bridge-paths.sh"
+# shellcheck source=lib/codex-paths.sh
+source "$_daemon_script_dir/lib/codex-paths.sh"
 STATE_DIR=$(fd_resolve_state_dir)
 POLL_SEC="${FD_POLL_SEC:-2}"
 STABILITY_SEC="${FD_STABILITY:-3}"
@@ -279,7 +281,7 @@ gc_orphan_state() {
   # Sweep subscriber pid files whose pid is dead. Live subscribers
   # belong to live daemons elsewhere on this host — leave them alone.
   local sub_file sub_pid
-  for sub_file in "$STATE_DIR"/fd-subscriber-*.pid "$STATE_DIR"/fd-cc-subscriber-*.pid "$STATE_DIR"/fd-pi-subscriber-*.pid; do
+  for sub_file in "$STATE_DIR"/fd-subscriber-*.pid "$STATE_DIR"/fd-cc-subscriber-*.pid "$STATE_DIR"/fd-pi-subscriber-*.pid "$STATE_DIR"/fd-cx-subscriber-*.pid; do
     sub_pid=$(cat "$sub_file" 2>/dev/null || echo "")
     if [[ ! "$sub_pid" =~ ^[1-9][0-9]*$ ]] || ! kill -0 "$sub_pid" 2>/dev/null; then
       rm -f "$sub_file"
@@ -985,6 +987,89 @@ resolve_pi_meta() {
   echo "$args"
 }
 
+# --- Codex bridge subscriber (Phase 4) --------------------------------------
+# Per-codex-pane subprocess that pipes `cx_bridge_run stream` through
+# jq filtered for thread/status/changed → idle events. On each idle,
+# fetches the thread's last assistant text and emits a wake event.
+cx_subscriber_loop() {
+  set +e
+  set +o pipefail
+  exec 200<&- 2>/dev/null || true
+  local pane_id="$1" cx_url="$2" thread_id="$3" parent_pid="$4"
+  local last_hash=""
+  local sub_log; sub_log="${LOG}.cx-sub-$(cx_pane_id_safe "$pane_id")"
+  printf '%s [cx-sub-start] pane=%s url=%s thread=%s parent=%s\n' \
+    "$(date -Iseconds)" "$pane_id" "$cx_url" "$thread_id" "$parent_pid" \
+    >> "$sub_log" 2>/dev/null || true
+
+  cx_bridge_run stream --url "$cx_url" 2>/dev/null \
+    | jq --unbuffered -c --arg tid "$thread_id" 'select(.method == "thread/status/changed" and (.params.threadId // .params.thread_id) == $tid and ((.params.status // "") | tostring | test("idle"; "i")))' \
+    | while IFS= read -r line; do
+      if ! kill -0 "$parent_pid" 2>/dev/null; then exit 0; fi
+      [[ -z "$line" ]] && continue
+      # Fetch last assistant text via turns/list.
+      local turns; turns=$(cx_bridge_run turns --url "$cx_url" --thread "$thread_id" 2>/dev/null || echo "")
+      [[ -z "$turns" ]] && continue
+      local last_text
+      last_text=$(jq -r "$CX_LAST_ASSISTANT_JQ" <<< "$turns" 2>/dev/null)
+      [[ -z "$last_text" ]] && continue
+      local hash
+      hash=$(printf '%s' "$last_text" | sha256sum | awk '{print substr($1,1,12)}')
+      [[ "$hash" == "$last_hash" ]] && continue
+      local tag
+      if [[ -n "${CLASSIFIER:-}" && -x "${CLASSIFIER:-}" ]]; then
+        tag=$(printf '%s' "$last_text" | "$CLASSIFIER" --no-footer-gate 2>/dev/null)
+        [[ -z "$tag" ]] && tag="rendering"
+      else
+        tag="rendering"
+      fi
+      local text_excerpt
+      text_excerpt=$(printf '%s' "$last_text" | head -c 1024 || true)
+      printf '%s [cx-sub-emit] pane=%s hash=%s tag=%s text_len=%s\n' \
+        "$(date -Iseconds)" "$pane_id" "$hash" "$tag" "${#last_text}" \
+        >> "$sub_log" 2>/dev/null || true
+      ( exec 222>"$SESSION_LOCK"
+        flock 222
+        jq -nc --arg ts "$(date -Iseconds)" \
+               --arg pid "$pane_id" \
+               --arg harness "codex" \
+               --arg text "$text_excerpt" \
+               --arg tag "$tag" \
+               --arg h "$hash" \
+               '{ts:$ts, pane_id:$pid, harness:$harness, last_assistant_text:$text, classifier_tag:$tag, hash:$h}' \
+               >> "$WAKE_EVENTS_LOG"
+      )
+      last_hash="$hash"
+    done
+}
+
+spawn_cx_subscriber() {
+  local pane_id="$1" cx_url="$2" thread_id="$3"
+  local pid_file; pid_file=$(cx_subscriber_pid_file "$pane_id")
+  if [[ -f "$pid_file" ]]; then
+    local existing; existing=$(cat "$pid_file" 2>/dev/null || echo "")
+    if [[ "$existing" =~ ^[1-9][0-9]*$ ]] && kill -0 "$existing" 2>/dev/null; then
+      log cx-subscriber "pane=$pane_id existing pid=$existing; reattaching"
+      return 0
+    fi
+  fi
+  cx_subscriber_loop "$pane_id" "$cx_url" "$thread_id" $$ &
+  local sub_pid=$!
+  echo "$sub_pid" > "$pid_file"
+  log cx-subscriber-spawn "pane=$pane_id pid=$sub_pid url=$cx_url thread=$thread_id"
+}
+
+resolve_cx_meta() {
+  local pane_target="$1"
+  local issue
+  issue=$("$PANE_REGISTRY" find-by-pane "$pane_target" 2>/dev/null || echo "")
+  [[ -z "$issue" ]] && return 1
+  local args
+  args=$("$PANE_REGISTRY" cx-bridge-args "$issue" 2>/dev/null || echo "")
+  [[ -z "$args" ]] && return 1
+  echo "$args"
+}
+
 spawn_oc_subscriber() {
   local pane_id="$1" oc_url="$2" session_id="$3"
   local pid_file; pid_file=$(oc_subscriber_pid_file "$pane_id")
@@ -1023,7 +1108,7 @@ collect_descendants() {
 kill_all_oc_subscribers() {
   shopt -s nullglob
   local f pid descendants
-  for f in "$STATE_DIR"/fd-subscriber-*.pid "$STATE_DIR"/fd-cc-subscriber-*.pid "$STATE_DIR"/fd-pi-subscriber-*.pid; do
+  for f in "$STATE_DIR"/fd-subscriber-*.pid "$STATE_DIR"/fd-cc-subscriber-*.pid "$STATE_DIR"/fd-pi-subscriber-*.pid "$STATE_DIR"/fd-cx-subscriber-*.pid; do
     pid=$(cat "$f" 2>/dev/null || echo "")
     if [[ "$pid" =~ ^[1-9][0-9]*$ ]] && kill -0 "$pid" 2>/dev/null; then
       # Reap the entire descendant tree (pipeline children) BEFORE
@@ -1153,6 +1238,17 @@ run_loop() {
           _ppid=$(awk '{for(i=1;i<=NF;i++)if($i=="--pid"){print $(i+1);exit}}' <<< "$_pmeta")
           if [[ -n "$_ppid" ]]; then
             spawn_pi_subscriber "$inner_id" "$_ppid"
+            OC_SUBSCRIBED[$inner_id]=1
+          fi
+        fi
+        ;;
+      codex)
+        local _xmeta _xurl _xthread
+        if _xmeta=$(resolve_cx_meta "${OC_PANE_TARGET[$inner_id]}"); then
+          _xurl=$(awk '{for(i=1;i<=NF;i++)if($i=="--url"){print $(i+1);exit}}' <<< "$_xmeta")
+          _xthread=$(awk '{for(i=1;i<=NF;i++)if($i=="--thread"){print $(i+1);exit}}' <<< "$_xmeta")
+          if [[ -n "$_xurl" && -n "$_xthread" ]]; then
+            spawn_cx_subscriber "$inner_id" "$_xurl" "$_xthread"
             OC_SUBSCRIBED[$inner_id]=1
           fi
         fi
@@ -1634,7 +1730,7 @@ case "$ACTION" in
     # stop action directly so cleanup is deterministic. Covers both
     # opencode (fd-subscriber-*) and claude (fd-cc-subscriber-*) types.
     shopt -s nullglob
-    for _sub_file in "$STATE_DIR"/fd-subscriber-*.pid "$STATE_DIR"/fd-cc-subscriber-*.pid "$STATE_DIR"/fd-pi-subscriber-*.pid; do
+    for _sub_file in "$STATE_DIR"/fd-subscriber-*.pid "$STATE_DIR"/fd-cc-subscriber-*.pid "$STATE_DIR"/fd-pi-subscriber-*.pid "$STATE_DIR"/fd-cx-subscriber-*.pid; do
       _sub_pid=$(cat "$_sub_file" 2>/dev/null || echo "")
       if [[ "$_sub_pid" =~ ^[1-9][0-9]*$ ]] && kill -0 "$_sub_pid" 2>/dev/null; then
         # Reap pipeline descendants BEFORE the subscriber itself

@@ -47,6 +47,8 @@ source "$SCRIPT_DIR/lib/oc-paths.sh"
 source "$SCRIPT_DIR/lib/cc-channel-paths.sh"
 # shellcheck source=lib/pi-bridge-paths.sh
 source "$SCRIPT_DIR/lib/pi-bridge-paths.sh"
+# shellcheck source=lib/codex-paths.sh
+source "$SCRIPT_DIR/lib/codex-paths.sh"
 
 # jq filter that extracts the last assistant message text from a claude
 # JSONL transcript. JSONL lines vary slightly across versions; defensive
@@ -124,6 +126,7 @@ buf=""
 oc_used=0
 cc_used=0
 pi_used=0
+cx_used=0
 if [[ "$HARNESS" == "opencode" ]]; then
   oc_issue=$("$SCRIPT_DIR/pane-registry" find-by-pane "$PANE_TARGET" 2>/dev/null || echo "")
   oc_attach_args=""
@@ -210,7 +213,37 @@ if [[ "$HARNESS" == "pi" && $oc_used -eq 0 && $cc_used -eq 0 ]]; then
   fi
 fi
 
-if [[ $oc_used -eq 0 && $cc_used -eq 0 && $pi_used -eq 0 ]]; then
+if [[ "$HARNESS" == "codex" && $oc_used -eq 0 && $cc_used -eq 0 && $pi_used -eq 0 ]]; then
+  cx_issue=$("$SCRIPT_DIR/pane-registry" find-by-pane "$PANE_TARGET" 2>/dev/null || echo "")
+  cx_args=""
+  if [[ -n "$cx_issue" ]]; then
+    cx_args=$("$SCRIPT_DIR/pane-registry" cx-bridge-args "$cx_issue" 2>/dev/null || echo "")
+  fi
+  if [[ -z "$cx_args" ]]; then
+    derived_issue=$(oc_issue_from_pane_target "$PANE_TARGET")
+    if [[ -n "$derived_issue" ]]; then
+      cx_spawn="$(cx_spawn_file "$derived_issue")"
+      if [[ -f "$cx_spawn" ]]; then
+        cx_url=$(jq -r '.url // ""' "$cx_spawn" 2>/dev/null || echo "")
+        cx_thread=$(jq -r '.thread_id // ""' "$cx_spawn" 2>/dev/null || echo "")
+        if [[ -n "$cx_url" && -n "$cx_thread" ]]; then
+          cx_args="--url $cx_url --thread $cx_thread"
+        fi
+      fi
+    fi
+  fi
+  if [[ -n "$cx_args" ]]; then
+    cx_used=1
+    cx_url=$(awk '{for(i=1;i<=NF;i++)if($i=="--url"){print $(i+1);exit}}' <<< "$cx_args")
+    cx_thread=$(awk '{for(i=1;i<=NF;i++)if($i=="--thread"){print $(i+1);exit}}' <<< "$cx_args")
+    turns=$(cx_bridge_run turns --url "$cx_url" --thread "$cx_thread" 2>/dev/null || echo "")
+    if [[ -n "$turns" ]]; then
+      buf=$(jq -r "$CX_LAST_ASSISTANT_JQ" <<< "$turns" 2>/dev/null || echo "")
+    fi
+  fi
+fi
+
+if [[ $oc_used -eq 0 && $cc_used -eq 0 && $pi_used -eq 0 && $cx_used -eq 0 ]]; then
   buf=$(tmux capture-pane -t "$PANE_TARGET" "${CAPTURE_ARGS[@]}" 2>/dev/null || echo "")
 fi
 
@@ -218,7 +251,7 @@ capture_hash=$(printf '%s' "$buf" | sha256sum | awk '{print "sha256:"$1}')
 # Adapter-mode input has no TUI footer; skip the footer gate so option-list
 # / merge-now / etc. shapes classify correctly. Tmux-fallback path keeps
 # the footer gate as a buffer-completeness signal.
-if [[ $oc_used -eq 1 || $cc_used -eq 1 || $pi_used -eq 1 ]]; then
+if [[ $oc_used -eq 1 || $cc_used -eq 1 || $pi_used -eq 1 || $cx_used -eq 1 ]]; then
   tag=$(printf '%s' "$buf" | "$SCRIPT_DIR/prompt-classify" --no-footer-gate 2>/dev/null || echo "idle")
 else
   tag=$(printf '%s' "$buf" | "$SCRIPT_DIR/prompt-classify" 2>/dev/null || echo "idle")
@@ -254,7 +287,7 @@ fi
 # data path to opencode's HTTP server, not to a tmux pane location.
 fingerprint_match=true
 pane_index_suggest=null
-if [[ $oc_used -eq 0 && $cc_used -eq 0 && $pi_used -eq 0 ]]; then
+if [[ $oc_used -eq 0 && $cc_used -eq 0 && $pi_used -eq 0 && $cx_used -eq 0 ]]; then
   fingerprint_sentinel='❯ |claude code|opencode|codex>|■■■|⠋|⠙|⠸|⠴|⠦|⠧'
   if ! grep -qE "$fingerprint_sentinel" <<< "$buf"; then
     fingerprint_match=false

@@ -30,6 +30,8 @@ source "$SCRIPT_DIR/lib/oc-paths.sh"
 source "$SCRIPT_DIR/lib/cc-channel-paths.sh"
 # shellcheck source=lib/pi-bridge-paths.sh
 source "$SCRIPT_DIR/lib/pi-bridge-paths.sh"
+# shellcheck source=lib/codex-paths.sh
+source "$SCRIPT_DIR/lib/codex-paths.sh"
 
 # Resolve project root (works in worktrees and main repos)
 PROJECT_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null)"
@@ -604,6 +606,77 @@ spawn_pi_bridge_tmux() {
   return 0
 }
 
+# --- Codex app-server + --remote adapter (Phase 4) --------------------------
+#
+# ONE app-server per flightdeck session, hosted in a dedicated tmux
+# window via codex-app-server-spawn (idempotent). Each per-pane
+# `codex --remote ws://...` TUI registers as a thread; we discover
+# the thread id via `bridge list` after the TUI's own thread shows up.
+
+spawn_cx_remote_tmux() {
+  local issue="$1" wt_path="$2"
+  local cx_bin
+  if ! cx_bin=$(cx_resolve_codex_bin); then
+    echo "  cx-bridge-unavailable: codex binary not found" >&2
+    return 1
+  fi
+  if ! cx_resolve_bun_bin >/dev/null; then
+    echo "  cx-bridge-unavailable: bun not found (needed for codex-bridge)" >&2
+    return 1
+  fi
+
+  local ws_url
+  if ! ws_url=$("$SCRIPT_DIR/codex-app-server-spawn" 2>&1); then
+    echo "  cx-bridge-unavailable: codex-app-server-spawn failed: $ws_url" >&2
+    return 1
+  fi
+
+  # Spawn the per-pane TUI bound to the shared server.
+  local cmd; cmd="$cx_bin --remote $ws_url"
+  if ! open_tmux "$wt_path" "$issue" "$cmd"; then
+    return 1
+  fi
+
+  # Discover the thread id this TUI registered with. Poll for ≤30s.
+  # `bridge list` returns { result: { items: [...] } } with thread
+  # ids. The most-recently-loaded thread is presumed to be ours; in
+  # practice flightdeck spawns serially so this is unambiguous.
+  local thread_id="" deadline=$((SECONDS + 30))
+  while (( SECONDS < deadline )); do
+    local list_out
+    list_out=$(cx_bridge_run list --url "$ws_url" 2>/dev/null || echo "")
+    if [[ -n "$list_out" ]]; then
+      thread_id=$(jq -r '
+        ( .data // .items // .threads // [] ) as $arr
+        | ($arr | last) as $entry
+        | if $entry == null then empty
+          elif ($entry | type) == "string" then $entry
+          else ($entry.threadId // $entry.id // empty) end
+      ' <<< "$list_out" 2>/dev/null)
+      if [[ -n "$thread_id" && "$thread_id" != "null" ]]; then break; fi
+    fi
+    sleep 1
+  done
+  if [[ -z "$thread_id" || "$thread_id" == "null" ]]; then
+    echo "  cx-bridge-unavailable: thread discovery timed out for $issue (server $ws_url up but no loaded thread)" >&2
+    return 1
+  fi
+
+  local spawn_file abs_wt
+  spawn_file=$(cx_spawn_file "$issue")
+  abs_wt=$(cd "$wt_path" && pwd)
+  jq -nc \
+    --arg url "$ws_url" \
+    --arg thread_id "$thread_id" \
+    --arg dir "$abs_wt" \
+    --arg ts "$(date -Iseconds)" \
+    '{url:$url, thread_id:$thread_id, directory:$dir, allocated_at:$ts}' \
+    > "$spawn_file"
+
+  echo "  cx-bridge: url=$ws_url thread=$thread_id"
+  return 0
+}
+
 # --- Terminal launchers -------------------------------------------------------
 
 # Pre-trust directory in Claude Code config so the trust dialog is skipped
@@ -757,6 +830,18 @@ for ISSUE in "${ISSUES[@]}"; do
   # = tmux send-keys/capture-pane fallback).
   if [[ "$TERMINAL_MODE" == "tmux" && "$HARNESS" == "pi" && -z "$CMD_TEMPLATE" ]]; then
     if spawn_pi_bridge_tmux "$ISSUE" "$WT_PATH"; then
+      LAUNCHED=$((LAUNCHED + 1))
+      continue
+    fi
+    # fall through
+  fi
+
+  # Codex app-server + --remote (Phase 4). Idempotent server bring-up
+  # (one per flightdeck session, in its own tmux window), per-pane
+  # `codex --remote ws://...` TUI, thread-id discovery via the
+  # vendored bun bridge. Falls through on any failure.
+  if [[ "$TERMINAL_MODE" == "tmux" && "$HARNESS" == "codex" && -z "$CMD_TEMPLATE" ]]; then
+    if spawn_cx_remote_tmux "$ISSUE" "$WT_PATH"; then
       LAUNCHED=$((LAUNCHED + 1))
       continue
     fi
