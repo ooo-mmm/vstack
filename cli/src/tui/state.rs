@@ -280,12 +280,15 @@ pub(super) fn build_item_tabs(
         let mut project_agents = Vec::new();
         let mut project_skills = Vec::new();
         let mut project_hooks = Vec::new();
+        let mut project_pi_extensions = Vec::new();
         let mut global_agents = Vec::new();
         let mut global_skills = Vec::new();
         let mut global_hooks = Vec::new();
+        let mut global_pi_extensions = Vec::new();
         let mut both_agents = Vec::new();
         let mut both_skills = Vec::new();
         let mut both_hooks = Vec::new();
+        let mut both_pi_extensions = Vec::new();
 
         let mut sorted: Vec<_> = installed.iter().collect();
         sorted.sort_by_key(|(name, _)| (*name).clone());
@@ -302,20 +305,30 @@ pub(super) fn build_item_tabs(
                 locked: false,
                 installed: true,
                 installed_scope: Some(installed_scope.clone()),
-                outdated: false,
+                outdated: is_item_outdated(info),
             };
             match (installed_scope.as_str(), info.kind) {
                 ("project", Some(crate::config::ItemKind::Agent)) => project_agents.push(item),
                 ("project", Some(crate::config::ItemKind::Hook)) => project_hooks.push(item),
+                ("project", Some(crate::config::ItemKind::PiExtension)) => {
+                    project_pi_extensions.push(item)
+                }
                 ("project", _) => project_skills.push(item),
                 ("global", Some(crate::config::ItemKind::Agent)) => global_agents.push(item),
                 ("global", Some(crate::config::ItemKind::Hook)) => global_hooks.push(item),
+                ("global", Some(crate::config::ItemKind::PiExtension)) => {
+                    global_pi_extensions.push(item)
+                }
                 ("global", _) => global_skills.push(item),
                 ("both", Some(crate::config::ItemKind::Agent)) => both_agents.push(item),
                 ("both", Some(crate::config::ItemKind::Hook)) => both_hooks.push(item),
+                ("both", Some(crate::config::ItemKind::PiExtension)) => {
+                    both_pi_extensions.push(item)
+                }
                 ("both", _) => both_skills.push(item),
                 (_, Some(crate::config::ItemKind::Agent)) => project_agents.push(item),
                 (_, Some(crate::config::ItemKind::Hook)) => project_hooks.push(item),
+                (_, Some(crate::config::ItemKind::PiExtension)) => project_pi_extensions.push(item),
                 _ => project_skills.push(item),
             }
         }
@@ -339,6 +352,12 @@ pub(super) fn build_item_tabs(
                 items: project_hooks,
             });
         }
+        if !project_pi_extensions.is_empty() {
+            groups.push(ItemGroup {
+                label: "Project / Pi Extensions".into(),
+                items: project_pi_extensions,
+            });
+        }
         if !global_agents.is_empty() {
             groups.push(ItemGroup {
                 label: "Global / Agents".into(),
@@ -357,6 +376,12 @@ pub(super) fn build_item_tabs(
                 items: global_hooks,
             });
         }
+        if !global_pi_extensions.is_empty() {
+            groups.push(ItemGroup {
+                label: "Global / Pi Extensions".into(),
+                items: global_pi_extensions,
+            });
+        }
         if !both_agents.is_empty() {
             groups.push(ItemGroup {
                 label: "Both / Agents".into(),
@@ -373,6 +398,12 @@ pub(super) fn build_item_tabs(
             groups.push(ItemGroup {
                 label: "Both / Hooks".into(),
                 items: both_hooks,
+            });
+        }
+        if !both_pi_extensions.is_empty() {
+            groups.push(ItemGroup {
+                label: "Both / Pi Extensions".into(),
+                items: both_pi_extensions,
             });
         }
 
@@ -399,7 +430,7 @@ pub(super) fn build_item_tabs(
                         label: item.label.clone(),
                         description: item.description.clone(),
                         selected: false,
-                        tag: None,
+                        tag: item.tag.clone(),
                         suffix: item.suffix.clone(),
                         locked: false,
                         installed: true,
