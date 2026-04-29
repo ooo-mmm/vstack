@@ -3,15 +3,21 @@
 #
 # Usage:
 #   pane-registry init <ISSUE> --window <name> --harness <h> --worktree <path> [--pane-index <N>] [--pr <N>]
+#                                  [--oc-url <URL> --oc-session-id <ID> [--oc-port <N>]]
 #   pane-registry list [--format json|inner-panes]
 #   pane-registry get <ISSUE>
 #   pane-registry set-state <ISSUE> <state>             # waiting|prompting|submitting|merge-ready|merged|aborted|dead
 #   pane-registry set-substate <ISSUE> <substate>      # tag string from prompt-classify
 #   pane-registry set <ISSUE> <field> <json-value>      # arbitrary field write
 #   pane-registry log-decision <ISSUE> <prompt-tag> <answer>
-#   pane-registry remove <ISSUE>
+#   pane-registry remove <ISSUE>                         # also releases oc port + deletes spawn file
 #   pane-registry remove-merged                          # drop terminal-state issues with closed windows
 #   pane-registry reconcile                              # drop entries whose windows no longer exist
+#   pane-registry oc-attach-args <ISSUE>                # prints '--url U --session S' or empty
+#   pane-registry find-by-pane <pane-target>             # prints issue id matching pane_target
+#
+# When --harness is opencode and --oc-url is omitted, init auto-loads from
+# the spawn-discovery file written by open-terminal at oc_spawn_file(<ISSUE>).
 #
 # All commands operate on the master state for the current $TMUX session
 # (override via FLIGHTDECK_STATE_DIR + flightdeck-state --session).
@@ -24,6 +30,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FD_STATE="$SCRIPT_DIR/flightdeck-state"
+
+# shellcheck source=lib/oc-paths.sh
+source "$SCRIPT_DIR/lib/oc-paths.sh"
 
 ACTION="${1:-}"
 [[ -z "$ACTION" ]] && { echo "Usage: pane-registry <action> [args]" >&2; exit 2; }
@@ -43,6 +52,7 @@ case "$ACTION" in
     DEFAULT_PANE_INDEX="$(tmux show-options -g pane-base-index 2>/dev/null | awk '{print $2}')"
     DEFAULT_PANE_INDEX="${DEFAULT_PANE_INDEX:-0}"
     WINDOW=""; HARNESS=""; WORKTREE=""; PANE_INDEX="$DEFAULT_PANE_INDEX"; PR=""
+    OC_URL=""; OC_SESSION_ID=""; OC_PORT=""
     while [[ $# -gt 0 ]]; do
       case "$1" in
         --window) WINDOW="$2"; shift 2 ;;
@@ -50,11 +60,25 @@ case "$ACTION" in
         --worktree) WORKTREE="$2"; shift 2 ;;
         --pane-index) PANE_INDEX="$2"; shift 2 ;;
         --pr) PR="$2"; shift 2 ;;
+        --oc-url) OC_URL="$2"; shift 2 ;;
+        --oc-session-id) OC_SESSION_ID="$2"; shift 2 ;;
+        --oc-port) OC_PORT="$2"; shift 2 ;;
         *) echo "Unknown flag: $1" >&2; exit 2 ;;
       esac
     done
     [[ -z "$WINDOW" || -z "$HARNESS" || -z "$WORKTREE" ]] && {
       echo "init requires --window, --harness, --worktree" >&2; exit 2; }
+
+    # Auto-hydrate opencode bridge metadata from the spawn-discovery file
+    # written by open-terminal, when caller didn't pass it explicitly.
+    if [[ "$HARNESS" == "opencode" && -z "$OC_URL" ]]; then
+      _spawn_file="$(oc_spawn_file "$ISSUE")"
+      if [[ -f "$_spawn_file" ]]; then
+        OC_URL=$(jq -r '.url // ""' "$_spawn_file" 2>/dev/null || echo "")
+        OC_SESSION_ID=$(jq -r '.session_id // ""' "$_spawn_file" 2>/dev/null || echo "")
+        OC_PORT=$(jq -r '.port // ""' "$_spawn_file" 2>/dev/null || echo "")
+      fi
+    fi
 
     "$FD_STATE" init >/dev/null
     SESSION=$(tmux display-message -p '#S' 2>/dev/null || echo unknown)
@@ -66,6 +90,9 @@ case "$ACTION" in
       --arg harness "$HARNESS" \
       --arg worktree "$WORKTREE" \
       --arg pr "$PR" \
+      --arg oc_url "$OC_URL" \
+      --arg oc_session_id "$OC_SESSION_ID" \
+      --arg oc_port "$OC_PORT" \
       --arg now "$(now)" \
       '{
         window: $window,
@@ -73,6 +100,9 @@ case "$ACTION" in
         harness: $harness,
         worktree: $worktree,
         pr_number: ($pr | if . == "" then null else (. | tonumber) end),
+        oc_url: ($oc_url | if . == "" then null else . end),
+        oc_session_id: ($oc_session_id | if . == "" then null else . end),
+        oc_port: ($oc_port | if . == "" then null else (. | tonumber) end),
         state: "waiting",
         substate: null,
         unknown_since: null,
@@ -157,7 +187,40 @@ case "$ACTION" in
   remove)
     ISSUE="${1:-}"
     [[ -z "$ISSUE" ]] && { echo "Usage: remove <ISSUE>" >&2; exit 2; }
+    # Release any opencode adapter resources owned by this issue before
+    # dropping the registry entry. Idempotent — missing fields are no-ops.
+    _oc_port=$("$FD_STATE" get ".issues[\"$ISSUE\"].oc_port // empty" 2>/dev/null | tr -d '"')
+    if [[ -n "$_oc_port" && "$_oc_port" != "null" ]]; then
+      oc_release_port "$_oc_port" 2>/dev/null || true
+    fi
+    rm -f "$(oc_spawn_file "$ISSUE")" 2>/dev/null || true
     "$FD_STATE" set ".issues" "(.issues | del(.[\"$ISSUE\"]))"
+    ;;
+
+  oc-attach-args)
+    # Print "--url <U> --session <S>" when both are set in the registry
+    # for the given issue. Empty stdout when either is missing — caller
+    # uses that to decide adapter-vs-fallback.
+    ISSUE="${1:-}"
+    [[ -z "$ISSUE" ]] && { echo "Usage: oc-attach-args <ISSUE>" >&2; exit 2; }
+    line=$("$FD_STATE" get ".issues[\"$ISSUE\"] // {} | [(.oc_url // \"\"), (.oc_session_id // \"\")] | @tsv" 2>/dev/null | tr -d '"')
+    url=$(awk -F'\t' '{print $1}' <<< "$line")
+    sid=$(awk -F'\t' '{print $2}' <<< "$line")
+    if [[ -n "$url" && -n "$sid" && "$url" != "null" && "$sid" != "null" ]]; then
+      printf -- "--url %s --session %s\n" "$url" "$sid"
+    fi
+    ;;
+
+  find-by-pane)
+    # Print the issue id whose registry entry has the given pane_target.
+    # Empty stdout (exit 1) when no match.
+    PANE_TARGET="${1:-}"
+    [[ -z "$PANE_TARGET" ]] && { echo "Usage: find-by-pane <pane-target>" >&2; exit 2; }
+    issue=$("$FD_STATE" get ".issues // {} | to_entries[] | select(.value.pane_target == \"$PANE_TARGET\") | .key" 2>/dev/null | tr -d '"' | head -n1)
+    if [[ -z "$issue" ]]; then
+      exit 1
+    fi
+    echo "$issue"
     ;;
 
   remove-merged)
@@ -215,7 +278,7 @@ case "$ACTION" in
 
   *)
     echo "Unknown action: $ACTION" >&2
-    echo "Actions: init | list | get | set-state | set-substate | set | log-decision | remove | remove-merged | reconcile" >&2
+    echo "Actions: init | list | get | set-state | set-substate | set | log-decision | remove | remove-merged | reconcile | oc-attach-args | find-by-pane" >&2
     exit 2
     ;;
 esac
