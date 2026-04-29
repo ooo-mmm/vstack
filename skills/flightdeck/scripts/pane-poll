@@ -41,6 +41,9 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# shellcheck source=lib/oc-paths.sh
+source "$SCRIPT_DIR/lib/oc-paths.sh"
+
 TARGET="${1:-}"
 if [[ -z "$TARGET" ]]; then
   echo "Usage: pane-poll <window-target>" >&2
@@ -68,35 +71,7 @@ done
 
 PANE_TARGET="${TARGET}.${PANE_INDEX}"
 
-# Per-harness capture strategy. Some TUIs (notably opencode) sometimes
-# scroll the rendered buffer above the viewport, so `-S -200` returns
-# stale middle content and misses the live prompt. For those, capture
-# only the visible viewport. Document additions in patterns/tmux-monitoring.md
-# § Per-harness signals.
-case "$HARNESS" in
-  opencode) CAPTURE_ARGS=(-p) ;;
-  *)        CAPTURE_ARGS=(-p -S -200) ;;
-esac
-
-# Strip OSC color-query response leakage from captured opencode buffers.
-# Opencode's TUI does not consume OSC 4 / OSC 10 / OSC 11 / OSC 12
-# responses from the terminal; they land in the input buffer and get
-# captured back verbatim as text like "4;150;rgb:afaf/d7d7/8787".
-# Filtering here keeps fingerprints stable (the leak otherwise causes
-# spurious hash churn that delays daemon stability classification) and
-# prevents the leak from being fed back into pane-respond as typed input.
-strip_osc_leak() {
-  if [[ "$HARNESS" == "opencode" ]]; then
-    # OSC 4 (palette color) and OSC 10/11/12 (fg/bg/cursor) responses.
-    # Match the post-stripping text form (most common) and the raw OSC
-    # framing if it slipped past tmux. Anchored to digits-then-rgb so we
-    # don't eat legitimate text that happens to mention 'rgb:'.
-    sed -E -e 's/(^|[[:space:]])[0-9]+;[0-9]+;rgb:[0-9a-fA-F]{4}\/[0-9a-fA-F]{4}\/[0-9a-fA-F]{4}//g' \
-           -e 's/\x1b\][0-9]+;[^\x07\x1b]*(\x07|\x1b\\)//g'
-  else
-    cat
-  fi
-}
+CAPTURE_ARGS=(-p -S -200)
 
 # Verify window exists; emit dead state if not.
 if ! tmux list-windows -t "${TARGET%:*}" -F '#{window_index}:#{window_name}' 2>/dev/null \
@@ -114,8 +89,34 @@ bell=$(awk -F'|' '{print $2}' <<< "$flags_line")
 activity=$(awk -F'|' '{print $3}' <<< "$flags_line")
 silence=$(awk -F'|' '{print $4}' <<< "$flags_line")
 
-# Capture and classify
-buf=$(tmux capture-pane -t "$PANE_TARGET" "${CAPTURE_ARGS[@]}" 2>/dev/null | strip_osc_leak || echo "")
+# Capture and classify. For opencode panes with HTTP-attach metadata in
+# the registry, fetch the message log via the adapter and classify the
+# last assistant text. Drops tmux capture-pane for those panes entirely
+# — no scrollback, no OSC leak, no ANSI noise. Falls through to
+# capture-pane only when the adapter is unavailable for this pane.
+buf=""
+oc_used=0
+if [[ "$HARNESS" == "opencode" ]]; then
+  oc_issue=$("$SCRIPT_DIR/pane-registry" find-by-pane "$PANE_TARGET" 2>/dev/null || echo "")
+  oc_attach_args=""
+  if [[ -n "$oc_issue" ]]; then
+    oc_attach_args=$("$SCRIPT_DIR/pane-registry" oc-attach-args "$oc_issue" 2>/dev/null || echo "")
+  fi
+  if [[ -n "$oc_attach_args" ]]; then
+    oc_url=$(awk '{for(i=1;i<=NF;i++)if($i=="--url"){print $(i+1);exit}}' <<< "$oc_attach_args")
+    oc_session=$(awk '{for(i=1;i<=NF;i++)if($i=="--session"){print $(i+1);exit}}' <<< "$oc_attach_args")
+    resp=$(curl -s --max-time 5 "$oc_url/session/$oc_session/message" 2>/dev/null || echo "")
+    if [[ -n "$resp" ]]; then
+      buf=$(jq -r "$OC_LAST_ASSISTANT_JQ" <<< "$resp" 2>/dev/null || echo "")
+      oc_used=1
+    fi
+  fi
+fi
+
+if [[ $oc_used -eq 0 ]]; then
+  buf=$(tmux capture-pane -t "$PANE_TARGET" "${CAPTURE_ARGS[@]}" 2>/dev/null || echo "")
+fi
+
 capture_hash=$(printf '%s' "$buf" | sha256sum | awk '{print "sha256:"$1}')
 tag=$(printf '%s' "$buf" | "$SCRIPT_DIR/prompt-classify" 2>/dev/null || echo "idle")
 
@@ -144,21 +145,24 @@ fi
 # so the caller (watch.md) can update the registry. Only scans siblings
 # when the registered pane fails the sentinel — keeps the common case
 # cheap (one capture, one grep).
-fingerprint_sentinel='❯ |claude code|opencode|codex>|■■■|⠋|⠙|⠸|⠴|⠦|⠧'
+#
+# Adapter-mode opencode skips this entirely: the session_id binds the
+# data path to opencode's HTTP server, not to a tmux pane location.
 fingerprint_match=true
 pane_index_suggest=null
-if ! grep -qE "$fingerprint_sentinel" <<< "$buf"; then
-  # Registered pane doesn't look like the orchestrator. Could be a
-  # genuinely idle/blank pane OR the orchestrator moved. Scan siblings.
-  fingerprint_match=false
-  while read -r idx; do
-    [[ -z "$idx" || "$idx" == "$PANE_INDEX" ]] && continue
-    sib_buf=$(tmux capture-pane -t "${TARGET}.${idx}" -p -S -50 2>/dev/null | strip_osc_leak || echo "")
-    if grep -qE "$fingerprint_sentinel" <<< "$sib_buf"; then
-      pane_index_suggest="$idx"
-      break
-    fi
-  done < <(tmux list-panes -t "$TARGET" -F '#{pane_index}' 2>/dev/null)
+if [[ $oc_used -eq 0 ]]; then
+  fingerprint_sentinel='❯ |claude code|opencode|codex>|■■■|⠋|⠙|⠸|⠴|⠦|⠧'
+  if ! grep -qE "$fingerprint_sentinel" <<< "$buf"; then
+    fingerprint_match=false
+    while read -r idx; do
+      [[ -z "$idx" || "$idx" == "$PANE_INDEX" ]] && continue
+      sib_buf=$(tmux capture-pane -t "${TARGET}.${idx}" -p -S -50 2>/dev/null || echo "")
+      if grep -qE "$fingerprint_sentinel" <<< "$sib_buf"; then
+        pane_index_suggest="$idx"
+        break
+      fi
+    done < <(tmux list-panes -t "$TARGET" -F '#{pane_index}' 2>/dev/null)
+  fi
 fi
 
 jq -n \
