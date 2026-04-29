@@ -36,6 +36,8 @@ const OUTPUT_ALERT_MAX_CHARS = 3_000;
 const LOG_TAIL_MAX_CHARS = 5_000;
 const DASHBOARD_WIDTH = 96;
 const DASHBOARD_MAX_HEIGHT = "80%";
+const DASHBOARD_PADDING_X = 2;
+const DASHBOARD_PADDING_Y = 1;
 const DASHBOARD_TASK_ROWS = 12;
 const DASHBOARD_OUTPUT_ROWS = 16;
 const TASK_PANE_MIN_WIDTH = 30;
@@ -241,6 +243,28 @@ function padAnsi(text: string, width: number): string {
 function splitOutputLines(output: string): string[] {
 	const text = tailText(output, LOG_TAIL_MAX_CHARS).trimEnd();
 	return text.length > 0 ? text.split(/\r?\n/) : ["(no output yet)"];
+}
+
+function dashboardContentWidth(width: number): number {
+	return Math.max(1, width - 2 - DASHBOARD_PADDING_X * 2);
+}
+
+function frameDashboard(lines: string[], width: number, theme: Theme): string[] {
+	if (width < 8) return lines.map((line) => truncateToWidth(line, width, ""));
+
+	const border = (text: string) => theme.fg("borderAccent", text);
+	const contentWidth = dashboardContentWidth(width);
+	const blank = `${border("│")}${" ".repeat(width - 2)}${border("│")}`;
+	const framed = [`${border("╭")}${border("─".repeat(width - 2))}${border("╮")}`];
+
+	for (let i = 0; i < DASHBOARD_PADDING_Y; i += 1) framed.push(blank);
+	for (const line of lines) {
+		const content = padAnsi(line, contentWidth);
+		framed.push(`${border("│")}${" ".repeat(DASHBOARD_PADDING_X)}${content}${" ".repeat(DASHBOARD_PADDING_X)}${border("│")}`);
+	}
+	for (let i = 0; i < DASHBOARD_PADDING_Y; i += 1) framed.push(blank);
+	framed.push(`${border("╰")}${border("─".repeat(width - 2))}${border("╯")}`);
+	return framed.map((line) => truncateToWidth(line, width, ""));
 }
 
 function makeToolResult(text: string, details: Record<string, unknown> = {}): AgentToolResult<unknown> {
@@ -818,7 +842,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 					},
 					invalidate() {},
 					render(width: number) {
-						return renderLines(width);
+						return frameDashboard(renderLines(dashboardContentWidth(width)), width, theme);
 					},
 				};
 			},

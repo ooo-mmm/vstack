@@ -351,7 +351,7 @@ Windows note:
 - **Purpose:** Adds explicit non-blocking shell task management to Pi so long-running commands do not block the current turn.
 - **Tools:** `bg_task` for spawn/list/log/stop/clear; `bg_status` compatibility tool for PID-based status/log/stop.
 - **Commands:** `/bg`, `/bg run <cmd>`, `/bg list`, `/bg log <id>`, `/bg stop <id>`, `/bg clear`.
-- **UI:** `Ctrl+Shift+B` opens a dashboard overlay in interactive Pi; a compact task widget appears below the editor while tasks are tracked.
+- **UI:** `Ctrl+Shift+B` opens a padded, bordered dashboard overlay in interactive Pi; a compact task widget appears below the editor while tasks are tracked.
 - **Logs:** `${PI_BG_TASK_DIR:-$TMPDIR/vstack-pi-bg}`.
 - **Safety:** tasks default to a 10-minute timeout and are stopped as a process group on Unix; session shutdown terminates running tasks.
 - **More:** [pi-extensions/pi-background-tasks/README.md](pi-extensions/pi-background-tasks/README.md).
