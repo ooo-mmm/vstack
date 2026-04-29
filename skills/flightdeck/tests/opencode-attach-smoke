@@ -82,6 +82,12 @@ cleanup() {
     if kill -0 "$SERVER_PID" 2>/dev/null; then
       kill -9 -- -"$SERVER_PID" 2>/dev/null || kill -9 "$SERVER_PID" 2>/dev/null || true
     fi
+    # Reap the zombie. SERVER_PID is a child of this shell (setsid +
+    # nohup detaches the controlling terminal but doesn't change the
+    # parent), so kill -0 returns 0 for the zombie state until we
+    # wait() for it. Without the wait, the post-cleanup `kill -0`
+    # check sees the zombie and reports "still alive".
+    wait "$SERVER_PID" 2>/dev/null || true
   fi
   if [[ -n "$ALLOCATED_PORT" ]]; then
     oc_release_port "$ALLOCATED_PORT" 2>/dev/null || true
@@ -229,8 +235,17 @@ done
 if kill -0 "$SERVER_PID" 2>/dev/null; then
   kill -9 -- -"$SERVER_PID" 2>/dev/null || kill -9 "$SERVER_PID" 2>/dev/null || true
 fi
-kill -0 "$SERVER_PID" 2>/dev/null \
-  && fail "server pid=$SERVER_PID still alive after escalated kill"
+# Reap the zombie before the alive-check; otherwise kill -0 returns 0
+# for the zombie state (process exists in kernel until wait()).
+wait "$SERVER_PID" 2>/dev/null || true
+# Final check: now we expect the pid to be entirely gone.
+if kill -0 "$SERVER_PID" 2>/dev/null; then
+  # If still observable here, check /proc to distinguish zombie from running.
+  if [[ -r "/proc/$SERVER_PID/status" ]]; then
+    state=$(awk '/^State:/ {print $2}' "/proc/$SERVER_PID/status" 2>/dev/null || echo "?")
+    [[ "$state" != "Z" ]] && fail "server pid=$SERVER_PID still alive (state=$state) after escalated kill"
+  fi
+fi
 SERVER_PID=""
 oc_release_port "$ALLOCATED_PORT"
 PORTS_AFTER=$(jq -r --arg p "$ALLOCATED_PORT" 'has($p)' "$(oc_ports_file)" 2>/dev/null || echo "false")
