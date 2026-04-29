@@ -36,6 +36,8 @@ PI_BIN=$(pi_resolve_pi_bin) || fail "pi binary not found"
 note "pi=$PI_BIN ($("$PI_BIN" --version 2>&1 | head -n1))"
 PI_BRIDGE_BIN=$(pi_resolve_bridge_bin) || fail "pi-bridge CLI not found (PATH or ~/.pi/agent/bin/pi-bridge)"
 note "pi-bridge=$PI_BRIDGE_BIN"
+PI_EXT_PATH=$(pi_resolve_bridge_extension) || fail "session-bridge extension not found"
+note "extension=$PI_EXT_PATH"
 
 # --- Isolation ---------------------------------------------------------------
 TEST_TMPDIR=$(mktemp -d -t fd-pi-smoke-XXXXXX)
@@ -65,11 +67,16 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 # --- Step 1: spawn pi in isolated test tmux window ---------------------------
-note "step 1: spawn pi --no-tools --thinking off in test tmux window"
+# Explicit `-e <bridge>` because settings.json's packages array can be
+# empty (vstack install populates it, but it drifts) — pi otherwise
+# wouldn't auto-load the bridge package and discovery would never
+# find an entry. `--no-builtin-tools` keeps the test fast (no real
+# tool wiring) without disabling the extension we care about.
+note "step 1: spawn pi -e bridge --no-builtin-tools --thinking off in test tmux window"
 SESSION_NAME=$(tmux display-message -p '#S')
 LAST_IDX=$(tmux list-windows -t "$SESSION_NAME" -F '#{window_index}' | tail -1)
 # Pass PI_BRIDGE_DIR via env so the spawned pi process inherits it.
-WRAP_CMD="PI_BRIDGE_DIR=$PI_BRIDGE_DIR exec $PI_BIN --no-tools --thinking off"
+WRAP_CMD="PI_BRIDGE_DIR=$PI_BRIDGE_DIR exec $PI_BIN -e $PI_EXT_PATH --no-builtin-tools --thinking off"
 tmux new-window -d -a -t "${SESSION_NAME}:${LAST_IDX}" -n "$WINDOW_NAME" -c "$ABS_WORKTREE" "$WRAP_CMD"
 TEST_WINDOW="${SESSION_NAME}:${WINDOW_NAME}"
 note "  tmux window=$TEST_WINDOW"
@@ -97,13 +104,17 @@ session_id=$(jq -r '.data.sessionId // ""' <<< "$state" 2>/dev/null)
 note "  protocol=$proto session=$session_id"
 
 # --- Step 4: pi-bridge commands --------------------------------------------
-note "step 4: pi-bridge commands lists bridge verbs"
+# The bridge extension registers slash-commands inside the pi session
+# (e.g., bridge-status, bridge-ping). `pi-bridge commands` returns the
+# session's full command list including these — proves the extension
+# is loaded and active.
+note "step 4: pi-bridge commands lists bridge slash-commands"
 commands=$("$PI_BRIDGE_BIN" commands --pid "$PI_PID" 2>/dev/null)
-if ! grep -q 'emit\|history\|prompt\|steer' <<< "$commands"; then
-  red "  commands output:"; printf '%s\n' "$commands" | head -n 30 >&2
-  fail "expected bridge verbs (emit/history/prompt/steer) not in commands"
+if ! grep -q '"bridge-status"\|"bridge-ping"' <<< "$commands"; then
+  red "  commands output (first 40 lines):"; printf '%s\n' "$commands" | head -n 40 >&2
+  fail "expected bridge-status/bridge-ping commands not present"
 fi
-note "  bridge verbs present"
+note "  bridge-status / bridge-ping present"
 
 # --- Step 5: pi-bridge emit + history --------------------------------------
 note "step 5: pi-bridge emit 'smoke' + verify in history"

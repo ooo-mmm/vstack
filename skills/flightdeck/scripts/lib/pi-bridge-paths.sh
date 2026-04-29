@@ -57,6 +57,19 @@ pi_resolve_pi_bin() {
   return 1
 }
 
+# Resolve the path to the session-bridge extension. We pass this as
+# `-e <PATH>` to pi so the bridge auto-loads regardless of whether
+# the user's settings.json has the package registered (vstack install
+# adds it, but the array can drift).
+pi_resolve_bridge_extension() {
+  local p="$HOME/.pi/agent/packages/pi-session-bridge/extensions/session-bridge.ts"
+  if [[ -f "$p" ]]; then
+    echo "$p"
+    return 0
+  fi
+  return 1
+}
+
 # Find the latest pi bridge pid whose cwd matches the given worktree.
 # Polls `pi-bridge list --bridge-dir <dir>` (with optional override),
 # selects the entry whose cwd matches absolute worktree path. Returns

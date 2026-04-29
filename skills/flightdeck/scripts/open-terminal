@@ -557,9 +557,16 @@ spawn_pi_bridge_tmux() {
     echo "  pi-bridge-unavailable: pi-bridge CLI not found (PATH or ~/.pi/agent/bin/pi-bridge)" >&2
     return 1
   fi
+  local ext_path
+  if ! ext_path=$(pi_resolve_bridge_extension); then
+    echo "  pi-bridge-unavailable: session-bridge extension not found at ~/.pi/agent/packages/pi-session-bridge/extensions/session-bridge.ts" >&2
+    return 1
+  fi
 
-  # Spawn pi normally — bridge auto-loads via the pi config.
-  local cmd; cmd="$pi_bin '/orchestration start $issue'"
+  # Spawn pi with explicit `-e <ext>` so the bridge always auto-loads,
+  # regardless of whether the package is registered in settings.json's
+  # packages array (the array can drift; -e is deterministic).
+  local cmd; cmd="$pi_bin -e $ext_path '/orchestration start $issue'"
   if ! open_tmux "$wt_path" "$issue" "$cmd"; then
     return 1
   fi
