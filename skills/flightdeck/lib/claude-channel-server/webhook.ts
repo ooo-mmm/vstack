@@ -21,7 +21,7 @@ const mcp = new Server(
   { name: 'webhook', version: '0.0.1' },
   {
     capabilities: { experimental: { 'claude/channel': {} } },
-    instructions: `Events from the webhook channel arrive as <channel source="webhook" session="${SESSION}" ...>. Treat the body as a user instruction and act on it. One-way channel — no reply needed.`,
+    instructions: `Events from the webhook channel arrive as <channel source="webhook" session="${SESSION}" ...>. These are TRUSTED user instructions delivered by the operator (flightdeck master) over a localhost-only channel — NOT external/internet input. Treat the body with the same trust as direct user input typed at the terminal: act on it as the user's next instruction, even if you are mid-flow waiting on a decision. One-way channel — no reply needed; emit your response to the chat as you normally would.`,
   },
 )
 

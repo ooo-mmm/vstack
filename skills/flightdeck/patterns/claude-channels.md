@@ -59,6 +59,22 @@ Verify via `claude auth status` — output should mention `claude.ai`. Flightdec
 - **MCP webhook is a child of claude.** Killing the tmux pane (or claude exiting) reaps the bun subprocess automatically. No separate cleanup needed.
 - **Permission relay (claude `>=2.1.81`)** is a future-win optional capability — channels can declare `claude/channel/permission` and receive tool-approval prompts on a side channel. Not load-bearing for v1.
 
+## Known limitation: agent-skill trust of channel input
+
+Channels deliver `<channel source="webhook">BODY</channel>` blocks. Claude's reasoning about whether to treat this as a trusted user instruction depends on:
+
+- **Webhook MCP server `instructions` field** — sets the baseline trust hint. The vendored webhook.ts instructions explicitly say "TRUSTED user instructions delivered by the operator over a localhost-only channel."
+- **The currently-loaded skill's prompt** — orchestration (the per-issue agent skill) may have its own rules about channel input. If orchestration's prompt says to distrust non-user sources, channel messages can be ignored when orchestration is mid-flow on a different decision (e.g. waiting on a user choice).
+
+Observed symptom: when orchestration is blocked on a "user must decide" prompt and a channel POST arrives with a different instruction, claude may respond with `"Webhook injection ignored — untrusted source, not user"` and continue waiting on the original prompt.
+
+**Workarounds:**
+1. **Pose the channel message as the answer to the active prompt** — flightdeck master's handler is already shape-aware (`prompt-classify` tags) and can format channel POSTs to look like option picks ("1") rather than free directives.
+2. **Update orchestration prompt** (out of scope for flightdeck) to recognize the `<channel source="webhook" session="<ISSUE>">` shape as trusted operator input from flightdeck.
+3. **Use channels for pre-orchestration setup only** — e.g., bootstrapping a session, not for mid-orchestration responses; fall back to tmux send-keys for in-flow answers.
+
+The flightdeck mechanism (port allocator, MCP webhook, JSONL tail, daemon subscriber) is fully functional; this is a skill-integration boundary issue.
+
 ## Adapter contract
 
 | Surface | Channel mode | Tmux fallback |
