@@ -92,8 +92,14 @@ silence=$(awk -F'|' '{print $4}' <<< "$flags_line")
 # Capture and classify. For opencode panes with HTTP-attach metadata in
 # the registry, fetch the message log via the adapter and classify the
 # last assistant text. Drops tmux capture-pane for those panes entirely
-# — no scrollback, no OSC leak, no ANSI noise. Falls through to
-# capture-pane only when the adapter is unavailable for this pane.
+# — no scrollback, no OSC leak, no ANSI noise.
+#
+# Adapter-mode commitment: once oc-attach metadata is present, we COMMIT
+# to the adapter. curl failure surfaces as an empty buffer (classifier
+# returns idle/rendering); we never silently fall back to tmux scrollback,
+# which would re-introduce the rendered-buffer noise the adapter exists
+# to bypass. The fallback path runs only when oc-attach metadata is
+# absent (legacy session, port exhausted, adapter not wired).
 buf=""
 oc_used=0
 if [[ "$HARNESS" == "opencode" ]]; then
@@ -103,12 +109,12 @@ if [[ "$HARNESS" == "opencode" ]]; then
     oc_attach_args=$("$SCRIPT_DIR/pane-registry" oc-attach-args "$oc_issue" 2>/dev/null || echo "")
   fi
   if [[ -n "$oc_attach_args" ]]; then
+    oc_used=1
     oc_url=$(awk '{for(i=1;i<=NF;i++)if($i=="--url"){print $(i+1);exit}}' <<< "$oc_attach_args")
     oc_session=$(awk '{for(i=1;i<=NF;i++)if($i=="--session"){print $(i+1);exit}}' <<< "$oc_attach_args")
     resp=$(curl -s --max-time 5 "$oc_url/session/$oc_session/message" 2>/dev/null || echo "")
     if [[ -n "$resp" ]]; then
       buf=$(jq -r "$OC_LAST_ASSISTANT_JQ" <<< "$resp" 2>/dev/null || echo "")
-      oc_used=1
     fi
   fi
 fi

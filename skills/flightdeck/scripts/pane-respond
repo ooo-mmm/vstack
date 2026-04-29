@@ -326,11 +326,11 @@ resolve_opencode_bin() {
   return 1
 }
 
-# Run `opencode run --attach --format json -- <message>` against the
-# session. The JSON event stream is the synchronous completion signal:
-# `step_finish` with `reason: "stop"` indicates the turn finished.
-# Exit 0 on success, 5 on adapter failure (timeout, non-zero exit, no
-# completion event observed).
+# Run `opencode run --attach <URL> --session <SID> --format json "<msg>"`.
+# URL is positional after --attach (NOT a --url flag). The JSON event
+# stream is the synchronous completion signal: `step_finish` with
+# `reason: "stop"` indicates the turn finished. Exit 0 on success,
+# 5 on adapter failure (timeout, non-zero exit, no completion event).
 opencode_run_attach() {
   local url="$1" sid="$2" message="$3"
   local timeout="${FD_ATTACH_TIMEOUT:-30}"
@@ -340,12 +340,11 @@ opencode_run_attach() {
     return 5
   }
   local out rc
-  if ! out=$(timeout "$timeout" "$bin" run --attach \
-              --url "$url" --session "$sid" \
-              --format json -- "$message" 2>&1); then
+  if ! out=$(timeout "$timeout" "$bin" run --attach "$url" \
+              --session "$sid" --format json "$message" 2>&1); then
     rc=$?
     echo "Error: opencode run --attach exit=$rc (timeout=${timeout}s)" >&2
-    [[ -n "$out" ]] && echo "$out" >&2 | head -n 20
+    [[ -n "$out" ]] && printf '%s\n' "$out" | head -n 20 >&2
     return 5
   fi
   if ! grep -qE '"type"\s*:\s*"step_finish"|"reason"\s*:\s*"stop"' <<< "$out"; then

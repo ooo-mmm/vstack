@@ -167,8 +167,26 @@ detect_start_cmd() {
 }
 
 # --- Opencode HTTP-attach adapter (Phase 1) ----------------------------------
+#
+# Two-step launch (corrected from initial Phase 1 plan):
+#   Step 0: spawn `opencode serve --port <PORT>` as a detached background
+#           process (setsid + nohup). PID persisted in the spawn file.
+#   Step 1: create a session via `opencode run --attach <URL> --agent build
+#           --format json "<bootstrap>"`. Capturing the sessionID this way
+#           makes opencode's session-creation logic auto-deny the question
+#           and plan_enter/plan_exit tools (no answerable channel exists
+#           for run --attach), forcing the agent to chat-text-only output.
+#           This is intentional — modal UI prompts cannot be driven via
+#           run --attach, so we eliminate that escape hatch at session
+#           construction time.
+#   Step 2: open the visible TUI in a tmux window via `opencode attach
+#           <URL> --session <SID>`. The user sees a normal opencode TUI;
+#           the data path is the same HTTP server.
+#
+# This replaces the original single-step `--port + --prompt` shape, which
+# created sessions with `permission: null` (question tool ENABLED) — the
+# orchestration agent would then render modal UI we couldn't drive.
 
-# Resolve a real opencode binary, skipping shell aliases that mangle args.
 resolve_opencode_bin() {
   if [[ -x /usr/bin/opencode ]]; then
     echo "/usr/bin/opencode"
@@ -183,74 +201,86 @@ resolve_opencode_bin() {
   return 1
 }
 
-# Poll GET /session for a session whose `directory` matches the worktree
-# absolute path. Returns the session id on stdout when found within the
-# timeout window. Empty stdout + non-zero exit on timeout.
-discover_oc_session() {
-  local port="$1" wt_path="$2"
-  local abs_wt
-  abs_wt=$(cd "$wt_path" && pwd)
-  local deadline=$((SECONDS + 30))
+# Spawn `opencode serve --port <PORT>` detached. Polls /session until the
+# server answers (or the child exits). Echoes the server PID on success.
+start_oc_server() {
+  local bin="$1" port="$2"
+  local server_log; server_log=$(oc_server_log "$port")
+  setsid nohup "$bin" serve --port "$port" --hostname 127.0.0.1 \
+    </dev/null >>"$server_log" 2>&1 &
+  local server_pid=$!
+  local deadline=$((SECONDS + 15))
   while (( SECONDS < deadline )); do
-    local resp
-    resp=$(curl -s --max-time 5 "http://127.0.0.1:$port/session" 2>/dev/null || echo "")
-    if [[ -n "$resp" ]]; then
-      local session_id
-      session_id=$(jq -r --arg dir "$abs_wt" '
-        ( . // [] )
-        | ( if type == "object" then (.sessions // .data // .items // []) else . end )
-        | map(select((.directory // .cwd // "") == $dir))
-        | sort_by(.created_at // .createdAt // .updated_at // .updatedAt // 0)
-        | last
-        | (.id // "")
-      ' <<< "$resp" 2>/dev/null || echo "")
-      if [[ -n "$session_id" && "$session_id" != "null" ]]; then
-        echo "$session_id"
-        return 0
-      fi
+    if curl -s --max-time 2 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/session" 2>/dev/null \
+        | grep -qE '^(200|404)$'; then
+      echo "$server_pid"
+      return 0
     fi
-    sleep 1
+    if ! kill -0 "$server_pid" 2>/dev/null; then
+      echo "  oc-attach-unavailable: opencode serve exited; check $server_log" >&2
+      return 1
+    fi
+    sleep 0.5
   done
+  echo "  oc-attach-unavailable: opencode serve health timed out on port $port; check $server_log" >&2
+  kill "$server_pid" 2>/dev/null || true
   return 1
 }
 
-# Build the opencode --port spawn command. Path-resolved to a real binary;
-# args quoted for tmux send-keys. Bootstrap prompt is the orchestration
-# start so the session is queryable a few seconds after spawn.
-build_opencode_attach_cmd() {
-  local bin="$1" wt_path="$2" port="$3" issue="$4"
-  printf "%s %q --port %s --hostname 127.0.0.1 --dangerously-skip-permissions --prompt '/orchestration start %s'" \
-    "$bin" "$wt_path" "$port" "$issue"
+# Step 1: create a session via run --attach. opencode emits NDJSON events
+# on stdout; one of them carries `.sessionID`.
+create_oc_session() {
+  local bin="$1" url="$2" issue="$3"
+  local bootstrap="/orchestration start $issue"
+  local out
+  if ! out=$(timeout 60 "$bin" run --attach "$url" \
+               --agent build --format json "$bootstrap" 2>&1); then
+    echo "  oc-attach-unavailable: opencode run --attach (session create) exit non-zero" >&2
+    [[ -n "$out" ]] && printf '%s\n' "$out" | head -n 20 >&2
+    return 1
+  fi
+  local sid
+  sid=$(printf '%s\n' "$out" | jq -r 'select(.sessionID // .session_id // .sessionId) | (.sessionID // .session_id // .sessionId)' 2>/dev/null | head -n 1)
+  if [[ -z "$sid" || "$sid" == "null" ]]; then
+    echo "  oc-attach-unavailable: could not parse sessionID from create output" >&2
+    printf '%s\n' "$out" | head -n 20 >&2
+    return 1
+  fi
+  echo "$sid"
 }
 
-# Tmux-mode opencode spawn with HTTP-attach discovery. Allocates a port,
-# spawns the TUI with --port, polls /session for the matching directory,
-# and writes oc_spawn_file($issue) so pane-registry init can hydrate the
-# bridge metadata. On any failure (no opencode bin, port exhausted,
-# discovery timeout) returns non-zero so the caller can fall back to
-# legacy spawn — never silent.
+# Tmux-mode opencode spawn (two-step). Returns 0 on success with bridge
+# metadata persisted in oc_spawn_file($issue). Any failure path cleans up
+# its own resources (server kill, port release) and returns non-zero —
+# caller falls through to legacy spawn.
 spawn_oc_attach_tmux() {
   local issue="$1" wt_path="$2"
-  local bin port cmd session_id
+  local bin port server_pid sid
 
   if ! bin=$(resolve_opencode_bin); then
     echo "  oc-attach-unavailable: opencode binary not found (PATH or /usr/bin)" >&2
     return 1
   fi
-
   if ! port=$(oc_alloc_port "$issue"); then
     echo "  oc-attach-unavailable: no free port in $OC_PORT_RANGE_START-$OC_PORT_RANGE_END" >&2
     return 1
   fi
 
-  cmd=$(build_opencode_attach_cmd "$bin" "$wt_path" "$port" "$issue")
-  if ! open_tmux "$wt_path" "$issue" "$cmd"; then
+  if ! server_pid=$(start_oc_server "$bin" "$port"); then
     oc_release_port "$port"
     return 1
   fi
 
-  if ! session_id=$(discover_oc_session "$port" "$wt_path"); then
-    echo "  oc-attach-unavailable: session discovery timed out on port $port (TUI may still be running; falling back)" >&2
+  if ! sid=$(create_oc_session "$bin" "http://127.0.0.1:$port" "$issue"); then
+    kill "$server_pid" 2>/dev/null || true
+    oc_release_port "$port"
+    return 1
+  fi
+
+  local attach_cmd
+  attach_cmd=$(printf "%s attach http://127.0.0.1:%s --session %s" "$bin" "$port" "$sid")
+  if ! open_tmux "$wt_path" "$issue" "$attach_cmd"; then
+    kill "$server_pid" 2>/dev/null || true
     oc_release_port "$port"
     return 1
   fi
@@ -260,14 +290,15 @@ spawn_oc_attach_tmux() {
   abs_wt=$(cd "$wt_path" && pwd)
   jq -nc \
     --arg url "http://127.0.0.1:$port" \
-    --arg sid "$session_id" \
+    --arg sid "$sid" \
     --arg dir "$abs_wt" \
     --argjson port "$port" \
+    --argjson server_pid "$server_pid" \
     --arg ts "$(date -Iseconds)" \
-    '{url:$url, session_id:$sid, directory:$dir, port:$port, allocated_at:$ts}' \
+    '{url:$url, session_id:$sid, directory:$dir, port:$port, server_pid:$server_pid, allocated_at:$ts}' \
     > "$spawn_file"
 
-  echo "  oc-attach: port=$port session=$session_id"
+  echo "  oc-attach: port=$port session=$sid server_pid=$server_pid"
   return 0
 }
 

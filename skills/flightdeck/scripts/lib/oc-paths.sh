@@ -34,6 +34,12 @@ oc_pane_id_safe() {
 
 oc_subscriber_pid_file()  { echo "$(fd_resolve_state_dir)/fd-subscriber-$(oc_pane_id_safe "$1").pid"; }
 
+# Per-port opencode-serve subprocess paths. Server is spawned by
+# open-terminal as a detached background process (setsid+nohup) and
+# reaped on pane-registry remove (server_pid is persisted in the spawn
+# file at allocation time; remove reads it and kills).
+oc_server_log()      { echo "$(fd_resolve_state_dir)/oc-serve-$1.log"; }
+
 # Wake-events log: subscribers (Phase 1+) append normalized turn-end
 # events here; daemon's main loop drains under SESSION_LOCK and routes
 # canonical-tag entries through wake_master. Per-session, keyed.

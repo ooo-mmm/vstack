@@ -189,11 +189,20 @@ case "$ACTION" in
     [[ -z "$ISSUE" ]] && { echo "Usage: remove <ISSUE>" >&2; exit 2; }
     # Release any opencode adapter resources owned by this issue before
     # dropping the registry entry. Idempotent — missing fields are no-ops.
+    # Server pid lives in the spawn file (write-once at allocation),
+    # NOT in the registry, so we read it from there.
+    _oc_spawn_file="$(oc_spawn_file "$ISSUE")"
+    if [[ -f "$_oc_spawn_file" ]]; then
+      _oc_server_pid=$(jq -r '.server_pid // empty' "$_oc_spawn_file" 2>/dev/null || echo "")
+      if [[ "$_oc_server_pid" =~ ^[1-9][0-9]*$ ]] && kill -0 "$_oc_server_pid" 2>/dev/null; then
+        kill "$_oc_server_pid" 2>/dev/null || true
+      fi
+    fi
     _oc_port=$("$FD_STATE" get ".issues[\"$ISSUE\"].oc_port // empty" 2>/dev/null | tr -d '"')
     if [[ -n "$_oc_port" && "$_oc_port" != "null" ]]; then
       oc_release_port "$_oc_port" 2>/dev/null || true
     fi
-    rm -f "$(oc_spawn_file "$ISSUE")" 2>/dev/null || true
+    rm -f "$_oc_spawn_file" 2>/dev/null || true
     "$FD_STATE" set ".issues" "(.issues | del(.[\"$ISSUE\"]))"
     ;;
 

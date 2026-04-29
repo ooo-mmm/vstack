@@ -865,7 +865,10 @@ run_loop() {
     INNER_IDS+=("$id")
     PANE_HARNESS[$id]="${INNER_HARNESS_ARR[$idx]:-$HARNESS}"
     OC_PANE_TARGET[$id]="$t"
-    (( idx++ ))
+    # Pre-increment: returns the new value (always >= 1), so set -e
+    # doesn't fire on the first iteration the way (( idx++ )) does
+    # (post-increment returns 0 on the initial idx=0).
+    (( ++idx ))
   done
 
   # Spawn opencode subscribers for panes with HTTP-attach metadata in the
