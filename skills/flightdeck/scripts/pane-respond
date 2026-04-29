@@ -19,9 +19,18 @@
 # Always targets an explicit pane index. Harness-aware: option-pick mechanics differ
 # across harnesses. The --harness flag selects the adapter; default is claude.
 #   claude   — (N-1) Down then Enter. Numeric digits are buffered as text.
-#   opencode — bare digit shortcut. Pre-clear input box (Ctrl-A Ctrl-K)
-#              first so any stray input (e.g., OSC palette response leak)
-#              doesn't combine with the digit. opencode auto-submits.
+#   opencode — primary path is `opencode run --attach --format json` over the
+#              HTTP-attach adapter (see open-terminal). Modes route as:
+#                payload         → message arg
+#                --option N      → bare digit "N" (LLM interprets contextually)
+#                --option-multi  → comma-spaced digits as text ("1, 3")
+#                --keys          → REJECTED unless --keys-allow-tmux
+#              When the pane has no oc-attach metadata in pane-registry
+#              (legacy session, opencode unavailable, port exhausted),
+#              falls back to generic tmux paste-buffer with a logged
+#              `oc-attach-unavailable` notice. --option / --option-multi
+#              are unsupported in fallback for opencode (no digit-key
+#              adapter; use payload mode instead).
 #
 # Usage:
 #   pane-respond <pane-target> <payload> [--tag <tag>] [--no-enter] [--no-clear]
@@ -40,12 +49,13 @@
 #   --harness <name>     Harness adapter for option-pick mode. Default: claude.
 #   --no-enter           Send free-text without trailing Enter (for partial input).
 #   --no-clear           Skip bell clearing (for batched sends).
-#   --allow-interrupt    Permit Escape in --keys for opencode (default: rejected).
-#                        opencode interprets Escape as process-interrupt, which
-#                        will abort an in-flight orchestration step.
+#   --keys-allow-tmux    For opencode, permit --keys to send via tmux send-keys
+#                        instead of erroring. Use only for true modal cases
+#                        (TUI dialogs the HTTP-attach adapter can't reach).
 #   --confirm-advanced   After sending, poll the pane until the prompt sentinel
-#                        is gone (or 8s timeout). Returns non-zero on timeout
-#                        so callers can recover. Recommended for opencode.
+#                        is gone (or 8s timeout). Tmux fallback path only —
+#                        opencode adapter mode is naturally synchronous.
+#                        Returns non-zero on timeout so callers can recover.
 #
 # Exit codes:
 #   0 - sent successfully (and prompt advanced if --confirm-advanced was set)
@@ -53,6 +63,7 @@
 #   2 - bad arguments / not in tmux
 #   3 - busy: pane shows active spinner; caller should wait and retry
 #   4 - confirm-advanced timed out; prompt sentinel still present after 8s
+#   5 - opencode adapter call failed (timeout / non-zero exit / no completion)
 set -euo pipefail
 
 if [[ -z "${TMUX:-}" ]]; then
@@ -78,7 +89,7 @@ TAG=""
 HARNESS="claude"
 SEND_ENTER=1
 CLEAR_BELL=1
-ALLOW_INTERRUPT=0
+KEYS_ALLOW_TMUX=0
 CONFIRM_ADVANCED=0
 
 # Optional positional payload (must precede flags).
@@ -101,7 +112,7 @@ while [[ $# -gt 0 ]]; do
     --harness=*) HARNESS="${1#--harness=}"; shift ;;
     --no-enter) SEND_ENTER=0; shift ;;
     --no-clear) CLEAR_BELL=0; shift ;;
-    --allow-interrupt) ALLOW_INTERRUPT=1; shift ;;
+    --keys-allow-tmux) KEYS_ALLOW_TMUX=1; shift ;;
     --confirm-advanced) CONFIRM_ADVANCED=1; shift ;;
     *) echo "Unknown flag: $1" >&2; exit 2 ;;
   esac
@@ -186,27 +197,13 @@ claude_select_option() {
   tmux send-keys -t "$pane" Enter
 }
 
-# opencode TUI accepts a bare digit as an option shortcut when the input
-# box is empty. We pre-clear via readline-style Ctrl-A (move-to-start) +
-# Ctrl-K (kill-to-end) so any stray input (e.g., the OSC palette response
-# leak documented in pane-poll's strip filter) doesn't combine with the
-# digit and turn it into typed text. Then send the digit; opencode
-# auto-submits — no trailing Enter required and adding one could fire on
-# the next prompt.
-opencode_select_option() {
-  local pane="$1" n="$2"
-  tmux send-keys -t "$pane" C-a C-k
-  tmux send-keys -t "$pane" "$n"
-}
-
 select_option_for_harness() {
   local harness="$1" pane="$2" n="$3"
   case "$harness" in
-    claude)   claude_select_option "$pane" "$n" ;;
-    opencode) opencode_select_option "$pane" "$n" ;;
+    claude) claude_select_option "$pane" "$n" ;;
     *)
-      echo "Error: --option not yet supported for harness '$harness'" >&2
-      echo "       Add an adapter in pane-respond before using." >&2
+      echo "Error: --option not supported for harness '$harness' in tmux fallback" >&2
+      echo "       Use payload mode (free-text digit) instead, or add an adapter." >&2
       return 1
       ;;
   esac
@@ -269,30 +266,24 @@ send_keys_sequence() {
       echo "Error: unrecognized key '$k' (allowed: Up Down Left Right Enter Tab Space Escape BSpace)" >&2
       return 1
     fi
-    # opencode interprets Escape as process-interrupt — sending it during
-    # an in-flight orchestration step aborts the running work. Reject by
-    # default; --allow-interrupt opts in for the rare legitimate case.
-    if [[ "$HARNESS" == "opencode" && "$k" == "Escape" && $ALLOW_INTERRUPT -eq 0 ]]; then
-      echo "Error: refusing to send Escape to opencode pane (treated as process-interrupt)." >&2
-      echo "       Pass --allow-interrupt if aborting the in-flight step is intentional." >&2
-      return 1
-    fi
     tmux send-keys -t "$pane" "$k"
   done
 }
 
 # Pre-send busy check — refuse if the pane shows an active spinner row.
 # Sending into a busy pane is the cause of the 'queued but no advance'
-# class of opencode mishaps from Round 4. Caller waits and retries.
+# class of mishaps. Caller waits and retries.
+#
+# Tmux fallback path only. Adapter-mode opencode bypasses this entirely
+# because run --attach is naturally synchronous and queues correctly.
 pane_is_busy() {
   local pane="$1" harness="$2"
   case "$harness" in
-    opencode|claude)
-      # Last 3 lines should reach the input row. opencode shows ■■■ or
-      # spinner glyphs while the model is mid-response; Claude shows ⠋⠙⠸⠴⠦⠧⠇⠏.
+    claude)
+      # Claude's spinner glyphs: ⠋⠙⠸⠴⠦⠧⠇⠏ on the input row.
       local tail
       tail=$(tmux capture-pane -t "$pane" -p 2>/dev/null | tail -n 3)
-      if grep -qE '■■■|⠋|⠙|⠸|⠴|⠦|⠧|⠇|⠏' <<< "$tail"; then
+      if grep -qE '⠋|⠙|⠸|⠴|⠦|⠧|⠇|⠏' <<< "$tail"; then
         return 0
       fi
       return 1
@@ -319,42 +310,122 @@ verify_prompt_advanced() {
   return 4
 }
 
+# --- Opencode HTTP-attach adapter (Phase 1) ---------------------------------
+# Resolve a real opencode binary, skipping aliases that mangle args.
+resolve_opencode_bin() {
+  if [[ -x /usr/bin/opencode ]]; then
+    echo "/usr/bin/opencode"
+    return 0
+  fi
+  local p
+  p=$(type -P opencode 2>/dev/null || true)
+  if [[ -n "$p" && -x "$p" ]]; then
+    echo "$p"
+    return 0
+  fi
+  return 1
+}
+
+# Run `opencode run --attach --format json -- <message>` against the
+# session. The JSON event stream is the synchronous completion signal:
+# `step_finish` with `reason: "stop"` indicates the turn finished.
+# Exit 0 on success, 5 on adapter failure (timeout, non-zero exit, no
+# completion event observed).
+opencode_run_attach() {
+  local url="$1" sid="$2" message="$3"
+  local timeout="${FD_ATTACH_TIMEOUT:-30}"
+  local bin
+  bin=$(resolve_opencode_bin) || {
+    echo "Error: opencode binary not found" >&2
+    return 5
+  }
+  local out rc
+  if ! out=$(timeout "$timeout" "$bin" run --attach \
+              --url "$url" --session "$sid" \
+              --format json -- "$message" 2>&1); then
+    rc=$?
+    echo "Error: opencode run --attach exit=$rc (timeout=${timeout}s)" >&2
+    [[ -n "$out" ]] && echo "$out" >&2 | head -n 20
+    return 5
+  fi
+  if ! grep -qE '"type"\s*:\s*"step_finish"|"reason"\s*:\s*"stop"' <<< "$out"; then
+    echo "Warning: step_finish reason=stop not observed in event stream (continuing on exit=0)" >&2
+  fi
+  return 0
+}
+
 # --- Dispatch ---------------------------------------------------------------
 
-# Pre-send busy check (opencode is most affected; harmless on others).
-if pane_is_busy "$TARGET" "$HARNESS"; then
-  echo "Error: pane $TARGET shows active spinner; refusing to send. Wait and retry." >&2
-  exit 3
+# Opencode adapter path: when the pane has oc-attach metadata in the
+# registry, route ALL non-tmux modes through `opencode run --attach`.
+# --keys is rejected unless --keys-allow-tmux opts into tmux fallback.
+OC_ADAPTER_USED=0
+if [[ "$HARNESS" == "opencode" ]]; then
+  oc_issue=$("$SCRIPT_DIR/pane-registry" find-by-pane "$TARGET" 2>/dev/null || echo "")
+  oc_attach_args=""
+  if [[ -n "$oc_issue" ]]; then
+    oc_attach_args=$("$SCRIPT_DIR/pane-registry" oc-attach-args "$oc_issue" 2>/dev/null || echo "")
+  fi
+  if [[ -n "$oc_attach_args" ]]; then
+    if [[ "$MODE" == "keys" && $KEYS_ALLOW_TMUX -eq 0 ]]; then
+      echo "Error: --keys not supported for opencode adapter." >&2
+      echo "       Pass --keys-allow-tmux to send via tmux send-keys (true modal cases only)." >&2
+      exit 1
+    fi
+    if [[ "$MODE" != "keys" ]]; then
+      oc_url=$(awk '{for(i=1;i<=NF;i++)if($i=="--url"){print $(i+1);exit}}' <<< "$oc_attach_args")
+      oc_session=$(awk '{for(i=1;i<=NF;i++)if($i=="--session"){print $(i+1);exit}}' <<< "$oc_attach_args")
+      case "$MODE" in
+        payload)      message="$PAYLOAD" ;;
+        option)       message="$OPTION_N" ;;
+        option-multi) message=$(echo "$OPTION_MULTI_CSV" | sed 's/,/, /g') ;;
+      esac
+      if ! opencode_run_attach "$oc_url" "$oc_session" "$message"; then
+        exit 5
+      fi
+      OC_ADAPTER_USED=1
+    fi
+  else
+    echo "Note: oc-attach-unavailable for $TARGET (no registry metadata); using tmux fallback" >&2
+  fi
 fi
 
-case "$MODE" in
-  option)
-    select_option_for_harness "$HARNESS" "$TARGET" "$OPTION_N"
-    ;;
-  option-multi)
-    select_option_multi_for_harness "$HARNESS" "$TARGET" "$OPTION_MULTI_CSV"
-    ;;
-  keys)
-    send_keys_sequence "$TARGET" "$KEYS_CSV"
-    ;;
-  payload)
-    buf_name="flightdeck-respond-$$"
-    printf '%s' "$PAYLOAD" | tmux load-buffer -b "$buf_name" -
-    tmux paste-buffer -b "$buf_name" -t "$TARGET" -p
-    tmux delete-buffer -b "$buf_name" 2>/dev/null || true
-    if [[ $SEND_ENTER -eq 1 ]]; then
-      tmux send-keys -t "$TARGET" Enter
-    fi
-    ;;
-esac
+if [[ $OC_ADAPTER_USED -eq 0 ]]; then
+  # Pre-send busy check (claude only; opencode adapter path bypassed above).
+  if pane_is_busy "$TARGET" "$HARNESS"; then
+    echo "Error: pane $TARGET shows active spinner; refusing to send. Wait and retry." >&2
+    exit 3
+  fi
 
-# Post-send verification: ensure the prompt advanced. Returns exit 4 on
-# timeout so callers can recover (escalate to user, retry, or pick a
-# different option).
-if [[ $CONFIRM_ADVANCED -eq 1 ]]; then
-  if ! verify_prompt_advanced "$TARGET"; then
-    echo "Error: prompt sentinel still present 8s after send to $TARGET; advance not confirmed." >&2
-    exit 4
+  case "$MODE" in
+    option)
+      select_option_for_harness "$HARNESS" "$TARGET" "$OPTION_N"
+      ;;
+    option-multi)
+      select_option_multi_for_harness "$HARNESS" "$TARGET" "$OPTION_MULTI_CSV"
+      ;;
+    keys)
+      send_keys_sequence "$TARGET" "$KEYS_CSV"
+      ;;
+    payload)
+      buf_name="flightdeck-respond-$$"
+      printf '%s' "$PAYLOAD" | tmux load-buffer -b "$buf_name" -
+      tmux paste-buffer -b "$buf_name" -t "$TARGET" -p
+      tmux delete-buffer -b "$buf_name" 2>/dev/null || true
+      if [[ $SEND_ENTER -eq 1 ]]; then
+        tmux send-keys -t "$TARGET" Enter
+      fi
+      ;;
+  esac
+
+  # Post-send verification (tmux fallback only): poll the pane until the
+  # prompt sentinel is gone. Adapter mode is naturally synchronous so
+  # this check is skipped.
+  if [[ $CONFIRM_ADVANCED -eq 1 ]]; then
+    if ! verify_prompt_advanced "$TARGET"; then
+      echo "Error: prompt sentinel still present 8s after send to $TARGET; advance not confirmed." >&2
+      exit 4
+    fi
   fi
 fi
 
