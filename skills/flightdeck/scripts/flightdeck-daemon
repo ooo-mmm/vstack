@@ -736,6 +736,11 @@ oc_subscriber_loop() {
   # next tick instead.
   set +e
   set +o pipefail
+  # Close inherited FDs that hold daemon-level locks (PID_LOCK on
+  # FD 200, etc.). Subscribers shouldn't keep those locks alive past
+  # the daemon's lifetime — otherwise stop+restart races for several
+  # seconds while subscribers reap.
+  exec 200<&- 2>/dev/null || true
   local pane_id="$1" oc_url="$2" session_id="$3" parent_pid="$4"
   local last_hash=""
   local sub_log; sub_log="${LOG}.oc-sub-$(oc_pane_id_safe "$pane_id")"
@@ -801,6 +806,7 @@ oc_subscriber_loop() {
 cc_subscriber_loop() {
   set +e
   set +o pipefail
+  exec 200<&- 2>/dev/null || true
   local pane_id="$1" transcript="$2" parent_pid="$3"
   local last_hash=""
   local sub_log; sub_log="${LOG}.cc-sub-$(cc_pane_id_safe "$pane_id")"
@@ -894,6 +900,7 @@ resolve_cc_meta() {
 pi_subscriber_loop() {
   set +e
   set +o pipefail
+  exec 200<&- 2>/dev/null || true
   local pane_id="$1" pi_pid="$2" parent_pid="$3"
   local last_hash=""
   local sub_log; sub_log="${LOG}.pi-sub-$(pi_pane_id_safe "$pane_id")"
@@ -1492,13 +1499,15 @@ case "$ACTION" in
 
     exec 200>"$PID_LOCK"
     # Retry briefly: a recently-stopped daemon's flock takes a moment to
-    # release after SIGKILL (kernel FD cleanup is async). Without this
-    # retry, an immediate restart after `stop` raced and failed even
-    # though the prior daemon was fully gone.
+    # release after SIGKILL (kernel FD cleanup is async). Subscribers
+    # are spawned as backgrounded subshells that inherit FD 200 — they
+    # close it on entry now, but pre-existing daemons (or daemons
+    # killed before the FD-close fix landed) may still hold it.
+    # 30 × 0.2s = 6s grace covers near-all cases.
     _flock_attempts=0
     while ! flock -n 200; do
       _flock_attempts=$(( _flock_attempts + 1 ))
-      if (( _flock_attempts >= 10 )); then
+      if (( _flock_attempts >= 30 )); then
         echo "daemon already running for session=$SESSION_NAME (lock held after ${_flock_attempts} retries)" >&2
         exit 1
       fi
