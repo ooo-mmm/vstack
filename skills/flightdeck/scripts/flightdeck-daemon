@@ -1002,8 +1002,10 @@ cx_subscriber_loop() {
     "$(date -Iseconds)" "$pane_id" "$cx_url" "$thread_id" "$parent_pid" \
     >> "$sub_log" 2>/dev/null || true
 
-  cx_bridge_run stream --url "$cx_url" 2>/dev/null \
-    | jq --unbuffered -c --arg tid "$thread_id" 'select(.method == "thread/status/changed" and (.params.threadId // .params.thread_id) == $tid and ((.params.status // "") | tostring | test("idle"; "i")))' \
+  # Capture bridge + jq stderr to the per-pane log for diagnosis.
+  cx_bridge_run stream --url "$cx_url" 2>>"$sub_log" \
+    | tee -a "$sub_log.raw" \
+    | jq --unbuffered -c --arg tid "$thread_id" 'select(.method == "thread/status/changed" and (.params.threadId // .params.thread_id) == $tid and ((.params.status // "") | tostring | test("idle"; "i")))' 2>>"$sub_log" \
     | while IFS= read -r line; do
       if ! kill -0 "$parent_pid" 2>/dev/null; then exit 0; fi
       [[ -z "$line" ]] && continue
