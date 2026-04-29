@@ -142,23 +142,43 @@ tmux new-window -d -a -t "${SESSION_NAME}:${LAST_IDX}" -n "$WINDOW_NAME" -c "$AB
 TEST_WINDOW="${SESSION_NAME}:${WINDOW_NAME}"
 note "  tmux window=$TEST_WINDOW"
 
-# Pre-warm the trust prompt for the dangerous-channels flag. Sends y +
-# Enter after a short delay; harmless if the prompt isn't present.
-( sleep 4
+# Pre-warm the trust prompt for the dangerous-channels flag. Multiple
+# delays + key variants — first launch shows the prompt, subsequent
+# launches don't, so we just send everything; spurious keys are
+# harmless once we're past the prompt (claude eats stray Enter on the
+# input box).
+( sleep 3
+  tmux send-keys -t "$TEST_WINDOW" Enter 2>/dev/null || true
+  sleep 1
   tmux send-keys -t "$TEST_WINDOW" "y" 2>/dev/null || true
   sleep 0.3
+  tmux send-keys -t "$TEST_WINDOW" Enter 2>/dev/null || true
+  sleep 5
   tmux send-keys -t "$TEST_WINDOW" Enter 2>/dev/null || true
 ) &
 disown 2>/dev/null || true
 
 # --- Step 3: wait for transcript to exist ------------------------------------
+# 180s — claude TUI startup with --mcp-config + dangerous-channels can
+# be slow on first launch (MCP subprocess spawn, trust prompt, model
+# load). Was 60s in run-10; insufficient.
 note "step 3: wait for transcript to be created"
-deadline=$((SECONDS + 60))
+deadline=$((SECONDS + 180))
 while (( SECONDS < deadline )); do
   if [[ -f "$TRANSCRIPT" ]]; then break; fi
-  sleep 1
+  sleep 2
 done
-[[ -f "$TRANSCRIPT" ]] || fail "transcript not created within 60s at $TRANSCRIPT"
+if [[ ! -f "$TRANSCRIPT" ]]; then
+  red "  transcript not created. tmux pane contents:"
+  tmux capture-pane -t "$TEST_WINDOW" -p 2>/dev/null | tail -n 50 >&2 || true
+  red "  expected projects dir contents:"
+  ls -la "$(dirname "$TRANSCRIPT")" 2>/dev/null >&2 || red "  (dir does not exist)"
+  red "  channel port listening?"
+  ss -ltn "sport = :$ALLOCATED_PORT" 2>/dev/null >&2 || true
+  red "  bun webhook process?"
+  pgrep -af "bun.*webhook.ts" 2>/dev/null >&2 || red "  (no bun webhook process found)"
+  fail "transcript not created within 180s at $TRANSCRIPT"
+fi
 note "  transcript present"
 
 # --- Step 4: wait for first assistant turn (READY-CHECK reply) --------------

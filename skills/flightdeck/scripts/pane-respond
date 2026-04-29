@@ -73,6 +73,14 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Source adapter helpers unconditionally (top-level scope) so any
+# harness branch below has access to shared utility functions like
+# oc_issue_from_pane_target, oc_attach_args_from_spawn, cc_*.
+# shellcheck source=lib/oc-paths.sh
+source "$SCRIPT_DIR/lib/oc-paths.sh"
+# shellcheck source=lib/cc-channel-paths.sh
+source "$SCRIPT_DIR/lib/cc-channel-paths.sh"
+
 TARGET="${1:-}"
 if [[ -z "$TARGET" ]]; then
   echo "Usage: pane-respond <pane-target> <payload>|--option N|--keys k1,k2,... [flags]" >&2
@@ -407,10 +415,6 @@ opencode_run_attach() {
 OC_ADAPTER_USED=0
 CC_ADAPTER_USED=0
 if [[ "$HARNESS" == "opencode" ]]; then
-  # Source helpers for spawn-file fallback (oc_attach_args_from_spawn,
-  # oc_issue_from_pane_target).
-  # shellcheck source=lib/oc-paths.sh
-  source "$SCRIPT_DIR/lib/oc-paths.sh"
   oc_issue=$("$SCRIPT_DIR/pane-registry" find-by-pane "$TARGET" 2>/dev/null || echo "")
   oc_attach_args=""
   if [[ -n "$oc_issue" ]]; then
@@ -454,8 +458,6 @@ fi
 # All non-tmux modes route through the channel; --keys is rejected
 # unless --keys-allow-tmux. Symmetric with the opencode block above.
 if [[ "$HARNESS" == "claude" && $OC_ADAPTER_USED -eq 0 ]]; then
-  # shellcheck source=lib/cc-channel-paths.sh
-  source "$SCRIPT_DIR/lib/cc-channel-paths.sh"
   cc_issue=$("$SCRIPT_DIR/pane-registry" find-by-pane "$TARGET" 2>/dev/null || echo "")
   cc_args=""
   if [[ -n "$cc_issue" ]]; then
