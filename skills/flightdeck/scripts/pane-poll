@@ -108,6 +108,15 @@ if [[ "$HARNESS" == "opencode" ]]; then
   if [[ -n "$oc_issue" ]]; then
     oc_attach_args=$("$SCRIPT_DIR/pane-registry" oc-attach-args "$oc_issue" 2>/dev/null || echo "")
   fi
+  # Fallback: registry init may not have run yet for this pane. Derive
+  # issue from the window name and read the spawn file directly so the
+  # adapter still drives polling. Symmetric with pane-respond.
+  if [[ -z "$oc_attach_args" ]]; then
+    derived_issue=$(oc_issue_from_pane_target "$PANE_TARGET")
+    if [[ -n "$derived_issue" ]]; then
+      oc_attach_args=$(oc_attach_args_from_spawn "$derived_issue" 2>/dev/null || echo "")
+    fi
+  fi
   if [[ -n "$oc_attach_args" ]]; then
     oc_used=1
     oc_url=$(awk '{for(i=1;i<=NF;i++)if($i=="--url"){print $(i+1);exit}}' <<< "$oc_attach_args")

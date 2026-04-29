@@ -195,7 +195,17 @@ case "$ACTION" in
     if [[ -f "$_oc_spawn_file" ]]; then
       _oc_server_pid=$(jq -r '.server_pid // empty' "$_oc_spawn_file" 2>/dev/null || echo "")
       if [[ "$_oc_server_pid" =~ ^[1-9][0-9]*$ ]] && kill -0 "$_oc_server_pid" 2>/dev/null; then
-        kill "$_oc_server_pid" 2>/dev/null || true
+        # Kill the whole process group (server was spawned via setsid →
+        # PGID == server PID) so any forked children die with it. Then
+        # escalate to KILL after a brief grace if TERM was ignored.
+        kill -- -"$_oc_server_pid" 2>/dev/null || kill "$_oc_server_pid" 2>/dev/null || true
+        for _i in 1 2 3 4 5; do
+          kill -0 "$_oc_server_pid" 2>/dev/null || break
+          sleep 0.2
+        done
+        if kill -0 "$_oc_server_pid" 2>/dev/null; then
+          kill -9 -- -"$_oc_server_pid" 2>/dev/null || kill -9 "$_oc_server_pid" 2>/dev/null || true
+        fi
       fi
     fi
     _oc_port=$("$FD_STATE" get ".issues[\"$ISSUE\"].oc_port // empty" 2>/dev/null | tr -d '"')

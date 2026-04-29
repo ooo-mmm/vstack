@@ -899,11 +899,15 @@ run_loop() {
   #     terminates the daemon, not just runs handler then continues).
   # Both use non-blocking SESSION_LOCK to avoid self-deadlock if signal fires
   # while we already hold the lock.
+  # set -u guards: when run_loop aborts before HEARTBEAT_FILE /
+  # WAKE_EVENTS_LOG are bound, the trap fires under set -u and
+  # `unbound variable` masks the real failure. Use defaults so the trap
+  # is always safe to run.
   _on_exit() {
-    kill_all_oc_subscribers
-    rm -f "$PID_FILE" "$HEARTBEAT_FILE"
-    rm -f "$WAKE_EVENTS_LOG"
-    locked_state_cleanup --nonblock
+    kill_all_oc_subscribers || true
+    rm -f "${PID_FILE:-}" "${HEARTBEAT_FILE:-}" 2>/dev/null || true
+    rm -f "${WAKE_EVENTS_LOG:-}" 2>/dev/null || true
+    locked_state_cleanup --nonblock || true
     log stop "pid=$$"
   }
   trap '_on_exit' EXIT
@@ -938,14 +942,17 @@ run_loop() {
       log session-gone "session_id=$SESSION_ID gone; exiting"
       break
     fi
+
+    # Refresh pane→target/window cache once per tick BEFORE any cache-
+    # backed pane_alive checks. The previous order called pane_alive on
+    # the master before the first cache populate, so an empty cache made
+    # the first tick always log master-gone and exit.
+    refresh_pane_cache
+
     if ! pane_alive "$master_id"; then
       log master-gone "master $master_id gone; exiting"
       break
     fi
-
-    # Refresh pane→target/window cache once per tick. Replaces O(N) per-pane
-    # tmux list-panes invocations with one tick-level fetch.
-    refresh_pane_cache
 
     clear_stale_wake_pending "$master_id" NOTIFIED_HASH LAST_EVENT_KEY LAST_BELL_HASH
 

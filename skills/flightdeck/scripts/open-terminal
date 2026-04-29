@@ -201,13 +201,20 @@ resolve_opencode_bin() {
   return 1
 }
 
-# Spawn `opencode serve --port <PORT>` detached. Polls /session until the
-# server answers (or the child exits). Echoes the server PID on success.
+# Spawn `opencode serve --port <PORT>` detached, with cwd=worktree so
+# the server's session metadata reports the correct project root (NOT
+# wherever open-terminal happened to be invoked from). Polls /session
+# until the server answers (or the child exits). Echoes the server PID
+# on success.
 start_oc_server() {
-  local bin="$1" port="$2"
+  local bin="$1" port="$2" wt_path="$3"
   local server_log; server_log=$(oc_server_log "$port")
-  setsid nohup "$bin" serve --port "$port" --hostname 127.0.0.1 \
-    </dev/null >>"$server_log" 2>&1 &
+  # Subshell: cd into the worktree before exec so the server inherits
+  # the worktree as its cwd. setsid puts the server in its own pgroup
+  # (PGID == server PID when leader) so cleanup can reap the whole
+  # tree via `kill -- -<pid>`.
+  ( cd "$wt_path" && setsid nohup "$bin" serve --port "$port" --hostname 127.0.0.1 \
+      </dev/null >>"$server_log" 2>&1 ) &
   local server_pid=$!
   local deadline=$((SECONDS + 15))
   while (( SECONDS < deadline )); do
@@ -223,17 +230,19 @@ start_oc_server() {
     sleep 0.5
   done
   echo "  oc-attach-unavailable: opencode serve health timed out on port $port; check $server_log" >&2
-  kill "$server_pid" 2>/dev/null || true
+  kill -- -"$server_pid" 2>/dev/null || kill "$server_pid" 2>/dev/null || true
   return 1
 }
 
 # Step 1: create a session via run --attach. opencode emits NDJSON events
-# on stdout; one of them carries `.sessionID`.
+# on stdout; one of them carries `.sessionID`. Run from the worktree so
+# the session's cwd field reflects the worktree, not wherever
+# open-terminal lives.
 create_oc_session() {
-  local bin="$1" url="$2" issue="$3"
+  local bin="$1" url="$2" issue="$3" wt_path="$4"
   local bootstrap="/orchestration start $issue"
   local out
-  if ! out=$(timeout 60 "$bin" run --attach "$url" \
+  if ! out=$( cd "$wt_path" && timeout 60 "$bin" run --attach "$url" \
                --agent build --format json "$bootstrap" 2>&1); then
     echo "  oc-attach-unavailable: opencode run --attach (session create) exit non-zero" >&2
     [[ -n "$out" ]] && printf '%s\n' "$out" | head -n 20 >&2
@@ -266,13 +275,19 @@ spawn_oc_attach_tmux() {
     return 1
   fi
 
-  if ! server_pid=$(start_oc_server "$bin" "$port"); then
+  if ! server_pid=$(start_oc_server "$bin" "$port" "$wt_path"); then
     oc_release_port "$port"
     return 1
   fi
 
-  if ! sid=$(create_oc_session "$bin" "http://127.0.0.1:$port" "$issue"); then
-    kill "$server_pid" 2>/dev/null || true
+  # Update the ports allocator entry with the actual server PID. Without
+  # this, oc_alloc_port's sweep records the launcher's $$, which dies as
+  # soon as open-terminal exits — next sweep then drops the entry while
+  # the opencode serve process is still alive on that port.
+  oc_register_port_pid "$port" "$server_pid"
+
+  if ! sid=$(create_oc_session "$bin" "http://127.0.0.1:$port" "$issue" "$wt_path"); then
+    kill -- -"$server_pid" 2>/dev/null || kill "$server_pid" 2>/dev/null || true
     oc_release_port "$port"
     return 1
   fi
@@ -280,7 +295,7 @@ spawn_oc_attach_tmux() {
   local attach_cmd
   attach_cmd=$(printf "%s attach http://127.0.0.1:%s --session %s" "$bin" "$port" "$sid")
   if ! open_tmux "$wt_path" "$issue" "$attach_cmd"; then
-    kill "$server_pid" 2>/dev/null || true
+    kill -- -"$server_pid" 2>/dev/null || kill "$server_pid" 2>/dev/null || true
     oc_release_port "$port"
     return 1
   fi

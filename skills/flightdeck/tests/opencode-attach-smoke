@@ -72,7 +72,16 @@ cleanup() {
     tmux kill-window -t "$TEST_WINDOW" 2>/dev/null || true
   fi
   if [[ -n "$SERVER_PID" ]] && kill -0 "$SERVER_PID" 2>/dev/null; then
-    kill "$SERVER_PID" 2>/dev/null || true
+    # opencode serve forks; kill the whole pgroup (PGID == SERVER_PID
+    # because we used setsid). Escalate to KILL if TERM is ignored.
+    kill -- -"$SERVER_PID" 2>/dev/null || kill "$SERVER_PID" 2>/dev/null || true
+    for _i in 1 2 3 4 5; do
+      kill -0 "$SERVER_PID" 2>/dev/null || break
+      sleep 0.2
+    done
+    if kill -0 "$SERVER_PID" 2>/dev/null; then
+      kill -9 -- -"$SERVER_PID" 2>/dev/null || kill -9 "$SERVER_PID" 2>/dev/null || true
+    fi
   fi
   if [[ -n "$ALLOCATED_PORT" ]]; then
     oc_release_port "$ALLOCATED_PORT" 2>/dev/null || true
@@ -211,7 +220,17 @@ note "  last_text length=${#LAST_TEXT}"
 note "step 8: kill TUI window + server + release port"
 tmux kill-window -t "$TEST_WINDOW" 2>/dev/null || true
 TEST_WINDOW=""
-kill "$SERVER_PID" 2>/dev/null || true
+# Reap pgroup; opencode serve forks. Escalate to KILL on stragglers.
+kill -- -"$SERVER_PID" 2>/dev/null || kill "$SERVER_PID" 2>/dev/null || true
+for _i in 1 2 3 4 5; do
+  kill -0 "$SERVER_PID" 2>/dev/null || break
+  sleep 0.2
+done
+if kill -0 "$SERVER_PID" 2>/dev/null; then
+  kill -9 -- -"$SERVER_PID" 2>/dev/null || kill -9 "$SERVER_PID" 2>/dev/null || true
+fi
+kill -0 "$SERVER_PID" 2>/dev/null \
+  && fail "server pid=$SERVER_PID still alive after escalated kill"
 SERVER_PID=""
 oc_release_port "$ALLOCATED_PORT"
 PORTS_AFTER=$(jq -r --arg p "$ALLOCATED_PORT" 'has($p)' "$(oc_ports_file)" 2>/dev/null || echo "false")

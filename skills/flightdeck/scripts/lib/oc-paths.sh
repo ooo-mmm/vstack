@@ -147,6 +147,59 @@ oc_release_port() {
   exec 210>&-
 }
 
+# Update the recorded pid for an allocated port. Called by open-terminal
+# after spawning `opencode serve` so the sweep tracks the actual server
+# pid (not the short-lived launcher's $$ that initially seeded the entry).
+oc_register_port_pid() {
+  local port="$1" pid="$2"
+  local ports_file lock_file
+  ports_file=$(oc_ports_file)
+  lock_file=$(oc_ports_lock)
+  [[ -f "$ports_file" ]] || echo '{}' > "$ports_file"
+
+  exec 213>"$lock_file"
+  flock 213
+  local tmp; tmp="${ports_file}.tmp.$$"
+  if jq --arg p "$port" --argjson pid "$pid" \
+       '(.[$p] // {}) as $cur | .[$p] = ($cur + {pid: $pid})' \
+       "$ports_file" > "$tmp" 2>/dev/null; then
+    mv "$tmp" "$ports_file"
+  else
+    rm -f "$tmp"
+  fi
+  exec 213>&-
+}
+
+# Resolve oc-attach args ("--url U --session S") for a given issue using
+# the spawn-discovery file. Caller (pane-respond / pane-poll) tries the
+# registry FIRST; this is the fallback when no registry entry exists yet
+# (e.g., open-terminal just ran but watch.md hasn't called pane-registry
+# init). Empty stdout + non-zero exit when no spawn file or fields blank.
+oc_attach_args_from_spawn() {
+  local issue="$1"
+  local spawn_file; spawn_file=$(oc_spawn_file "$issue")
+  [[ -f "$spawn_file" ]] || return 1
+  local url sid
+  url=$(jq -r '.url // ""' "$spawn_file" 2>/dev/null || echo "")
+  sid=$(jq -r '.session_id // ""' "$spawn_file" 2>/dev/null || echo "")
+  if [[ -n "$url" && -n "$sid" && "$url" != "null" && "$sid" != "null" ]]; then
+    printf -- "--url %s --session %s\n" "$url" "$sid"
+    return 0
+  fi
+  return 1
+}
+
+# Derive an issue id from a tmux pane_target. open-terminal names
+# windows after the (uppercased) issue, so a pane_target like
+# "HT:CC-9012.1" → "CC-9012". Used as the fallback issue lookup when
+# pane-registry has no entry yet.
+oc_issue_from_pane_target() {
+  local target="$1"
+  local win_name="${target#*:}"
+  win_name="${win_name%.*}"
+  echo "$win_name" | tr '[:lower:]' '[:upper:]'
+}
+
 # jq filter that extracts the last assistant message text from
 # /session/<id>/message responses. Verified against opencode 1.14.26
 # shape: each message is `{info:{role:"..."}, parts:[{type:"text",
