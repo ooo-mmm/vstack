@@ -488,11 +488,13 @@ pub fn run(
 
     // Pi extensions install once per scope (not per harness). Records as
     // ItemKind::PiExtension with harness id "pi" so list/remove can find them.
+    // Returns Ok(None) when the install was skipped (cross-scope duplicate);
+    // skipped extensions are not added to the lock summary.
     let pi_in_harnesses = harnesses.iter().any(|h| matches!(h, Harness::Pi));
     if pi_in_harnesses {
         for ext in &selected_pi_extensions {
             match crate::pi_extension::install_pi_extension(ext, global) {
-                Ok(dest) => {
+                Ok(Some(dest)) => {
                     let detail = format!(
                         "{} → {} (Pi extension)",
                         ext.name,
@@ -506,6 +508,11 @@ pub fn run(
                         path: dest,
                         detail,
                     });
+                }
+                Ok(None) => {
+                    // Skipped — cross-scope duplicate. The skip notice was
+                    // already printed by install_pi_extension. Don't record
+                    // in the lock so vstack list reflects the actual state.
                 }
                 Err(e) => {
                     eprintln!(

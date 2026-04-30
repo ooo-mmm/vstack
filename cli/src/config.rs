@@ -252,6 +252,16 @@ pub fn pi_packages_dir(global: bool) -> PathBuf {
     }
 }
 
+/// Directory where vstack symlinks Pi extension `bin` entries.
+/// Pi expects CLI tools at `<scope>/bin/<name>`.
+pub fn pi_bin_dir(global: bool) -> PathBuf {
+    if global {
+        pi_global_dir().join("bin")
+    } else {
+        pi_project_dir().join("bin")
+    }
+}
+
 /// Find the project root by walking up from CWD.
 /// Looks for `.vstack-lock.json` or harness config dirs.
 pub fn project_root() -> PathBuf {

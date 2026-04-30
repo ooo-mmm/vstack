@@ -120,8 +120,17 @@ pub fn discover_pi_extensions(dir: &Path) -> Result<Vec<PiExtension>> {
 /// Install a Pi extension package into the chosen scope.
 ///
 /// Steps:
-/// 1. Copy the package directory into `<scope>/packages/<name>/`.
-/// 2. Add a relative path entry (`./packages/<name>`) to Pi's `settings.json`
+/// 1. If the SAME extension is already installed at the OTHER scope,
+///    SKIP the install with a notice. Pi loads packages from BOTH
+///    global and project scopes; identical extensions registered twice
+///    cause "Tool X conflicts with Y" errors at Pi startup. The
+///    existing scope wins — to switch scopes, the user explicitly runs
+///    `vstack remove [--global] <name>` then re-installs at the
+///    desired scope.
+/// 2. Copy the package directory into `<scope>/packages/<name>/`.
+/// 3. For every entry in the package.json `bin` field, create a symlink
+///    at `<scope>/bin/<cli-name>` pointing at the installed binary.
+/// 4. Add a relative path entry (`./packages/<name>`) to Pi's `settings.json`
 ///    `packages` array, preserving any existing entries.
 ///
 /// Pi resolves relative path entries against the settings file directory:
@@ -129,7 +138,26 @@ pub fn discover_pi_extensions(dir: &Path) -> Result<Vec<PiExtension>> {
 /// - `<project>/.pi/settings.json` → `<project>/.pi`
 ///
 /// Both layouts use the same `./packages/<name>` shape.
-pub fn install_pi_extension(ext: &PiExtension, global: bool) -> Result<PathBuf> {
+///
+/// Returns `Ok(None)` when the install was skipped due to a cross-scope
+/// duplicate; callers can use this to omit the entry from the lock file
+/// summary so vstack's view of state stays accurate.
+pub fn install_pi_extension(ext: &PiExtension, global: bool) -> Result<Option<PathBuf>> {
+    // Step 1: cross-scope guard. Pi loads from both scopes — duplicate
+    // registration would crash startup. Existing scope is authoritative.
+    let other_scope_dest = crate::config::pi_packages_dir(!global).join(&ext.name);
+    if other_scope_dest.exists() || other_scope_dest.is_symlink() {
+        let this_label = if global { "global" } else { "project" };
+        let other_label = if global { "project" } else { "global" };
+        eprintln!(
+            "  Skip pi-extension {} ({this_label} install): already installed at {other_label} scope. Run `vstack remove {}{}` first to switch.",
+            ext.name,
+            if !global { "--global " } else { "" },
+            ext.name,
+        );
+        return Ok(None);
+    }
+
     let dest_dir = crate::config::pi_packages_dir(global);
     std::fs::create_dir_all(&dest_dir)?;
     let dest = dest_dir.join(&ext.name);
@@ -143,15 +171,33 @@ pub fn install_pi_extension(ext: &PiExtension, global: bool) -> Result<PathBuf> 
     }
 
     copy_dir(&ext.source_dir, &dest)?;
+    install_bin_links(ext, &dest, global)?;
     register_in_pi_settings(&ext.name, &dest, global)?;
 
-    Ok(dest)
+    Ok(Some(dest))
 }
 
-/// Remove a Pi extension package and its settings entry.
+/// Remove a Pi extension package, its bin symlinks, and its settings entry.
 pub fn remove_pi_extension(name: &str, global: bool) -> Result<Vec<PathBuf>> {
     let mut removed = Vec::new();
     let dest = crate::config::pi_packages_dir(global).join(name);
+
+    // Read package.json BEFORE deleting the dir so we know which bin
+    // symlinks to clean up. Best-effort: if the package.json is gone or
+    // unreadable, skip bin cleanup rather than failing the whole remove.
+    if dest.is_dir()
+        && let Ok(ext) = PiExtension::from_dir(&dest)
+    {
+        for cli_name in ext.bin.keys() {
+            let link = crate::config::pi_bin_dir(global).join(cli_name);
+            if link.is_symlink() || link.is_file() {
+                if std::fs::remove_file(&link).is_ok() {
+                    removed.push(link);
+                }
+            }
+        }
+    }
+
     if dest.is_symlink() || dest.is_file() {
         if std::fs::remove_file(&dest).is_ok() {
             removed.push(dest.clone());
@@ -161,6 +207,37 @@ pub fn remove_pi_extension(name: &str, global: bool) -> Result<Vec<PathBuf>> {
     }
     let _ = unregister_from_pi_settings(name, &dest, global);
     Ok(removed)
+}
+
+/// Create symlinks at `<scope>/bin/<cli-name>` for every entry in the
+/// package's `bin` field. Existing files at the link path are removed
+/// first (idempotent re-install). Absolute targets so the symlink keeps
+/// resolving even if relative pathing is fragile.
+fn install_bin_links(ext: &PiExtension, package_dest: &Path, global: bool) -> Result<()> {
+    if ext.bin.is_empty() {
+        return Ok(());
+    }
+    let bin_dir = crate::config::pi_bin_dir(global);
+    std::fs::create_dir_all(&bin_dir)?;
+    for (cli_name, rel_target) in &ext.bin {
+        let target = package_dest.join(rel_target);
+        if !target.exists() {
+            eprintln!(
+                "  Warning: skip bin link {cli_name} → {} (target missing)",
+                target.display()
+            );
+            continue;
+        }
+        let link = bin_dir.join(cli_name);
+        if link.is_symlink() || link.is_file() {
+            let _ = std::fs::remove_file(&link);
+        }
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&target, &link).with_context(|| {
+            format!("symlinking bin {} → {}", link.display(), target.display())
+        })?;
+    }
+    Ok(())
 }
 
 /// The canonical `packages` entry vstack writes for a given package name.
@@ -488,7 +565,7 @@ mod tests {
 
         with_pi_dir(&pi_dir, || {
             let ext = PiExtension::from_dir(&source).unwrap();
-            let dest = install_pi_extension(&ext, true).unwrap();
+            let dest = install_pi_extension(&ext, true).unwrap().unwrap();
             assert!(dest.join("package.json").exists());
             assert!(dest.join("extensions").join("mini.ts").exists());
 
@@ -534,6 +611,48 @@ mod tests {
     }
 
     #[test]
+    fn install_creates_and_remove_clears_bin_symlinks() {
+        let sandbox = std::env::temp_dir().join(format!(
+            "vstack_pi_bin_links_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&sandbox);
+        let source = sandbox.join("src").join("pi-bridgey");
+        std::fs::create_dir_all(source.join("bin")).unwrap();
+        std::fs::create_dir_all(source.join("extensions")).unwrap();
+        std::fs::write(source.join("extensions").join("ext.ts"), "// noop\n").unwrap();
+        std::fs::write(source.join("bin").join("pi-bridge.js"), "#!/usr/bin/env node\n").unwrap();
+        std::fs::write(
+            source.join("package.json"),
+            r#"{
+                "name": "pi-bridgey",
+                "pi": { "extensions": ["./extensions/ext.ts"] },
+                "bin": { "pi-bridge": "./bin/pi-bridge.js" }
+            }"#,
+        )
+        .unwrap();
+        let pi_dir = sandbox.join("agent");
+
+        with_pi_dir(&pi_dir, || {
+            let ext = PiExtension::from_dir(&source).unwrap();
+            let dest = install_pi_extension(&ext, true).unwrap().unwrap();
+
+            let link = pi_dir.join("bin").join("pi-bridge");
+            assert!(link.is_symlink(), "expected bin symlink at {}", link.display());
+            let target = std::fs::read_link(&link).unwrap();
+            assert_eq!(target, dest.join("./bin/pi-bridge.js"));
+
+            // Remove clears the symlink
+            let removed = remove_pi_extension(&ext.name, true).unwrap();
+            assert!(removed.iter().any(|p| p == &link),
+                "expected remove output to include bin link {}", link.display());
+            assert!(!link.exists(), "bin link should be gone");
+        });
+
+        let _ = std::fs::remove_dir_all(&sandbox);
+    }
+
+    #[test]
     fn install_two_pi_extensions_coexist_and_preserve_other_settings() {
         let sandbox = std::env::temp_dir().join(format!(
             "vstack_pi_two_install_{}",
@@ -565,11 +684,11 @@ mod tests {
             // Install both vstack-managed packages
             let bridge = PiExtension::from_dir(&bridge_src).unwrap();
             let stat = PiExtension::from_dir(&stat_src).unwrap();
-            install_pi_extension(&bridge, true).unwrap();
-            install_pi_extension(&stat, true).unwrap();
+            install_pi_extension(&bridge, true).unwrap().unwrap();
+            install_pi_extension(&stat, true).unwrap().unwrap();
 
             // Re-install one to verify dedupe (no duplicate entries)
-            install_pi_extension(&stat, true).unwrap();
+            install_pi_extension(&stat, true).unwrap().unwrap();
 
             let settings: serde_json::Value = serde_json::from_str(
                 &std::fs::read_to_string(&settings_path).unwrap(),
@@ -626,7 +745,7 @@ mod tests {
             .unwrap();
 
             let ext = PiExtension::from_dir(&source).unwrap();
-            install_pi_extension(&ext, true).unwrap();
+            install_pi_extension(&ext, true).unwrap().unwrap();
 
             let settings: serde_json::Value = serde_json::from_str(
                 &std::fs::read_to_string(&settings_path).unwrap(),
@@ -725,7 +844,7 @@ mod tests {
 
         with_pi_dir(&pi_dir, || {
             for ext in &extensions {
-                install_pi_extension(ext, true).unwrap();
+                install_pi_extension(ext, true).unwrap().unwrap();
             }
 
             let bridge_dir = sandbox.join("bridge");
