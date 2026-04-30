@@ -126,7 +126,9 @@ pub fn run(
     source: Option<String>,
     global: bool,
     harness_filter: Option<Vec<String>>,
+    agent_filter: Option<Vec<String>>,
     skill_filter: Option<Vec<String>>,
+    hook_filter: Option<Vec<String>>,
     copy: bool,
     yes: bool,
     all: bool,
@@ -157,13 +159,33 @@ pub fn run(
         let hooks_dir = source_dir.join("hooks");
         let pi_ext_dir = source_dir.join("pi-extensions");
 
-        let agents = agent::discover_agents(&agents_dir)?;
+        let all_agents = agent::discover_agents(&agents_dir)?;
         let all_skills = skill::discover_skills(&skills_dir)?;
-        let hooks = hook::discover_hooks(&hooks_dir)?;
+        let all_hooks = hook::discover_hooks(&hooks_dir)?;
         let pi_extensions =
             crate::pi_extension::discover_pi_extensions(&pi_ext_dir).unwrap_or_default();
         let dep_graph = skill::build_dependency_graph(&all_skills);
 
+        // Filter helpers: each kind narrows independently. Setting
+        // --agent A doesn't suppress skills/hooks (and vice versa) —
+        // a kind without a filter still discovers everything. To
+        // install ONLY one kind, combine its filter with the others
+        // set to a non-matching name (or use --skill '*' as today's
+        // explicit "all skills" sentinel and elide the others).
+        let agents = if let Some(ref filter) = agent_filter {
+            if filter.iter().any(|f| f == "*") {
+                all_agents
+            } else {
+                let wanted: std::collections::HashSet<&str> =
+                    filter.iter().map(String::as_str).collect();
+                all_agents
+                    .into_iter()
+                    .filter(|a| wanted.contains(a.name.as_str()))
+                    .collect()
+            }
+        } else {
+            all_agents
+        };
         let skills = if let Some(ref filter) = skill_filter {
             if filter.iter().any(|f| f == "*") {
                 all_skills
@@ -179,6 +201,20 @@ pub fn run(
             }
         } else {
             all_skills
+        };
+        let hooks = if let Some(ref filter) = hook_filter {
+            if filter.iter().any(|f| f == "*") {
+                all_hooks
+            } else {
+                let wanted: std::collections::HashSet<&str> =
+                    filter.iter().map(String::as_str).collect();
+                all_hooks
+                    .into_iter()
+                    .filter(|h| wanted.contains(h.name.as_str()))
+                    .collect()
+            }
+        } else {
+            all_hooks
         };
 
         let total =
@@ -654,7 +690,9 @@ pub fn run(
                 Some(resolved_source.source.clone()),
                 global,
                 harness_filter,
+                agent_filter,
                 skill_filter,
+                hook_filter,
                 copy,
                 yes,
                 all,
