@@ -1,6 +1,6 @@
 # Second Opinion
 
-Cross-model code review and consultation via external AI CLI. Auto-detects your current harness and calls the opposite — Claude calls Codex, Codex calls Claude.
+Cross-model code review and consultation via external AI CLI. Auto-detects your current harness and calls the opposite — Claude calls Codex, Codex calls Claude, Pi calls Claude.
 
 ## Structure
 

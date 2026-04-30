@@ -17,6 +17,7 @@ Cross-model second opinion via external AI CLI. Auto-detects the current harness
 |------------|-------|
 | Claude Code | Codex |
 | Codex | Claude |
+| Pi | Claude |
 | OpenCode / Cursor / unknown | Claude (prefers cross-model) |
 
 Override with `SECOND_OPINION_TARGET=claude|codex` in `.env.local`.

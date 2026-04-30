@@ -158,6 +158,11 @@ detect_current_harness() {
     echo "codex"
     return
   fi
+  # Pi coding agent
+  if [[ -n "${PI_CODING_AGENT_DIR:-}" ]]; then
+    echo "pi"
+    return
+  fi
   # OpenCode uses GPT models, so treat as codex for cross-model pairing
   if [[ -n "${OPENCODE:-}" ]]; then
     echo "codex"
@@ -171,6 +176,7 @@ detect_current_harness() {
     case "$ancestor_cmd" in
       claude*) echo "claude"; return ;;
       codex*)  echo "codex"; return ;;
+      pi|pi-*) echo "pi"; return ;;
       opencode*) echo "codex"; return ;;
     esac
   done
@@ -189,6 +195,7 @@ resolve_target() {
   case "$current" in
     claude) echo "codex" ;;
     codex)  echo "claude" ;;
+    pi)     echo "claude" ;;
     *)
       # Unknown harness (OpenCode, Cursor, etc.) — prefer claude since
       # non-Claude harnesses typically use GPT models already
