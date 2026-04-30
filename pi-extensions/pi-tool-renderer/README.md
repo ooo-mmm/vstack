@@ -6,6 +6,8 @@ By default this package renders non-mutating tool calls (`read`, `bash`, and, wh
 
 It does **not** override Pi's built-in `edit`/`write` renderers by default, so standard diff/edit rendering is preserved. Disable `stackToolCalls` to keep the compact renderers inside Pi's normal tool boxes, or disable `enabled` to return fully to Pi defaults.
 
+It also patches Pi's user-message cards when `compactUserMessages=true` (default): top/bottom padding is removed and the background uses `userMessageBackground` (default `customMessageBg`). Set `compactUserMessages=false` to restore Pi's default padded user cards.
+
 Current Pi still reserves vertical space for each tool entry even when a renderer returns zero lines. `stackChildDisplay` controls the tradeoff:
 
 - `rows` (default): child tools render as separate compact `├`/`└` rows.

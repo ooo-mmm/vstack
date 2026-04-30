@@ -1,10 +1,14 @@
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { Text, truncateToWidth } from "@mariozechner/pi-tui";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
 const INSTALL_SYMBOL = Symbol.for("vstack.pi-tool-renderer.installed");
+const USER_MESSAGE_PATCH_SYMBOL = Symbol.for("vstack.pi-tool-renderer.user-message-patch");
+const USER_MESSAGE_BOX_STATE_SYMBOL = Symbol.for("vstack.pi-tool-renderer.user-message-box-state");
+
+const USER_MESSAGE_BG_TOKENS = new Set(["selectedBg", "userMessageBg", "customMessageBg", "toolPendingBg", "toolSuccessBg", "toolErrorBg"]);
 
 type VstackConfig = Record<string, unknown>;
 
@@ -55,6 +59,16 @@ function settingNumber(key: string, fallback: number, cwd?: string): number {
 function settingBoolean(key: string, fallback: boolean, cwd?: string): boolean {
 	const value = readVstackConfig(cwd)[key];
 	return typeof value === "boolean" ? value : fallback;
+}
+
+function settingString(key: string, fallback: string, cwd?: string): string {
+	const value = readVstackConfig(cwd)[key];
+	return typeof value === "string" ? value : fallback;
+}
+
+function userMessageBackgroundToken(cwd?: string): string {
+	const token = settingString("userMessageBackground", "customMessageBg", cwd);
+	return USER_MESSAGE_BG_TOKENS.has(token) ? token : "customMessageBg";
 }
 
 function lineCount(text: string): number {
@@ -115,6 +129,63 @@ function makeEmpty() {
 			return [];
 		},
 	};
+}
+
+interface UserMessagePatchState {
+	activeCtx?: ExtensionContext;
+	originalRender: (width: number) => string[];
+}
+
+function installUserMessageRenderer(pi: ExtensionAPI, UserMessageComponent: any): void {
+	const prototype = UserMessageComponent?.prototype as Record<PropertyKey, unknown> | undefined;
+	if (!prototype || typeof prototype.render !== "function") return;
+
+	let state = prototype[USER_MESSAGE_PATCH_SYMBOL] as UserMessagePatchState | undefined;
+	if (!state) {
+		state = {
+			originalRender: prototype.render as (width: number) => string[],
+		};
+		prototype[USER_MESSAGE_PATCH_SYMBOL] = state;
+		prototype.render = function compactUserMessageRender(this: any, width: number): string[] {
+			const box = this?.contentBox;
+			const ctx = state?.activeCtx;
+			if (box && ctx?.hasUI) {
+				const cwd = ctx.cwd ?? process.cwd();
+				const compact = settingBoolean("compactUserMessages", true, cwd);
+				const paddingY = compact ? 0 : 1;
+				const backgroundToken = compact ? userMessageBackgroundToken(cwd) : "userMessageBg";
+				const boxState = `${paddingY}:${backgroundToken}`;
+
+				if (box[USER_MESSAGE_BOX_STATE_SYMBOL] !== boxState) {
+					box.paddingY = paddingY;
+					box.setBgFn?.((content: string) => {
+						const theme = state?.activeCtx?.ui?.theme;
+						if (!theme?.bg) return content;
+						try {
+							return theme.bg(backgroundToken as any, content);
+						} catch {
+							return theme.bg("userMessageBg", content);
+						}
+					});
+					box.invalidateCache?.();
+					box[USER_MESSAGE_BOX_STATE_SYMBOL] = boxState;
+				}
+			}
+
+			return state!.originalRender.call(this, width);
+		};
+	}
+
+	pi.on("session_start", (_event: any, ctx: ExtensionContext) => {
+		state!.activeCtx = ctx;
+	});
+	pi.on("session_shutdown", () => {
+		if (prototype[USER_MESSAGE_PATCH_SYMBOL] === state) {
+			prototype.render = state!.originalRender as unknown;
+			delete prototype[USER_MESSAGE_PATCH_SYMBOL];
+		}
+		state!.activeCtx = undefined;
+	});
 }
 
 class TruncatedLines {
@@ -586,6 +657,7 @@ export default async function toolRenderer(pi: ExtensionAPI): Promise<void> {
 	registerStackEvents(pi);
 
 	const agent = await import("@mariozechner/pi-coding-agent");
+	installUserMessageRenderer(pi, agent.UserMessageComponent);
 	const cwd = process.cwd();
 	registerRead(pi, agent, cwd);
 	registerBash(pi, agent, cwd);
