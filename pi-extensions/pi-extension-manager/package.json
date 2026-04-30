@@ -1,0 +1,75 @@
+{
+  "name": "pi-extension-manager",
+  "version": "0.1.0",
+  "description": "Settings-integrated Pi extension inventory, toggles, and schema-driven extension configuration for vstack packages.",
+  "license": "MIT",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "coding-agent",
+    "extensions",
+    "settings"
+  ],
+  "pi": {
+    "extensions": [
+      "./extensions/extension-manager.ts"
+    ]
+  },
+  "vstack": {
+    "extensionManager": {
+      "displayName": "Extension Manager",
+      "settings": [
+        {
+          "key": "enabled",
+          "label": "Enable manager UI",
+          "description": "Expose /extensions and the manager UI. If disabled, /extensions enable remains available as a recovery command.",
+          "type": "boolean",
+          "default": true,
+          "category": "General",
+          "apply": "reload",
+          "requiresReload": true
+        },
+        {
+          "key": "showBuiltinTools",
+          "label": "Show built-in tools",
+          "description": "Include Pi built-in tools in the inventory. Disable for an extension-focused list.",
+          "type": "boolean",
+          "default": false,
+          "category": "Inventory",
+          "apply": "live"
+        },
+        {
+          "key": "defaultSaveScope",
+          "label": "Default save scope",
+          "description": "Where manager setting edits are written when the selected item scope is ambiguous.",
+          "type": "enum",
+          "enumValues": [
+            "project",
+            "user"
+          ],
+          "default": "project",
+          "category": "Persistence",
+          "apply": "live"
+        },
+        {
+          "key": "allowSettingsCommandShadow",
+          "label": "Register /settings wrapper",
+          "description": "Expose the manager through /settings if Pi lets extension commands shadow built-ins. /extensions always remains available.",
+          "type": "boolean",
+          "default": true,
+          "category": "Commands",
+          "apply": "restart"
+        }
+      ]
+    }
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "*",
+    "@mariozechner/pi-tui": "*"
+  },
+  "files": [
+    "extensions/",
+    "README.md",
+    "package.json"
+  ]
+}

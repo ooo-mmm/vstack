@@ -1,0 +1,110 @@
+{
+  "name": "pi-qol",
+  "version": "0.1.0",
+  "description": "Pi quality-of-life extension: reliable multiline input, styled pasted-image chips, and hidden-thinking placeholder settings contract.",
+  "license": "MIT",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "coding-agent",
+    "qol",
+    "editor"
+  ],
+  "pi": {
+    "extensions": [
+      "./extensions/qol.ts"
+    ]
+  },
+  "vstack": {
+    "extensionManager": {
+      "displayName": "QOL",
+      "settings": [
+        {
+          "key": "enabled",
+          "label": "Enable QOL editor helpers",
+          "description": "Install the QOL editor component and /qol helper command. Disable and reload to leave Pi editor behavior unchanged.",
+          "type": "boolean",
+          "default": true,
+          "category": "General",
+          "apply": "reload",
+          "requiresReload": true
+        },
+        {
+          "key": "newlineOnShiftEnter",
+          "label": "Shift+Enter inserts newline",
+          "description": "Intercept distinguishable Shift+Enter/Shift+Return in the prompt editor and insert a newline instead of submitting.",
+          "type": "boolean",
+          "default": true,
+          "category": "Input",
+          "apply": "reload",
+          "requiresReload": true
+        },
+        {
+          "key": "newlineFallbackKey",
+          "label": "Fallback newline key",
+          "description": "Alternate newline key for terminals that cannot distinguish Shift+Enter. Examples: ctrl+j, alt+enter, none.",
+          "type": "enum",
+          "enumValues": [
+            "ctrl+j",
+            "alt+enter",
+            "none"
+          ],
+          "default": "ctrl+j",
+          "category": "Input",
+          "apply": "reload",
+          "requiresReload": true
+        },
+        {
+          "key": "showImageChips",
+          "label": "Style image chips",
+          "description": "Render [Image #N] placeholders in the editor as visually distinct chips. Pi still owns attachment state.",
+          "type": "boolean",
+          "default": true,
+          "category": "Images",
+          "apply": "live"
+        },
+        {
+          "key": "imageChipStyle",
+          "label": "Image chip style",
+          "description": "Visual style for image attachment placeholders.",
+          "type": "enum",
+          "enumValues": [
+            "minimal",
+            "filled",
+            "subtle"
+          ],
+          "default": "filled",
+          "category": "Images",
+          "apply": "live"
+        },
+        {
+          "key": "showAttachmentCountInStatus",
+          "label": "Show attachment count",
+          "description": "Show a lightweight status badge when the draft contains image placeholders.",
+          "type": "boolean",
+          "default": true,
+          "category": "Images",
+          "apply": "live"
+        },
+        {
+          "key": "showHiddenThinkingPlaceholder",
+          "label": "Show hidden-thinking placeholder",
+          "description": "Settings contract for suppressing the collapsed Thinking... placeholder when Pi exposes a renderer hook. Current Pi API has no assistant-renderer override.",
+          "type": "boolean",
+          "default": false,
+          "category": "Thinking",
+          "apply": "restart"
+        }
+      ]
+    }
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "*",
+    "@mariozechner/pi-tui": "*"
+  },
+  "files": [
+    "extensions/",
+    "README.md",
+    "package.json"
+  ]
+}

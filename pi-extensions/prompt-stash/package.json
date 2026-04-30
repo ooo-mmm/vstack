@@ -1,0 +1,99 @@
+{
+  "name": "prompt-stash",
+  "version": "0.1.0",
+  "description": "Pi extension for project-local prompt stash history with Ctrl+S stash/pop workflow.",
+  "license": "MIT",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "coding-agent",
+    "prompt",
+    "stash"
+  ],
+  "pi": {
+    "extensions": [
+      "./extensions/prompt-stash.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "*",
+    "@mariozechner/pi-tui": "*"
+  },
+  "files": [
+    "extensions/",
+    "README.md",
+    "package.json"
+  ],
+  "vstack": {
+    "extensionManager": {
+      "displayName": "Prompt Stash",
+      "settings": [
+        {
+          "key": "enabled",
+          "label": "Enable prompt stash",
+          "description": "Register /prompt-stash and the stash/pop shortcut.",
+          "type": "boolean",
+          "default": true,
+          "category": "General",
+          "apply": "reload",
+          "requiresReload": true
+        },
+        {
+          "key": "storeFile",
+          "label": "Store file",
+          "description": "Project-local stash file under .pi/.",
+          "type": "path",
+          "default": "prompt-stash.json",
+          "category": "Storage",
+          "apply": "live"
+        },
+        {
+          "key": "shortcut",
+          "label": "Stash shortcut",
+          "description": "Shortcut for stash/pop. Requires reload because shortcuts are handled by the editor at load.",
+          "type": "string",
+          "default": "ctrl+s",
+          "category": "Input",
+          "apply": "reload",
+          "requiresReload": true
+        },
+        {
+          "key": "popupWidth",
+          "label": "Popup width",
+          "description": "Preferred stash popup width.",
+          "type": "number",
+          "default": 92,
+          "category": "UI",
+          "apply": "live"
+        },
+        {
+          "key": "popupMaxHeight",
+          "label": "Popup max height",
+          "description": "Maximum overlay height.",
+          "type": "string",
+          "default": "80%",
+          "category": "UI",
+          "apply": "live"
+        },
+        {
+          "key": "listRows",
+          "label": "Visible stash rows",
+          "description": "Number of stash rows shown before scrolling.",
+          "type": "number",
+          "default": 10,
+          "category": "UI",
+          "apply": "live"
+        },
+        {
+          "key": "deduplicate",
+          "label": "Deduplicate prompts",
+          "description": "When stashing, remove older entries with identical text.",
+          "type": "boolean",
+          "default": true,
+          "category": "Storage",
+          "apply": "live"
+        }
+      ]
+    }
+  }
+}

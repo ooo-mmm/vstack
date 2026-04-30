@@ -3,12 +3,20 @@
   "version": "0.1.0",
   "description": "Pi extension and CLI for controlling visible interactive Pi sessions over a structured Unix-socket side channel.",
   "license": "MIT",
-  "keywords": ["pi-package", "pi", "coding-agent", "session", "bridge"],
+  "keywords": [
+    "pi-package",
+    "pi",
+    "coding-agent",
+    "session",
+    "bridge"
+  ],
   "bin": {
     "pi-bridge": "./bin/pi-bridge.js"
   },
   "pi": {
-    "extensions": ["./extensions/session-bridge.ts"]
+    "extensions": [
+      "./extensions/session-bridge.ts"
+    ]
   },
   "peerDependencies": {
     "@mariozechner/pi-coding-agent": "*"
@@ -21,5 +29,79 @@
     "extensions/",
     "README.md",
     "package.json"
-  ]
+  ],
+  "vstack": {
+    "extensionManager": {
+      "displayName": "Session Bridge",
+      "settings": [
+        {
+          "key": "enabled",
+          "label": "Enable session bridge",
+          "description": "Start the Unix-socket bridge, registry, event stream, and bridge commands.",
+          "type": "boolean",
+          "default": true,
+          "category": "General",
+          "apply": "reload",
+          "requiresReload": true
+        },
+        {
+          "key": "bridgeDir",
+          "label": "Bridge directory",
+          "description": "Directory for sockets and instance registry. PI_BRIDGE_DIR still overrides this.",
+          "type": "path",
+          "default": "",
+          "category": "Storage",
+          "apply": "restart"
+        },
+        {
+          "key": "historyLimit",
+          "label": "Event history limit",
+          "description": "Number of bridge events retained for history clients. PI_BRIDGE_HISTORY overrides this.",
+          "type": "number",
+          "default": 500,
+          "category": "Protocol",
+          "apply": "restart",
+          "requiresReload": true
+        },
+        {
+          "key": "maxLineBytes",
+          "label": "Max request line bytes",
+          "description": "Maximum JSONL request size accepted from a bridge client.",
+          "type": "number",
+          "default": 1048576,
+          "category": "Protocol",
+          "apply": "restart",
+          "requiresReload": true
+        },
+        {
+          "key": "heartbeatMs",
+          "label": "Registry heartbeat",
+          "description": "Milliseconds between registry file updates.",
+          "type": "number",
+          "default": 15000,
+          "category": "Protocol",
+          "apply": "restart",
+          "requiresReload": true
+        },
+        {
+          "key": "notifyOnStart",
+          "label": "Notify on start",
+          "description": "Show an in-TUI notification when the bridge starts.",
+          "type": "boolean",
+          "default": true,
+          "category": "UI",
+          "apply": "live"
+        },
+        {
+          "key": "showStatus",
+          "label": "Show status badge",
+          "description": "Show bridge:<pid> in the Pi footer/status area.",
+          "type": "boolean",
+          "default": true,
+          "category": "UI",
+          "apply": "live"
+        }
+      ]
+    }
+  }
 }

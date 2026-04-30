@@ -1,0 +1,116 @@
+{
+  "name": "pi-task-panel",
+  "version": "0.1.0",
+  "description": "Persistent Claude-style task/todo panel for Pi with slash commands and a structured todo_write tool.",
+  "license": "MIT",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "coding-agent",
+    "todo",
+    "tasks"
+  ],
+  "pi": {
+    "extensions": [
+      "./extensions/task-panel.ts"
+    ]
+  },
+  "vstack": {
+    "extensionManager": {
+      "displayName": "Task Panel",
+      "settings": [
+        {
+          "key": "enabled",
+          "label": "Enable task panel",
+          "description": "Register todo_write, /todo, task panel widgets, reminders, and shortcuts.",
+          "type": "boolean",
+          "default": true,
+          "category": "General",
+          "apply": "reload",
+          "requiresReload": true
+        },
+        {
+          "key": "panelDefaultState",
+          "label": "Default panel state",
+          "description": "Panel state when tasks first appear.",
+          "type": "enum",
+          "enumValues": [
+            "hidden",
+            "compact",
+            "expanded"
+          ],
+          "default": "compact",
+          "category": "Panel",
+          "apply": "live"
+        },
+        {
+          "key": "takeoverCtrlT",
+          "label": "Use Ctrl+T for tasks",
+          "description": "Register Ctrl+T for task panel visibility. Pi normally uses Ctrl+T for thinking visibility, so this requires reload and explicit opt-in.",
+          "type": "boolean",
+          "default": false,
+          "category": "Keyboard",
+          "apply": "reload",
+          "requiresReload": true
+        },
+        {
+          "key": "alternateShortcut",
+          "label": "Alternate shortcut",
+          "description": "Always-available task panel shortcut when Ctrl+T is not taken over.",
+          "type": "string",
+          "default": "ctrl+shift+t",
+          "category": "Keyboard",
+          "apply": "reload",
+          "requiresReload": true
+        },
+        {
+          "key": "maxCompactTasks",
+          "label": "Compact task count",
+          "description": "Maximum tasks shown in compact mode.",
+          "type": "number",
+          "default": 5,
+          "category": "Panel",
+          "apply": "live"
+        },
+        {
+          "key": "showNotesInExpanded",
+          "label": "Show active notes",
+          "description": "Show notes for the active task in expanded panel mode.",
+          "type": "boolean",
+          "default": true,
+          "category": "Panel",
+          "apply": "live"
+        },
+        {
+          "key": "autoShowOnFirstTask",
+          "label": "Auto-show on first task",
+          "description": "Show the compact panel automatically when the first task is added.",
+          "type": "boolean",
+          "default": true,
+          "category": "Panel",
+          "apply": "live"
+        },
+        {
+          "key": "showIncompleteReminder",
+          "label": "Incomplete-task reminders",
+          "description": "Show a subtle reminder when an agent turn ends with incomplete tasks.",
+          "type": "boolean",
+          "default": true,
+          "category": "Reminder",
+          "apply": "live"
+        }
+      ]
+    }
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-ai": "*",
+    "@mariozechner/pi-coding-agent": "*",
+    "@mariozechner/pi-tui": "*",
+    "typebox": "*"
+  },
+  "files": [
+    "extensions/",
+    "README.md",
+    "package.json"
+  ]
+}

@@ -3,9 +3,17 @@
   "version": "0.1.0",
   "description": "Pi extension for explicit non-blocking background shell tasks, log tails, and completion wakeups.",
   "license": "MIT",
-  "keywords": ["pi-package", "pi", "coding-agent", "background-tasks", "shell"],
+  "keywords": [
+    "pi-package",
+    "pi",
+    "coding-agent",
+    "background-tasks",
+    "shell"
+  ],
   "pi": {
-    "extensions": ["./extensions/background-tasks.ts"]
+    "extensions": [
+      "./extensions/background-tasks.ts"
+    ]
   },
   "peerDependencies": {
     "@mariozechner/pi-ai": "*",
@@ -18,5 +26,117 @@
     "README.md",
     "THIRD_PARTY_NOTICES.md",
     "package.json"
-  ]
+  ],
+  "vstack": {
+    "extensionManager": {
+      "displayName": "Background Tasks",
+      "settings": [
+        {
+          "key": "enabled",
+          "label": "Enable background tasks",
+          "description": "Register bg_task/bg_status, /bg, dashboard shortcut, and task widgets. Disable and reload to remove the feature.",
+          "type": "boolean",
+          "default": true,
+          "category": "General",
+          "apply": "reload",
+          "requiresReload": true
+        },
+        {
+          "key": "defaultTimeoutSeconds",
+          "label": "Default timeout",
+          "description": "Default timeout for spawned background tasks. Set 0 to disable timeouts.",
+          "type": "number",
+          "default": 600,
+          "category": "Execution",
+          "apply": "live"
+        },
+        {
+          "key": "outputSettleMs",
+          "label": "Output settle delay",
+          "description": "Debounce delay before output wakeups are sent.",
+          "type": "number",
+          "default": 1500,
+          "category": "Wakeups",
+          "apply": "live"
+        },
+        {
+          "key": "forceKillGraceMs",
+          "label": "Force-kill grace",
+          "description": "Milliseconds to wait after SIGTERM before SIGKILL.",
+          "type": "number",
+          "default": 5000,
+          "category": "Execution",
+          "apply": "live"
+        },
+        {
+          "key": "outputBufferMaxChars",
+          "label": "In-memory output buffer",
+          "description": "Maximum characters retained in memory per task; logs still keep full output.",
+          "type": "number",
+          "default": 120000,
+          "category": "Output",
+          "apply": "live"
+        },
+        {
+          "key": "outputAlertMaxChars",
+          "label": "Wakeup output tail",
+          "description": "Characters included in output/exit wakeup messages.",
+          "type": "number",
+          "default": 3000,
+          "category": "Output",
+          "apply": "live"
+        },
+        {
+          "key": "logTailMaxChars",
+          "label": "Dashboard/log tail",
+          "description": "Characters shown by dashboard and log actions.",
+          "type": "number",
+          "default": 5000,
+          "category": "Output",
+          "apply": "live"
+        },
+        {
+          "key": "showWidget",
+          "label": "Show task widget",
+          "description": "Show the compact background-task widget while tasks are tracked.",
+          "type": "boolean",
+          "default": true,
+          "category": "UI",
+          "apply": "live"
+        },
+        {
+          "key": "widgetPlacement",
+          "label": "Widget placement",
+          "description": "Where the compact widget appears.",
+          "type": "enum",
+          "enumValues": [
+            "aboveEditor",
+            "belowEditor"
+          ],
+          "default": "belowEditor",
+          "category": "UI",
+          "apply": "live"
+        },
+        {
+          "key": "dashboardShortcut",
+          "label": "Dashboard shortcut",
+          "description": "Keyboard shortcut registered for the dashboard. Requires restart because shortcuts register at extension load.",
+          "type": "string",
+          "default": "ctrl+shift+b",
+          "category": "UI",
+          "apply": "restart",
+          "requiresReload": true
+        },
+        {
+          "key": "taskDir",
+          "label": "Task log directory",
+          "description": "Directory for task log files. PI_BG_TASK_DIR still overrides this setting.",
+          "type": "path",
+          "default": "",
+          "category": "Storage",
+          "apply": "live"
+        }
+      ]
+    }
+  }
 }

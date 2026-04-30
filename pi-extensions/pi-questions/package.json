@@ -1,0 +1,89 @@
+{
+  "name": "pi-questions",
+  "version": "0.1.0",
+  "description": "Pi extension for structured multi-tab popup questions and bridge-driven replies.",
+  "license": "MIT",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "coding-agent",
+    "questions",
+    "prompt"
+  ],
+  "pi": {
+    "extensions": [
+      "./extensions/questions.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "*",
+    "@mariozechner/pi-tui": "*"
+  },
+  "files": [
+    "extensions/",
+    "README.md",
+    "package.json"
+  ],
+  "vstack": {
+    "extensionManager": {
+      "displayName": "Questions",
+      "settings": [
+        {
+          "key": "enabled",
+          "label": "Enable questions",
+          "description": "Register the question tool, /question-demo, popup UI, and bridge question service.",
+          "type": "boolean",
+          "default": true,
+          "category": "General",
+          "apply": "reload",
+          "requiresReload": true
+        },
+        {
+          "key": "popupWidth",
+          "label": "Popup width",
+          "description": "Preferred question popup width in terminal columns.",
+          "type": "number",
+          "default": 96,
+          "category": "UI",
+          "apply": "live"
+        },
+        {
+          "key": "popupMaxHeight",
+          "label": "Popup max height",
+          "description": "Maximum overlay height, number or percentage string.",
+          "type": "string",
+          "default": "80%",
+          "category": "UI",
+          "apply": "live"
+        },
+        {
+          "key": "optionRows",
+          "label": "Visible option rows",
+          "description": "Number of option rows shown before scrolling.",
+          "type": "number",
+          "default": 10,
+          "category": "UI",
+          "apply": "live"
+        },
+        {
+          "key": "defaultHeader",
+          "label": "Default popup header",
+          "description": "Fallback title when a question request has no header.",
+          "type": "string",
+          "default": "Question",
+          "category": "UI",
+          "apply": "live"
+        },
+        {
+          "key": "bridgeRepliesEnabled",
+          "label": "Bridge replies enabled",
+          "description": "Allow pi-session-bridge to answer/reject pending questions.",
+          "type": "boolean",
+          "default": true,
+          "category": "Bridge",
+          "apply": "live"
+        }
+      ]
+    }
+  }
+}

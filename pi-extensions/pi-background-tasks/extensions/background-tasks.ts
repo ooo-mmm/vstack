@@ -19,21 +19,21 @@ import { Type } from "typebox";
 import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 
 const BG_COMMAND = "bg";
-const BG_SHORTCUT = "ctrl+shift+b";
+const DEFAULT_BG_SHORTCUT = "ctrl+shift+b";
 const BG_MESSAGE_TYPE = "vstack-background-tasks:event";
 const BG_WIDGET_KEY = "vstack-background-tasks";
 const BG_INSTALL_SYMBOL = Symbol.for("vstack.background-tasks.installed");
 
 const DEFAULT_TIMEOUT_MS = 10 * 60_000;
-const OUTPUT_SETTLE_MS = 1_500;
-const FORCE_KILL_GRACE_MS = 5_000;
-const OUTPUT_BUFFER_MAX_CHARS = 120_000;
-const OUTPUT_ALERT_MAX_CHARS = 3_000;
-const LOG_TAIL_MAX_CHARS = 5_000;
+const DEFAULT_OUTPUT_SETTLE_MS = 1_500;
+const DEFAULT_FORCE_KILL_GRACE_MS = 5_000;
+const DEFAULT_OUTPUT_BUFFER_MAX_CHARS = 120_000;
+const DEFAULT_OUTPUT_ALERT_MAX_CHARS = 3_000;
+const DEFAULT_LOG_TAIL_MAX_CHARS = 5_000;
 const DASHBOARD_WIDTH = 96;
 const DASHBOARD_MAX_HEIGHT = "80%";
 const DASHBOARD_TASK_ROWS = 12;
@@ -100,8 +100,65 @@ function clamp(value: number, min: number, max: number): number {
 	return Math.max(min, Math.min(max, value));
 }
 
+type VstackConfig = Record<string, unknown>;
+
+function expandHome(input: string): string {
+	if (input === "~") return homedir();
+	if (input.startsWith("~/")) return join(homedir(), input.slice(2));
+	return input;
+}
+
+function projectSettingsPath(cwd: string): string {
+	let current = resolve(cwd);
+	while (true) {
+		const candidate = join(current, ".pi", "settings.json");
+		if (existsSync(candidate)) return candidate;
+		if (existsSync(join(current, ".pi")) || existsSync(join(current, ".git")) || existsSync(join(current, ".vstack-lock.json"))) return candidate;
+		const parent = dirname(current);
+		if (parent === current) return join(resolve(cwd), ".pi", "settings.json");
+		current = parent;
+	}
+}
+
+function piSettingsPaths(cwd = process.cwd()): string[] {
+	const userDir = resolve(expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "~/.pi/agent"));
+	return [join(userDir, "settings.json"), projectSettingsPath(cwd)];
+}
+
+function readVstackConfig(cwd?: string): VstackConfig {
+	const merged: VstackConfig = {};
+	for (const path of piSettingsPaths(cwd)) {
+		if (!existsSync(path)) continue;
+		try {
+			const parsed = JSON.parse(readFileSync(path, "utf8"));
+			const config = parsed?.vstack?.extensionManager?.config?.["pi-background-tasks"];
+			if (config && typeof config === "object" && !Array.isArray(config)) Object.assign(merged, config);
+		} catch {
+			// Ignore malformed optional manager config; keep safe defaults.
+		}
+	}
+	return merged;
+}
+
+function settingNumber(key: string, fallback: number, cwd?: string): number {
+	const value = readVstackConfig(cwd)[key];
+	const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : Number.NaN;
+	return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function settingBoolean(key: string, fallback: boolean, cwd?: string): boolean {
+	const value = readVstackConfig(cwd)[key];
+	return typeof value === "boolean" ? value : fallback;
+}
+
+function settingString(key: string, fallback: string, cwd?: string): string {
+	const value = readVstackConfig(cwd)[key];
+	return typeof value === "string" && value.trim().length > 0 ? value.trim() : fallback;
+}
+
 function taskDir(): string {
-	return process.env.PI_BG_TASK_DIR?.trim() || join(tmpdir(), "vstack-pi-bg");
+	const configured = settingString("taskDir", "");
+	return process.env.PI_BG_TASK_DIR?.trim() || (configured ? resolve(expandHome(configured)) : join(tmpdir(), "vstack-pi-bg"));
 }
 
 function safeLabel(input: string): string {
@@ -114,17 +171,18 @@ function logFilePath(id: string, now: number = Date.now()): string {
 	return join(dir, `${safeLabel(id)}-${now}.log`);
 }
 
-function tailText(text: string, maxChars: number = OUTPUT_ALERT_MAX_CHARS): string {
+function tailText(text: string, maxChars: number = settingNumber("outputAlertMaxChars", DEFAULT_OUTPUT_ALERT_MAX_CHARS)): string {
 	if (text.length <= maxChars) return text;
 	return `[...truncated]\n${text.slice(-maxChars)}`;
 }
 
 function trimOutputBuffer(output: string, lastAnnouncedLength: number): { output: string; lastAnnouncedLength: number } {
-	if (output.length <= OUTPUT_BUFFER_MAX_CHARS) return { output, lastAnnouncedLength };
-	const overflow = output.length - OUTPUT_BUFFER_MAX_CHARS;
+	const maxChars = settingNumber("outputBufferMaxChars", DEFAULT_OUTPUT_BUFFER_MAX_CHARS);
+	if (output.length <= maxChars) return { output, lastAnnouncedLength };
+	const overflow = output.length - maxChars;
 	return {
 		lastAnnouncedLength: Math.max(0, lastAnnouncedLength - overflow),
-		output: output.slice(-OUTPUT_BUFFER_MAX_CHARS),
+		output: output.slice(-maxChars),
 	};
 }
 
@@ -239,7 +297,7 @@ function padAnsi(text: string, width: number): string {
 }
 
 function splitOutputLines(output: string): string[] {
-	const text = tailText(output, LOG_TAIL_MAX_CHARS).trimEnd();
+	const text = tailText(output, settingNumber("logTailMaxChars", DEFAULT_LOG_TAIL_MAX_CHARS)).trimEnd();
 	return text.length > 0 ? text.split(/\r?\n/) : ["(no output yet)"];
 }
 
@@ -309,9 +367,11 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 	const guard = pi as unknown as Record<PropertyKey, unknown>;
 	if (guard[BG_INSTALL_SYMBOL]) return;
 	guard[BG_INSTALL_SYMBOL] = true;
+	if (!settingBoolean("enabled", true)) return;
 
 	let activeCtx: ExtensionContext | null = null;
 	let requestWidgetRender: (() => void) | null = null;
+	const dashboardShortcut = settingString("dashboardShortcut", DEFAULT_BG_SHORTCUT);
 	let taskCounter = 0;
 	let shuttingDown = false;
 	const tasks = new Map<string, ManagedTask>();
@@ -357,14 +417,14 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 			summary,
 			`${theme.fg("dim", `${latest.id} · ${taskDisplayName(latest)} · ${formatRelativeTime(activityAt)}`)} · ${theme.fg(
 				"muted",
-				`${BG_SHORTCUT} dashboard`,
+				`${dashboardShortcut} dashboard`,
 			)}`,
 		];
 	};
 
 	const syncWidget = (ctx: ExtensionContext) => {
 		activeCtx = ctx;
-		if (tasks.size === 0 || !ctx.hasUI) {
+		if (tasks.size === 0 || !ctx.hasUI || !settingBoolean("showWidget", true, ctx.cwd)) {
 			clearWidget();
 			return;
 		}
@@ -399,7 +459,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 					},
 				};
 			},
-			{ placement: "belowEditor" },
+			{ placement: settingString("widgetPlacement", "belowEditor", ctx.cwd) === "aboveEditor" ? "aboveEditor" : "belowEditor" },
 		);
 	};
 
@@ -422,7 +482,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 			eventType,
 			matchedPattern: options.matchedPattern,
 			newOutputTail: options.newOutputTail,
-			outputTail: tailText(getTaskOutput(task), OUTPUT_ALERT_MAX_CHARS),
+			outputTail: tailText(getTaskOutput(task), settingNumber("outputAlertMaxChars", DEFAULT_OUTPUT_ALERT_MAX_CHARS, activeCtx?.cwd)),
 			task: taskSnapshot(task),
 		};
 		const headline =
@@ -456,10 +516,10 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 			task.lastAnnouncedLength = output.length;
 			sendTaskEvent("output", task, {
 				matchedPattern: task.notifyPattern,
-				newOutputTail: tailText(unseenOutput, OUTPUT_ALERT_MAX_CHARS),
+				newOutputTail: tailText(unseenOutput, settingNumber("outputAlertMaxChars", DEFAULT_OUTPUT_ALERT_MAX_CHARS, activeCtx?.cwd)),
 			});
 			refreshUi();
-		}, OUTPUT_SETTLE_MS);
+		}, settingNumber("outputSettleMs", DEFAULT_OUTPUT_SETTLE_MS, activeCtx?.cwd));
 		task.outputTimer.unref?.();
 	};
 
@@ -530,12 +590,13 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 			return { ok: true, message: `Stopped ${task.id} (${task.command}).` };
 		}
 
+		const forceKillGraceMs = settingNumber("forceKillGraceMs", DEFAULT_FORCE_KILL_GRACE_MS, activeCtx?.cwd);
 		task.forceKillTimer = setTimeout(() => {
 			if (task.status === "running" && !task.closed) {
-				appendLogLine(task, `\n[stop] Escalating to SIGKILL after ${formatDuration(FORCE_KILL_GRACE_MS)}.\n`);
+				appendLogLine(task, `\n[stop] Escalating to SIGKILL after ${formatDuration(forceKillGraceMs)}.\n`);
 				killTaskProcess(task, "SIGKILL");
 			}
-		}, FORCE_KILL_GRACE_MS);
+		}, forceKillGraceMs);
 		task.forceKillTimer.unref?.();
 		refreshUi();
 		return { ok: true, message: `Stopping ${task.id} (${task.command}).` };
@@ -548,7 +609,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		const cwd = options.cwd?.trim() || activeCtx?.cwd || process.cwd();
 		const id = `bg-${++taskCounter}`;
 		const now = Date.now();
-		const timeoutSeconds = typeof options.timeoutSeconds === "number" ? options.timeoutSeconds : DEFAULT_TIMEOUT_MS / 1_000;
+		const timeoutSeconds = typeof options.timeoutSeconds === "number" ? options.timeoutSeconds : settingNumber("defaultTimeoutSeconds", DEFAULT_TIMEOUT_MS / 1_000, cwd);
 		const expiresAt = timeoutSeconds > 0 ? now + timeoutSeconds * 1_000 : null;
 		const logFile = logFilePath(id, now);
 		writeFileSync(logFile, "");
@@ -873,7 +934,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 			if (params.action === "list") return makeToolResult(formatTaskListText());
 			const task = resolveTask(undefined, params.pid);
 			if (!task) throw new Error("No background task matched that pid.");
-			if (params.action === "log") return makeToolResult(tailText(getTaskOutput(task), LOG_TAIL_MAX_CHARS) || "(empty)");
+			if (params.action === "log") return makeToolResult(tailText(getTaskOutput(task), settingNumber("logTailMaxChars", DEFAULT_LOG_TAIL_MAX_CHARS, activeCtx?.cwd)) || "(empty)");
 			const stopped = requestStop(task, "user");
 			if (!stopped.ok) throw new Error(stopped.message);
 			return makeToolResult(stopped.message, { task: taskSnapshot(task) });
@@ -930,7 +991,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 
 			const task = resolveTask(params.id, params.pid);
 			if (!task) throw new Error("No background task matched that id or pid.");
-			if (params.action === "log") return makeToolResult(tailText(getTaskOutput(task), LOG_TAIL_MAX_CHARS) || "(empty)");
+			if (params.action === "log") return makeToolResult(tailText(getTaskOutput(task), settingNumber("logTailMaxChars", DEFAULT_LOG_TAIL_MAX_CHARS, activeCtx?.cwd)) || "(empty)");
 			const stopped = requestStop(task, "user");
 			if (!stopped.ok) throw new Error(stopped.message);
 			return makeToolResult(stopped.message, { task: taskSnapshot(task) });
@@ -987,7 +1048,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 					ctx.ui.notify("No background task matched that id or pid.", "warning");
 					return;
 				}
-				if (trimmed.startsWith("log ")) ctx.ui.notify(tailText(getTaskOutput(task), LOG_TAIL_MAX_CHARS) || "(empty)", "info");
+				if (trimmed.startsWith("log ")) ctx.ui.notify(tailText(getTaskOutput(task), settingNumber("logTailMaxChars", DEFAULT_LOG_TAIL_MAX_CHARS, ctx.cwd)) || "(empty)", "info");
 				else await openDashboard(ctx, task);
 				return;
 			}
@@ -1003,11 +1064,13 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		},
 	});
 
-	pi.registerShortcut(BG_SHORTCUT, {
-		description: "Open the background task dashboard",
-		handler: async (ctx) => {
-			activeCtx = ctx as ExtensionContext;
-			await openDashboard(ctx as ExtensionContext);
-		},
-	});
+	if (dashboardShortcut !== "none") {
+		pi.registerShortcut(dashboardShortcut, {
+			description: "Open the background task dashboard",
+			handler: async (ctx) => {
+				activeCtx = ctx as ExtensionContext;
+				await openDashboard(ctx as ExtensionContext);
+			},
+		});
+	}
 }

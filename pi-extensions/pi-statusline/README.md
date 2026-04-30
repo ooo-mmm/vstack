@@ -6,7 +6,6 @@ Pi package that replaces the default footer/editor chrome with a compact Claude-
 
 - Shows project/repo name, branch/worktree badge, model, thinking level, context-window size, and remaining context percent.
 - Uses a compact prompt prefixed with `π` and wraps long input cleanly.
-- Adds one blank padding line below the prompt.
 - Keeps autocomplete visible under the prompt.
 - Hides Pi's default footer because the status line lives directly above the prompt.
 

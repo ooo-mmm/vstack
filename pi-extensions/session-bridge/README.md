@@ -23,6 +23,7 @@ pi install -l /path/to/pi-extensions/session-bridge   # project
 - External clients discover active Pi processes via registry files.
 - External clients send prompts/steering/follow-ups/abort without tmux key injection.
 - External clients subscribe to live structured Pi events without pane scraping.
+- When `pi-questions` is also loaded, external clients can list/reply/reject pending structured questions.
 
 ## Discovery
 
@@ -51,6 +52,9 @@ pi-bridge stream --pid <pid>
 pi-bridge send --pid <pid> "message for the agent"
 pi-bridge steer --pid <pid> "steer current work"
 pi-bridge follow-up --pid <pid> "after you finish, do this"
+pi-bridge questions --pid <pid>
+pi-bridge answer --pid <pid> --request-id que_... --answers '[["Stop here"]]'
+pi-bridge reject --pid <pid> --request-id que_...
 ```
 
 If exactly one active bridge exists, target flags are optional.
@@ -77,6 +81,9 @@ Commands:
 {"id":"7","type":"subscribe","enabled":true}
 {"id":"8","type":"emit","message":"no-LLM test event"}
 {"id":"9","type":"get_commands"}
+{"id":"10","type":"questions"}
+{"id":"11","type":"answer","requestId":"que_example","answers":[["Stop here"]]}
+{"id":"12","type":"reject","requestId":"que_example"}
 ```
 
 Responses:
@@ -90,6 +97,7 @@ Broadcast events:
 ```json
 {"type":"event","event":"message_update","timestamp":"...","data":{}}
 {"type":"event","event":"tool_execution_start","timestamp":"...","data":{}}
+{"type":"event","event":"question","timestamp":"...","data":{"action":"opened","requestId":"que_example"}}
 ```
 
 The client receives events by default. Send `subscribe` with `enabled:false` to suppress live events on that connection.

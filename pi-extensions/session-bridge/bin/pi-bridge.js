@@ -22,6 +22,9 @@ function usage(exitCode = 0) {
   pi-bridge follow-up [target] MESSAGE...
   pi-bridge stream [target]
   pi-bridge history [target] [LIMIT]
+  pi-bridge questions [target]
+  pi-bridge answer [target] --request-id que_... --answers '[["Label"]]'
+  pi-bridge reject [target] --request-id que_...
   pi-bridge emit [target] MESSAGE...
 
 Target options:
@@ -79,6 +82,8 @@ function parse(argv) {
 			case "--session":
 			case "--name":
 			case "--cwd":
+			case "--request-id":
+			case "--answers":
 			case "--bridge-dir": {
 				const value = argv[++i];
 				if (!value) die(`Missing value for ${arg}`);
@@ -259,6 +264,31 @@ async function main() {
 	if (command === "history") {
 		const limit = rest[0] ? Number.parseInt(rest[0], 10) : undefined;
 		process.exitCode = await request(target, { id, type: "history", limit });
+		return;
+	}
+
+	if (command === "questions" || command === "question-list") {
+		process.exitCode = await request(target, { id, type: "questions" });
+		return;
+	}
+
+	if (command === "answer" || command === "reply") {
+		if (!opts.requestId) die(`Missing --request-id for ${command}`);
+		const answersText = opts.answers || rest.join(" ").trim();
+		if (!answersText) die(`Missing --answers for ${command}`);
+		let answers;
+		try {
+			answers = JSON.parse(answersText);
+		} catch (error) {
+			die(`Invalid --answers JSON: ${error.message}`);
+		}
+		process.exitCode = await request(target, { id, type: "answer", requestId: opts.requestId, answers });
+		return;
+	}
+
+	if (command === "reject") {
+		if (!opts.requestId) die("Missing --request-id for reject");
+		process.exitCode = await request(target, { id, type: "reject", requestId: opts.requestId });
 		return;
 	}
 

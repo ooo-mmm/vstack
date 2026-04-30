@@ -1,0 +1,105 @@
+{
+  "name": "pi-subagents-tmux",
+  "version": "0.1.0",
+  "description": "Pi extension for delegating work to project or user agents, including persistent tmux subagent panes.",
+  "license": "MIT",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "coding-agent",
+    "subagents",
+    "tmux"
+  ],
+  "pi": {
+    "extensions": [
+      "./extensions/subagent/index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-ai": "*",
+    "@mariozechner/pi-coding-agent": "*",
+    "@mariozechner/pi-tui": "*",
+    "typebox": "*"
+  },
+  "files": [
+    "extensions/",
+    "README.md",
+    "package.json"
+  ],
+  "vstack": {
+    "extensionManager": {
+      "displayName": "Subagents (tmux)",
+      "settings": [
+        {
+          "key": "enabled",
+          "label": "Enable subagents",
+          "description": "Register the subagent tool, /agents command, and persistent pane polling.",
+          "type": "boolean",
+          "default": true,
+          "category": "General",
+          "apply": "reload",
+          "requiresReload": true
+        },
+        {
+          "key": "maxParallelTasks",
+          "label": "Max parallel tasks",
+          "description": "Maximum number of tasks accepted in one parallel subagent call.",
+          "type": "number",
+          "default": 8,
+          "category": "Execution",
+          "apply": "live"
+        },
+        {
+          "key": "maxConcurrency",
+          "label": "Max concurrency",
+          "description": "Maximum number of one-shot subagent processes to run at the same time.",
+          "type": "number",
+          "default": 4,
+          "category": "Execution",
+          "apply": "live"
+        },
+        {
+          "key": "collapsedItemCount",
+          "label": "Collapsed item count",
+          "description": "Number of recent text/tool items shown in collapsed subagent results.",
+          "type": "number",
+          "default": 10,
+          "category": "Rendering",
+          "apply": "live"
+        },
+        {
+          "key": "completionPollMs",
+          "label": "Completion poll interval",
+          "description": "Parent-session polling interval for persistent pane completion files.",
+          "type": "number",
+          "default": 2000,
+          "category": "Persistent panes",
+          "apply": "reload",
+          "requiresReload": true
+        },
+        {
+          "key": "childInboxPollMs",
+          "label": "Child inbox poll interval",
+          "description": "Child-pane polling interval for incoming persistent pane task files.",
+          "type": "number",
+          "default": 1000,
+          "category": "Persistent panes",
+          "apply": "reload",
+          "requiresReload": true
+        }
+      ],
+      "resources": [
+        {
+          "kind": "tool",
+          "name": "subagent",
+          "description": "Delegate tasks to isolated Pi subagents."
+        },
+        {
+          "kind": "command",
+          "name": "/agents",
+          "description": "List, inspect, and manage subagent panes."
+        }
+      ]
+    }
+  }
+}

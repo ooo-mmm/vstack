@@ -1,0 +1,30 @@
+{
+  "name": "pi-tool-renderer",
+  "version": "0.1.0",
+  "description": "Compact Claude/opencode-style renderers for Pi built-in tools while preserving original execution behavior.",
+  "license": "MIT",
+  "keywords": ["pi-package", "pi", "coding-agent", "tools", "renderer"],
+  "pi": {
+    "extensions": ["./extensions/tool-renderer.ts"]
+  },
+  "vstack": {
+    "extensionManager": {
+      "displayName": "Tool Renderer",
+      "settings": [
+        { "key": "enabled", "label": "Enable compact renderers", "description": "Override built-in tool renderers while delegating execution to Pi originals.", "type": "boolean", "default": true, "category": "General", "apply": "reload", "requiresReload": true },
+        { "key": "commandPreviewChars", "label": "Command preview characters", "description": "Maximum command characters in collapsed bash rows.", "type": "number", "default": 96, "category": "Bash", "apply": "live" },
+        { "key": "bashPreviewLines", "label": "Expanded bash preview lines", "description": "Tail lines shown when bash output is expanded.", "type": "number", "default": 80, "category": "Bash", "apply": "live" },
+        { "key": "readPreviewLines", "label": "Expanded read preview lines", "description": "Head lines shown when read output is expanded.", "type": "number", "default": 80, "category": "Read", "apply": "live" },
+        { "key": "searchPreviewLines", "label": "Expanded search/list preview lines", "description": "Head lines shown for grep/find/ls when expanded.", "type": "number", "default": 80, "category": "Search", "apply": "live" },
+        { "key": "editPreviewLines", "label": "Expanded diff preview lines", "description": "Diff lines shown when edit output is expanded.", "type": "number", "default": 120, "category": "Mutation", "apply": "live" },
+        { "key": "writePreviewLines", "label": "Expanded write preview lines", "description": "Written content lines shown when write output is expanded.", "type": "number", "default": 80, "category": "Mutation", "apply": "live" },
+        { "key": "maxLineWidth", "label": "Max renderer line width", "description": "Hard cap for single rendered lines.", "type": "number", "default": 180, "category": "Safety", "apply": "live" }
+      ]
+    }
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "*",
+    "@mariozechner/pi-tui": "*"
+  },
+  "files": ["extensions/", "README.md", "package.json"]
+}

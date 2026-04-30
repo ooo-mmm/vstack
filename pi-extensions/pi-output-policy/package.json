@@ -1,0 +1,33 @@
+{
+  "name": "pi-output-policy",
+  "version": "0.1.0",
+  "description": "OMP-style large-output policy for Pi tool results: minimization, bounded truncation, and spill-file preservation.",
+  "license": "MIT",
+  "keywords": ["pi-package", "pi", "coding-agent", "truncation", "output"],
+  "pi": {
+    "extensions": ["./extensions/output-policy.ts"]
+  },
+  "vstack": {
+    "extensionManager": {
+      "displayName": "Output Policy",
+      "settings": [
+        { "key": "enabled", "label": "Enable output policy", "description": "Apply minimization, spill, truncation, and UI safety caps to tool results.", "type": "boolean", "default": true, "category": "General", "apply": "live" },
+        { "key": "spillThresholdKb", "label": "Output spill threshold (KB)", "description": "Preserve full output externally when text exceeds this size.", "type": "number", "default": 50, "category": "Truncation", "apply": "live" },
+        { "key": "inlineTailKb", "label": "Inline tail size (KB)", "description": "Bytes retained inline for tail-truncated command/log output after spill.", "type": "number", "default": 20, "category": "Truncation", "apply": "live" },
+        { "key": "inlineTailLines", "label": "Inline tail lines", "description": "Lines retained inline for tail-truncated command/log output after spill.", "type": "number", "default": 500, "category": "Truncation", "apply": "live" },
+        { "key": "maxTextBlockKb", "label": "Max UI-safe text block (KB)", "description": "Hard cap for text blocks even when spill is disabled or fails.", "type": "number", "default": 50, "category": "UI Safety", "apply": "live" },
+        { "key": "maxLineCount", "label": "Max UI-safe line count", "description": "Hard line cap for rendered/result text.", "type": "number", "default": 3000, "category": "UI Safety", "apply": "live" },
+        { "key": "maxLineWidth", "label": "Max UI-safe line width", "description": "Truncate individual pathological lines to this character width.", "type": "number", "default": 2000, "category": "UI Safety", "apply": "live" },
+        { "key": "preserveFullOutput", "label": "Preserve full output externally", "description": "Write oversized full output to an extension-managed artifact file when possible.", "type": "boolean", "default": true, "category": "Storage", "apply": "live" },
+        { "key": "shellMinimizer.enabled", "label": "Reduce verbose shell output", "description": "Compress repetitive git/npm/cargo/test output before truncation.", "type": "boolean", "default": true, "category": "Shell Minimizer", "apply": "live" },
+        { "key": "shellMinimizer.only", "label": "Shell minimizer allowlist", "description": "Comma-separated command families to minimize. Empty means built-in defaults.", "type": "string", "default": "", "category": "Shell Minimizer", "apply": "live" },
+        { "key": "shellMinimizer.except", "label": "Shell minimizer denylist", "description": "Comma-separated command families that should never be minimized.", "type": "string", "default": "", "category": "Shell Minimizer", "apply": "live" },
+        { "key": "shellMinimizer.maxCaptureBytes", "label": "Shell minimizer max capture bytes", "description": "Do not run minimizer on shell output larger than this byte count; truncate directly instead.", "type": "number", "default": 1048576, "category": "Shell Minimizer", "apply": "live" }
+      ]
+    }
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "*"
+  },
+  "files": ["extensions/", "README.md", "package.json"]
+}
