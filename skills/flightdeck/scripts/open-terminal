@@ -321,7 +321,35 @@ spawn_oc_attach_tmux() {
     return 1
   fi
 
-  if ! server_pid=$(start_oc_server "$bin" "$port" "$wt_path"); then
+  # Pre-create the tmux window WITH a captured pane id BEFORE starting
+  # the opencode server. Reason: the opentmux plugin (~/.config/opencode/
+  # plugins/opentmux) reads `process.env.TMUX_PANE` at server init to
+  # decide which pane to split sub-agents off of. setsid+nohup on the
+  # server otherwise inherits TMUX_PANE from the launcher's shell — which
+  # is the master pane (e.g., HT:pi.1) — so every sub-agent split lands
+  # in the master window instead of the per-issue window. By creating
+  # the inner pane first and exporting TMUX_PANE=<that pane id> for
+  # `start_oc_server`, the plugin captures the correct pane and splits
+  # sub-agents into the issue's own window.
+  if [[ -z "${TMUX:-}" ]]; then
+    echo "  oc-attach-unavailable: not inside a tmux session" >&2
+    oc_release_port "$port"
+    return 1
+  fi
+  local last_idx
+  last_idx=$(tmux list-windows -F '#{window_index}' | tail -1)
+  pane_id=$(tmux new-window -a -t ":${last_idx}" -n "$issue" -c "$wt_path" -d -P -F '#{pane_id}' 2>/dev/null)
+  if [[ -z "$pane_id" ]]; then
+    echo "  oc-attach-unavailable: failed to create tmux window for $issue" >&2
+    oc_release_port "$port"
+    return 1
+  fi
+
+  # Start the server with TMUX_PANE pointing at the just-created inner
+  # pane. The function-level prefix flows through the inner subshell's
+  # setsid+nohup fork.
+  if ! server_pid=$(TMUX_PANE="$pane_id" start_oc_server "$bin" "$port" "$wt_path"); then
+    tmux kill-pane -t "$pane_id" 2>/dev/null || true
     oc_release_port "$port"
     return 1
   fi
@@ -334,17 +362,20 @@ spawn_oc_attach_tmux() {
 
   if ! sid=$(create_oc_session "$bin" "http://127.0.0.1:$port" "$wt_path"); then
     kill -- -"$server_pid" 2>/dev/null || kill "$server_pid" 2>/dev/null || true
+    tmux kill-pane -t "$pane_id" 2>/dev/null || true
     oc_release_port "$port"
     return 1
   fi
 
+  # Send the actual `opencode attach` command into the pre-created pane.
+  # Using send-keys preserves the existing UX (clear → type cmd → Enter)
+  # so the pane shows the command in its scrollback.
   local attach_cmd
   attach_cmd=$(printf "%s attach http://127.0.0.1:%s --session %s" "$bin" "$port" "$sid")
-  if ! open_tmux "$wt_path" "$issue" "$attach_cmd"; then
-    kill -- -"$server_pid" 2>/dev/null || kill "$server_pid" 2>/dev/null || true
-    oc_release_port "$port"
-    return 1
-  fi
+  tmux send-keys -t "$pane_id" "clear" Enter
+  tmux send-keys -t "$pane_id" -l "$attach_cmd"
+  tmux send-keys -t "$pane_id" Enter
+  echo "  Opened tmux window '$issue' in $wt_path (pane $pane_id)"
 
   local spawn_file abs_wt
   spawn_file=$(oc_spawn_file "$issue")
@@ -495,7 +526,13 @@ spawn_cc_channel_tmux() {
     return 1
   fi
 
-  uuid=$(cc_uuid_for_issue "$issue")
+  # Fresh UUID per spawn. cc_uuid_for_issue is deterministic (md5 of
+  # issue id) which collides on re-spawn: the JSONL transcript from
+  # the prior spawn lives at ~/.claude/projects/<encoded-cwd>/<uuid>.jsonl
+  # and claude refuses with "Session ID … is already in use" when a
+  # new launch tries to bind the same uuid. Random per-spawn matches
+  # how oc and cx allocate identities.
+  uuid=$(cat /proc/sys/kernel/random/uuid)
   mcp_path=$(cc_write_mcp_config "$issue" "$port")
 
   local bypass; bypass="$(bypass_flag_for_harness claude)"
@@ -631,34 +668,46 @@ spawn_cx_remote_tmux() {
     return 1
   fi
 
+  # Snapshot existing thread set BEFORE spawning the TUI so we can pick
+  # out only the new thread this spawn registers. Earlier impl used
+  # `arr | last` and broke when a 2nd codex pane spawned: the loop saw
+  # the prior pane's thread and exited before the new pane's thread had
+  # registered, so both panes' spawn files ended up pointing at thread #1.
+  local pre_threads_json
+  pre_threads_json=$(cx_bridge_run list --url "$ws_url" 2>/dev/null \
+    | jq -c '
+        ( .data // .items // .threads // [] )
+        | map(if type == "string" then . else (.threadId // .id // empty) end)
+        | map(select(. != null and . != ""))
+      ' 2>/dev/null)
+  : "${pre_threads_json:=[]}"
+
   # Spawn the per-pane TUI bound to the shared server.
   local cmd; cmd="$cx_bin --remote $ws_url"
   if ! open_tmux "$wt_path" "$issue" "$cmd"; then
     return 1
   fi
 
-  # Discover the thread id this TUI registered with. Poll for ≤30s.
-  # `bridge list` returns { result: { items: [...] } } with thread
-  # ids. The most-recently-loaded thread is presumed to be ours; in
-  # practice flightdeck spawns serially so this is unambiguous.
+  # Discover the thread id this TUI registered with by polling for a
+  # thread present now but absent from the pre-spawn snapshot.
   local thread_id="" deadline=$((SECONDS + 30))
   while (( SECONDS < deadline )); do
     local list_out
     list_out=$(cx_bridge_run list --url "$ws_url" 2>/dev/null || echo "")
     if [[ -n "$list_out" ]]; then
-      thread_id=$(jq -r '
-        ( .data // .items // .threads // [] ) as $arr
-        | ($arr | last) as $entry
-        | if $entry == null then empty
-          elif ($entry | type) == "string" then $entry
-          else ($entry.threadId // $entry.id // empty) end
+      thread_id=$(jq -r --argjson pre "$pre_threads_json" '
+        ( .data // .items // .threads // [] )
+        | map(if type == "string" then . else (.threadId // .id // empty) end)
+        | map(select(. != null and . != ""))
+        | (. - $pre)
+        | first // empty
       ' <<< "$list_out" 2>/dev/null)
       if [[ -n "$thread_id" && "$thread_id" != "null" ]]; then break; fi
     fi
     sleep 1
   done
   if [[ -z "$thread_id" || "$thread_id" == "null" ]]; then
-    echo "  cx-bridge-unavailable: thread discovery timed out for $issue (server $ws_url up but no loaded thread)" >&2
+    echo "  cx-bridge-unavailable: thread discovery timed out for $issue (no new thread on $ws_url after spawn)" >&2
     return 1
   fi
 
