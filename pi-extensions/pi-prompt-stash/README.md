@@ -1,6 +1,6 @@
-# prompt-stash
+# pi-prompt-stash
 
-Per-session prompt stash history for Pi.
+A polished Pi package for per-session prompt stash history.
 
 ## Usage
 
@@ -17,4 +17,4 @@ Popup controls:
 - `Ctrl+X` to delete all stashed prompts, then `y` to confirm.
 - `Esc` to close.
 
-Stashes are stored per Pi session under `~/.pi/agent/vstack/prompt-stash/sessions/<session-id>/prompt-stash.json`, even when the extension is enabled by project settings. Legacy `.pi/prompt-stash.json` files are imported into the current session and removed on load/use.
+Stashes are stored per Pi session under `~/.pi/agent/vstack/prompt-stash/sessions/<session-id>/prompt-stash.json`, even when the package is enabled by project settings. The extension still reads legacy manager config under `prompt-stash`, and legacy `.pi/prompt-stash.json` files are imported into the current session and removed on load/use.

@@ -8,6 +8,9 @@ import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileS
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 
+const PACKAGE_ID = "pi-prompt-stash";
+const LEGACY_PACKAGE_ID = "prompt-stash";
+const CONFIG_IDS = [LEGACY_PACKAGE_ID, PACKAGE_ID] as const;
 const DEFAULT_STORE_FILE = "prompt-stash.json";
 const STORE_VERSION = 1;
 const POPUP_WIDTH = 92;
@@ -15,6 +18,8 @@ const POPUP_MAX_HEIGHT = "80%";
 const LIST_ROWS = 10;
 const PADDING_X = 4;
 const PADDING_Y = 2;
+// Keep the legacy symbol so stale prompt-stash installs and the renamed
+// pi-prompt-stash package do not double-register the same command/shortcut.
 const INSTALL_SYMBOL = Symbol.for("vstack.prompt-stash.installed");
 const DEFAULT_SHORTCUT = "alt+s";
 
@@ -79,8 +84,10 @@ function readVstackConfig(cwd?: string): VstackConfig {
 		if (!existsSync(path)) continue;
 		try {
 			const parsed = JSON.parse(readFileSync(path, "utf8"));
-			const config = parsed?.vstack?.extensionManager?.config?.["prompt-stash"];
-			if (config && typeof config === "object" && !Array.isArray(config)) Object.assign(merged, config);
+			for (const id of CONFIG_IDS) {
+				const config = parsed?.vstack?.extensionManager?.config?.[id];
+				if (config && typeof config === "object" && !Array.isArray(config)) Object.assign(merged, config);
+			}
 		} catch {
 			// Ignore malformed optional manager config.
 		}

@@ -121,6 +121,8 @@ pub fn discover_pi_extensions(dir: &Path) -> Result<Vec<PiExtension>> {
 /// not by the resources they register, so a renamed package can leave a legacy
 /// package behind that registers the same tool/command and crashes Pi startup.
 const PI_EXTENSION_RENAMES: &[(&str, &[&str])] = &[
+    // `prompt-stash` was renamed to match vstack's Pi package naming convention.
+    ("pi-prompt-stash", &["prompt-stash"]),
     // `pi-subagents` was renamed once the package grew persistent tmux panes.
     ("pi-subagents-tmux", &["pi-subagents"]),
 ];
@@ -580,6 +582,11 @@ mod tests {
             relative_settings_entry("pi-statusline"),
             "./packages/pi-statusline"
         );
+    }
+
+    #[test]
+    fn prompt_stash_rename_has_legacy_name() {
+        assert_eq!(legacy_names_for("pi-prompt-stash"), &["prompt-stash"]);
     }
 
     #[test]

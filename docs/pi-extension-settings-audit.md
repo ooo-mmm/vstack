@@ -46,7 +46,7 @@ Settings persist under `vstack.extensionManager.config.<packageName>` in Pi `set
 - Useful settings: footer replacement, compact prompt, input padding, git refresh timeout, dirty marker display.
 - Apply semantics: git/dirty settings are live-ish; editor/footer changes need reload/session restart.
 
-### `prompt-stash`
+### `pi-prompt-stash`
 
 - Toggle: `enabled` registers/unregisters `/prompt-stash` and the stash/pop shortcut after reload.
 - Useful settings: per-session store file name, shortcut, popup width/max-height, visible stash rows, deduplication.

@@ -399,12 +399,12 @@ All vstack Pi packages declare `vstack.extensionManager.settings` metadata, incl
 - **Settings:** enablement, footer replacement, compact prompt, input padding, git refresh timeout, dirty marker.
 - **More:** [pi-extensions/pi-statusline/README.md](pi-extensions/pi-statusline/README.md).
 
-#### `prompt-stash`
+#### `pi-prompt-stash`
 
 - **Purpose:** Per-session prompt stash history with a stash/pop editor workflow.
 - **Commands/UI:** `/prompt-stash`; configurable stash shortcut (`Alt+S` by default).
 - **Settings:** store file, shortcut, popup dimensions, visible rows, deduplication.
-- **More:** [pi-extensions/prompt-stash/README.md](pi-extensions/prompt-stash/README.md).
+- **More:** [pi-extensions/pi-prompt-stash/README.md](pi-extensions/pi-prompt-stash/README.md).
 
 #### `pi-qol`
 

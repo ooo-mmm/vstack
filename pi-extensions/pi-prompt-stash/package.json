@@ -1,14 +1,15 @@
 {
-  "name": "prompt-stash",
+  "name": "pi-prompt-stash",
   "version": "0.1.0",
-  "description": "Pi extension for per-session prompt stash history with Alt+S stash/pop workflow.",
+  "description": "Pi package for per-session prompt stash history with Alt+S stash/pop workflow.",
   "license": "MIT",
   "keywords": [
     "pi-package",
     "pi",
     "coding-agent",
     "prompt",
-    "stash"
+    "stash",
+    "editor"
   ],
   "pi": {
     "extensions": [
