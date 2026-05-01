@@ -1341,15 +1341,19 @@ export default function qol(pi: ExtensionAPI): void {
 		questionSubscribeTimer.unref?.();
 	};
 
-	const maybeNotifyTaskCompletion = (ctx: ExtensionContext, state: any) => {
+	let pendingTaskCompleteNotification: string | undefined;
+	const maybeNotifyTaskCompletion = (_ctx: ExtensionContext, state: any) => {
 		const stats = taskStats(state);
 		if (!stats) return;
 		const previous = lastTaskStats;
 		lastTaskStats = stats;
-		if (stats.total === 0 || stats.remaining !== 0 || stats.completed !== stats.total) return;
+		if (stats.total === 0 || stats.remaining !== 0 || stats.completed !== stats.total) {
+			pendingTaskCompleteNotification = undefined;
+			return;
+		}
 		if (previous && previous.total === stats.total && previous.remaining === 0 && previous.completed === stats.completed) return;
 		if (previous && previous.remaining <= 0) return;
-		sendQolNotification(ctx, "task-complete", `Task list complete: ${stats.completed}/${stats.total} done.`, "info", "task-complete");
+		pendingTaskCompleteNotification = `Task list complete: ${stats.completed}/${stats.total} done.`;
 	};
 
 	let currentCtx: ExtensionContext | undefined;
@@ -1443,13 +1447,20 @@ export default function qol(pi: ExtensionAPI): void {
 	});
 	pi.on("agent_end", (event, ctx) => {
 		scheduleIdleCompaction(ctx);
-		if (ctx.hasPendingMessages?.()) return;
 		const text = lastAssistantTextFromAgentEnd(event, ctx);
 		const critical = criticalInfo(text);
 		if (critical) {
+			pendingTaskCompleteNotification = undefined;
 			sendQolNotification(ctx, "critical", `Critical: ${critical}`, "error", `critical:${critical.slice(0, 80)}`);
 			return;
 		}
+		if (pendingTaskCompleteNotification) {
+			const body = pendingTaskCompleteNotification;
+			pendingTaskCompleteNotification = undefined;
+			sendQolNotification(ctx, "task-complete", body, "info", "task-complete");
+			return;
+		}
+		if (ctx.hasPendingMessages?.()) return;
 		if (needsDirection(text)) {
 			sendQolNotification(ctx, "direction", "Pi is awaiting your direction.", "warning", "direction");
 			return;

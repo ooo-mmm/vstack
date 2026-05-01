@@ -487,6 +487,7 @@ export default function taskPanel(pi: ExtensionAPI): void {
 	let state: TodoState = emptyState();
 	let activeCtx: ExtensionContext | undefined;
 	let lastReminderAt = 0;
+	let pendingCompletionMessage: { action: string; summary: string } | undefined;
 
 	const persist = () => {
 		state.updatedAt = new Date().toISOString();
@@ -622,9 +623,7 @@ export default function taskPanel(pi: ExtensionAPI): void {
 			});
 			const summary = toolResultSummary(params.action, message, state);
 			const deferAllCompleteDisplay = state.tasks.length > 0 && remainingCount(state) === 0 && !summary.startsWith("No task");
-			if (deferAllCompleteDisplay) {
-				pi.sendMessage({ customType: TASK_COMPLETE_MESSAGE_TYPE, content: summary, display: true, details: { action: params.action, summary } }, { deliverAs: "steer", triggerTurn: false });
-			}
+			pendingCompletionMessage = deferAllCompleteDisplay ? { action: params.action, summary } : undefined;
 			return { content: [{ type: "text", text: toolResultContent(summary, state, runCtx.cwd) }], details: { action: params.action, deferDisplay: deferAllCompleteDisplay, message, summary, state: cloneState(state) } };
 		},
 		renderCall(_args, theme) {
@@ -663,6 +662,13 @@ export default function taskPanel(pi: ExtensionAPI): void {
 		};
 	});
 	pi.on("agent_end", (_event, ctx) => {
+		if (pendingCompletionMessage && remainingCount(state) === 0) {
+			const completion = pendingCompletionMessage;
+			pendingCompletionMessage = undefined;
+			pi.sendMessage({ customType: TASK_COMPLETE_MESSAGE_TYPE, content: completion.summary, display: true, details: completion }, { triggerTurn: false });
+			return;
+		}
+		pendingCompletionMessage = undefined;
 		if (!settingBoolean("showIncompleteReminder", true, ctx.cwd) || remainingCount(state) === 0) return;
 		const now = Date.now();
 		if (now - lastReminderAt > 60_000) {
