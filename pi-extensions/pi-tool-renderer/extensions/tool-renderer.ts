@@ -1,5 +1,5 @@
-import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
-import { Text, truncateToWidth } from "@mariozechner/pi-tui";
+import { getLanguageFromPath, highlightCode, ToolExecutionComponent, type ExtensionAPI, type ExtensionContext } from "@mariozechner/pi-coding-agent";
+import { Container, Text, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
@@ -7,6 +7,8 @@ import { basename, dirname, extname, join, resolve } from "node:path";
 const INSTALL_SYMBOL = Symbol.for("vstack.pi-tool-renderer.installed");
 const USER_MESSAGE_PATCH_SYMBOL = Symbol.for("vstack.pi-tool-renderer.user-message-patch");
 const USER_MESSAGE_BOX_STATE_SYMBOL = Symbol.for("vstack.pi-tool-renderer.user-message-box-state");
+const TOOL_EXECUTION_RENDERER_PATCH_SYMBOL = Symbol.for("vstack.pi-tool-renderer.tool-execution-renderer-patch");
+const TOOL_CHROME_PATCH_SYMBOL = Symbol.for("vstack.pi-tool-renderer.tool-chrome-patch");
 
 const USER_MESSAGE_BG_TOKENS = new Set(["selectedBg", "userMessageBg", "customMessageBg", "toolPendingBg", "toolSuccessBg", "toolErrorBg"]);
 
@@ -64,6 +66,11 @@ function settingBoolean(key: string, fallback: boolean, cwd?: string): boolean {
 function settingString(key: string, fallback: string, cwd?: string): string {
 	const value = readVstackConfig(cwd)[key];
 	return typeof value === "string" ? value : fallback;
+}
+
+function settingEnum<T extends string>(key: string, allowed: readonly T[], fallback: T, cwd?: string): T {
+	const value = readVstackConfig(cwd)[key];
+	return typeof value === "string" && (allowed as readonly string[]).includes(value) ? (value as T) : fallback;
 }
 
 function userMessageBackgroundToken(cwd?: string): string {
@@ -129,6 +136,15 @@ function makeEmpty() {
 			return [];
 		},
 	};
+}
+
+function componentHasVisibleLines(component: unknown): boolean {
+	try {
+		const render = (component as any)?.render;
+		return typeof render === "function" && render.call(component, 120).length > 0;
+	} catch {
+		return false;
+	}
 }
 
 interface UserMessagePatchState {
@@ -232,15 +248,36 @@ function stackShell(cwd?: string): { renderShell?: "self" } {
 	return stackToolCalls(cwd) ? { renderShell: "self" } : {};
 }
 
+type ReadOutputMode = "hidden" | "summary" | "preview";
+type SearchOutputMode = "hidden" | "count" | "preview";
+type BashOutputMode = "hidden" | "summary" | "opencode" | "preview";
+type McpOutputMode = "hidden" | "summary" | "preview";
+
+function readOutputMode(cwd?: string): ReadOutputMode {
+	return settingEnum("readOutputMode", ["hidden", "summary", "preview"] as const, "preview", cwd);
+}
+
+function searchOutputMode(cwd?: string): SearchOutputMode {
+	return settingEnum("searchOutputMode", ["hidden", "count", "preview"] as const, "preview", cwd);
+}
+
+function bashOutputMode(cwd?: string): BashOutputMode {
+	return settingEnum("bashOutputMode", ["hidden", "summary", "opencode", "preview"] as const, "opencode", cwd);
+}
+
+function mcpOutputMode(cwd?: string): McpOutputMode {
+	return settingEnum("mcpOutputMode", ["hidden", "summary", "preview"] as const, "preview", cwd);
+}
+
 function stackPrefix(theme: any): string {
 	return theme.fg("accent", "● ");
 }
 
 function toolRule(theme: any, text: string): string {
 	try {
-		return theme.fg("borderMuted", text);
-	} catch {
 		return theme.fg("muted", text);
+	} catch {
+		return text;
 	}
 }
 
@@ -270,23 +307,25 @@ function readOnlyCallText(toolName: string, args: any, theme: any, cwd?: string)
 }
 
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
-const DIFF_RESET = "\x1b[0m";
-const DIFF_BG_ADD = "\x1b[48;2;18;48;31m";
-const DIFF_BG_DEL = "\x1b[48;2;54;24;27m";
-const DIFF_BG_CTX = "\x1b[49m";
-const DIFF_FG_ADD = "\x1b[38;2;110;220;145m";
-const DIFF_FG_DEL = "\x1b[38;2;235;120;120m";
-const DIFF_FG_DIM = "\x1b[38;2;130;135;145m";
-const DIFF_FG_RULE = "\x1b[38;2;72;76;86m";
-const DIFF_FG_NUM = "\x1b[38;2;105;112;125m";
+const ANSI_PRESENT_RE = /\x1b\[[0-9;]*m/;
 const DIFF_SPLIT_MIN_WIDTH = 132;
+const DIFF_SPLIT_MIN_CODE_WIDTH = 24;
+const DIFF_SPLIT_MAX_WRAP_LINES = 8;
+const DIFF_SPLIT_MAX_WRAP_RATIO = 0.55;
 const DIFF_LCS_CELL_LIMIT = 250_000;
 const DIFF_CONTEXT_LINES = 3;
 const MAX_DIFF_INPUT_BYTES = 700 * 1024;
+const DIFF_HIGHLIGHT_MAX_CHARS = 180_000;
+const DIFF_ADD_BG_TOKEN = "toolSuccessBg";
+const DIFF_DEL_BG_TOKEN = "toolErrorBg";
+const DIFF_WORD_BG_TOKEN = "selectedBg";
+const WORD_DIFF_CELL_LIMIT = 32_000;
+const WORD_DIFF_MIN_SIMILARITY = 0.2;
 
 type DiffKind = "ctx" | "add" | "del" | "sep";
 interface StructuredDiffLine {
 	content: string;
+	hunk?: number;
 	newNum: number | null;
 	oldNum: number | null;
 	type: DiffKind;
@@ -294,7 +333,9 @@ interface StructuredDiffLine {
 interface StructuredDiff {
 	additions: number;
 	chars: number;
+	hunks?: number;
 	lines: StructuredDiffLine[];
+	path?: string;
 	removals: number;
 }
 
@@ -310,7 +351,39 @@ function stripAnsi(text: string): string {
 }
 
 function visibleLength(text: string): number {
-	return stripAnsi(text).length;
+	return visibleWidth(text);
+}
+
+function diffDisplayContent(content: string): string {
+	return content.replace(/\t/g, "  ");
+}
+
+function hasAnsi(text: string): boolean {
+	return ANSI_PRESENT_RE.test(text);
+}
+
+function languageForPath(path?: string): string | undefined {
+	if (!path) return undefined;
+	try {
+		return getLanguageFromPath(path) as string | undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+function highlightDiffContent(content: string, path: string | undefined, theme: any, cwd?: string): string {
+	const display = diffDisplayContent(content);
+	if (!display || !settingBoolean("shikiDiffs", true, cwd)) return display;
+	if (display.length > 5000) return display;
+	const language = languageForPath(path);
+	if (!language) return display;
+	try {
+		const highlighted = highlightCode(display, language as never, theme);
+		const lines = Array.isArray(highlighted) ? highlighted : String(highlighted).replace(/\r\n/g, "\n").split("\n");
+		return lines[0] ?? display;
+	} catch {
+		return display;
+	}
 }
 
 function padVisible(text: string, width: number): string {
@@ -325,6 +398,172 @@ function terminalWidth(): number {
 
 function truncateAnsi(text: string, width: number): string {
 	return truncateToWidth(text, Math.max(1, width), "");
+}
+
+interface WordToken {
+	end: number;
+	start: number;
+	text: string;
+}
+
+interface WordDiffRanges {
+	newRanges: Array<[number, number]>;
+	oldRanges: Array<[number, number]>;
+	similarity: number;
+}
+
+function wordTokens(text: string): WordToken[] {
+	const tokens: WordToken[] = [];
+	const re = /\s+|[A-Za-z0-9_]+|[^\sA-Za-z0-9_]+/g;
+	let match: RegExpExecArray | null;
+	while ((match = re.exec(text))) tokens.push({ end: re.lastIndex, start: match.index, text: match[0] });
+	return tokens;
+}
+
+function changedRanges(tokens: WordToken[], common: boolean[]): Array<[number, number]> {
+	const ranges: Array<[number, number]> = [];
+	let start: number | null = null;
+	let end = 0;
+	for (let i = 0; i < tokens.length; i++) {
+		const token = tokens[i]!;
+		if (!common[i] && token.text.trim().length > 0) {
+			if (start === null) start = token.start;
+			end = token.end;
+		} else if (start !== null) {
+			ranges.push([start, end]);
+			start = null;
+		}
+	}
+	if (start !== null) ranges.push([start, end]);
+	return ranges;
+}
+
+function wordDiffRanges(oldText: string, newText: string): WordDiffRanges {
+	const oldTokens = wordTokens(oldText);
+	const newTokens = wordTokens(newText);
+	if (oldTokens.length === 0 && newTokens.length === 0) return { newRanges: [], oldRanges: [], similarity: 1 };
+	if (oldTokens.length * newTokens.length > WORD_DIFF_CELL_LIMIT) return { newRanges: [], oldRanges: [], similarity: 0 };
+	const width = newTokens.length + 1;
+	const table = new Uint16Array((oldTokens.length + 1) * (newTokens.length + 1));
+	for (let i = oldTokens.length - 1; i >= 0; i--) {
+		for (let j = newTokens.length - 1; j >= 0; j--) {
+			table[i * width + j] = oldTokens[i]!.text === newTokens[j]!.text
+				? table[(i + 1) * width + j + 1] + 1
+				: Math.max(table[(i + 1) * width + j], table[i * width + j + 1]);
+		}
+	}
+	const oldCommon = new Array(oldTokens.length).fill(false);
+	const newCommon = new Array(newTokens.length).fill(false);
+	let i = 0;
+	let j = 0;
+	let commonChars = 0;
+	while (i < oldTokens.length && j < newTokens.length) {
+		if (oldTokens[i]!.text === newTokens[j]!.text) {
+			oldCommon[i] = true;
+			newCommon[j] = true;
+			commonChars += oldTokens[i]!.text.length;
+			i++;
+			j++;
+		} else if (table[(i + 1) * width + j] >= table[i * width + j + 1]) {
+			i++;
+		} else {
+			j++;
+		}
+	}
+	const maxChars = Math.max(oldText.length, newText.length, 1);
+	return {
+		newRanges: changedRanges(newTokens, newCommon),
+		oldRanges: changedRanges(oldTokens, oldCommon),
+		similarity: commonChars / maxChars,
+	};
+}
+
+function styleRanges(text: string, ranges: Array<[number, number]>, baseStyle: (value: string) => string, highlightStyle: (value: string) => string): string {
+	if (ranges.length === 0 || hasAnsi(text)) return baseStyle(text);
+	const sorted = [...ranges].sort((a, b) => a[0] - b[0]);
+	let out = "";
+	let offset = 0;
+	for (const [start, end] of sorted) {
+		if (end <= offset || start >= text.length) continue;
+		const safeStart = Math.max(offset, start);
+		const safeEnd = Math.min(text.length, end);
+		if (safeStart > offset) out += baseStyle(text.slice(offset, safeStart));
+		out += highlightStyle(text.slice(safeStart, safeEnd));
+		offset = safeEnd;
+	}
+	if (offset < text.length) out += baseStyle(text.slice(offset));
+	return out;
+}
+
+function updateActiveAnsiStyle(code: string): string {
+	const match = code.match(/^\x1b\[([0-9;]*)m$/);
+	if (!match) return "";
+	const params = match[1] ? match[1].split(";").map((value) => Number.parseInt(value || "0", 10)) : [0];
+	if (params.some((value) => value === 0 || value === 39)) return "";
+	return code;
+}
+
+function styleAnsiVisibleRanges(
+	text: string,
+	ranges: Array<[number, number]>,
+	theme: any,
+	fgToken: string,
+	baseBgToken: string,
+	highlightBgToken: string,
+): string {
+	if (!hasAnsi(text)) {
+		const base = (value: string) => theme.bg(baseBgToken, theme.fg(fgToken, value));
+		const highlight = (value: string) => theme.bg(highlightBgToken, theme.fg(fgToken, value));
+		return styleRanges(text, ranges, base, highlight);
+	}
+
+	const sorted = [...ranges].sort((a, b) => a[0] - b[0]);
+	let rangeIndex = 0;
+	let visibleIndex = 0;
+	let activeStyle = "";
+	let out = "";
+	const ansiRe = /\x1b\[[0-9;]*m/g;
+
+	function inHighlightRange(index: number): boolean {
+		while (rangeIndex < sorted.length && index >= sorted[rangeIndex]![1]) rangeIndex++;
+		const range = sorted[rangeIndex];
+		return Boolean(range && index >= range[0] && index < range[1]);
+	}
+
+	function emitChunk(chunk: string, highlighted: boolean): void {
+		if (!chunk) return;
+		const bgToken = highlighted ? highlightBgToken : baseBgToken;
+		const content = activeStyle ? chunk : theme.fg(fgToken, chunk);
+		out += theme.bg(bgToken, content);
+		if (activeStyle) out += activeStyle;
+	}
+
+	function emitPlain(plain: string): void {
+		let chunk = "";
+		let highlighted: boolean | undefined;
+		for (let index = 0; index < plain.length; index++) {
+			const nextHighlighted = inHighlightRange(visibleIndex);
+			if (highlighted !== undefined && nextHighlighted !== highlighted) {
+				emitChunk(chunk, highlighted);
+				chunk = "";
+			}
+			highlighted = nextHighlighted;
+			chunk += plain[index]!;
+			visibleIndex++;
+		}
+		if (highlighted !== undefined) emitChunk(chunk, highlighted);
+	}
+
+	let offset = 0;
+	let match: RegExpExecArray | null;
+	while ((match = ansiRe.exec(text))) {
+		emitPlain(text.slice(offset, match.index));
+		out += match[0];
+		activeStyle = updateActiveAnsiStyle(match[0]);
+		offset = match.index + match[0].length;
+	}
+	emitPlain(text.slice(offset));
+	return out;
 }
 
 function blinkKey(context: any): unknown {
@@ -371,60 +610,69 @@ function blinkingPrefix(theme: any, context: any): string {
 	return theme.fg(on ? "success" : "muted", on ? "● " : "○ ");
 }
 
-const NF_DIR = "\x1b[38;2;100;140;220m\x1b[0m";
-const NF_FILE = "\x1b[38;2;130;130;130m\x1b[0m";
+function renderPendingCall(call: string, theme: any, context: any, cwd?: string): TruncatedLines | ReturnType<typeof makeEmpty> {
+	if (!context?.executionStarted || !context?.isPartial || stackToolCalls(context?.cwd ?? cwd)) return makeEmpty();
+	return makeTruncatedLines(`${blinkingPrefix(theme, context)}${call}`);
+}
+
+function renderPendingDetail(text: string, theme: any): TruncatedLines {
+	return makeTruncatedLines(`${treeConnector(theme, "└")}${theme.fg("warning", text)}`);
+}
+
+const NF_DIR = "";
+const NF_FILE = "";
 const ICON_BY_NAME: Record<string, string> = {
-	"dockerfile": "\x1b[38;2;56;152;236m\x1b[0m",
-	"license": "\x1b[38;2;218;218;218m\x1b[0m",
-	"makefile": "\x1b[38;2;130;130;130m\x1b[0m",
-	"package.json": "\x1b[38;2;137;180;130m\x1b[0m",
-	"readme.md": "\x1b[38;2;66;165;245m󰂺\x1b[0m",
-	"tsconfig.json": "\x1b[38;2;49;120;198m\x1b[0m",
+	"dockerfile": "",
+	"license": "",
+	"makefile": "",
+	"package.json": "",
+	"readme.md": "󰂺",
+	"tsconfig.json": "",
 };
 const ICON_BY_EXT: Record<string, string> = {
-	bash: "\x1b[38;2;137;180;130m\x1b[0m",
-	c: "\x1b[38;2;85;154;211m\x1b[0m",
-	cpp: "\x1b[38;2;85;154;211m\x1b[0m",
-	css: "\x1b[38;2;66;165;245m\x1b[0m",
-	gif: "\x1b[38;2;160;116;196m\x1b[0m",
-	go: "\x1b[38;2;0;173;216m\x1b[0m",
-	graphql: "\x1b[38;2;224;51;144m󰡷\x1b[0m",
-	html: "\x1b[38;2;228;77;38m\x1b[0m",
-	java: "\x1b[38;2;204;62;68m\x1b[0m",
-	jpg: "\x1b[38;2;160;116;196m\x1b[0m",
-	jpeg: "\x1b[38;2;160;116;196m\x1b[0m",
-	js: "\x1b[38;2;241;224;90m\x1b[0m",
-	json: "\x1b[38;2;241;224;90m\x1b[0m",
-	jsx: "\x1b[38;2;97;218;251m\x1b[0m",
-	lock: "\x1b[38;2;130;130;130m\x1b[0m",
-	lua: "\x1b[38;2;81;160;207m\x1b[0m",
-	md: "\x1b[38;2;66;165;245m󰍔\x1b[0m",
-	png: "\x1b[38;2;160;116;196m\x1b[0m",
-	py: "\x1b[38;2;55;118;171m\x1b[0m",
-	rb: "\x1b[38;2;204;52;45m\x1b[0m",
-	rs: "\x1b[38;2;222;165;132m\x1b[0m",
-	scss: "\x1b[38;2;207;100;154m\x1b[0m",
-	sh: "\x1b[38;2;137;180;130m\x1b[0m",
-	sql: "\x1b[38;2;218;218;218m\x1b[0m",
-	svg: "\x1b[38;2;255;180;50m󰜡\x1b[0m",
-	svelte: "\x1b[38;2;255;62;0m\x1b[0m",
-	toml: "\x1b[38;2;160;116;196m\x1b[0m",
-	ts: "\x1b[38;2;49;120;198m\x1b[0m",
-	tsx: "\x1b[38;2;49;120;198m\x1b[0m",
-	vue: "\x1b[38;2;65;184;131m\x1b[0m",
-	xml: "\x1b[38;2;228;77;38m󰗀\x1b[0m",
-	yaml: "\x1b[38;2;160;116;196m\x1b[0m",
-	yml: "\x1b[38;2;160;116;196m\x1b[0m",
-	zsh: "\x1b[38;2;137;180;130m\x1b[0m",
+	bash: "",
+	c: "",
+	cpp: "",
+	css: "",
+	gif: "",
+	go: "",
+	graphql: "󰡷",
+	html: "",
+	java: "",
+	jpg: "",
+	jpeg: "",
+	js: "",
+	json: "",
+	jsx: "",
+	lock: "",
+	lua: "",
+	md: "󰍔",
+	png: "",
+	py: "",
+	rb: "",
+	rs: "",
+	scss: "",
+	sh: "",
+	sql: "",
+	svg: "󰜡",
+	svelte: "",
+	toml: "",
+	ts: "",
+	tsx: "",
+	vue: "",
+	xml: "󰗀",
+	yaml: "",
+	yml: "",
+	zsh: "",
 };
 
-function nerdIcon(pathText: string, isDirectory = false): string {
-	if (isDirectory) return NF_DIR;
+function nerdIcon(pathText: string, isDirectory = false, theme?: any): string {
+	if (isDirectory) return theme?.fg ? theme.fg("accent", NF_DIR) : NF_DIR;
 	const clean = stripAnsi(pathText).trim().replace(/\/$/, "");
 	const name = basename(clean).toLowerCase();
-	if (ICON_BY_NAME[name]) return ICON_BY_NAME[name];
-	const ext = extname(name).replace(/^\./, "").toLowerCase();
-	return ICON_BY_EXT[ext] ?? NF_FILE;
+	const icon = ICON_BY_NAME[name] ?? ICON_BY_EXT[extname(name).replace(/^\./, "").toLowerCase()] ?? NF_FILE;
+	const token = icon === NF_FILE ? "muted" : "accent";
+	return theme?.fg ? theme.fg(token, icon) : icon;
 }
 
 function renderPathListPreview(output: string, toolName: "find" | "ls", theme: any, expanded: boolean, cwd?: string): string {
@@ -436,7 +684,7 @@ function renderPathListPreview(output: string, toolName: "find" | "ls", theme: a
 		const clean = stripAnsi(item).trim();
 		const isDir = clean.endsWith("/");
 		const branch = index === shown.length - 1 && shown.length === rawItems.length ? "└" : "├";
-		const icon = nerdIcon(clean, isDir);
+		const icon = nerdIcon(clean, isDir, theme);
 		const label = isDir ? theme.fg("accent", theme.bold(clean)) : theme.fg("dim", clean);
 		return `${treeConnector(theme, branch as "├" | "└")}${icon} ${label}`;
 	});
@@ -507,11 +755,44 @@ function diffOps(oldLines: string[], newLines: string[]): Array<{ text: string; 
 
 function hiddenDiffLine(count: number): StructuredDiffLine {
 	return {
-		content: `… ${count} unchanged line${count === 1 ? "" : "s"} …`,
+		content: count > 0 ? `… ${count} unchanged line${count === 1 ? "" : "s"} …` : "…",
 		newNum: null,
 		oldNum: null,
 		type: "sep",
 	};
+}
+
+function assignHunkNumbers(lines: StructuredDiffLine[]): { hunks: number; lines: StructuredDiffLine[] } {
+	let hunk = 0;
+	let inHunk = false;
+	const numbered = lines.map((line) => {
+		if (line.type === "sep") {
+			inHunk = false;
+			return { ...line, hunk: undefined };
+		}
+		if (line.type === "add" || line.type === "del") {
+			if (!inHunk) {
+				hunk++;
+				inHunk = true;
+			}
+			return { ...line, hunk };
+		}
+		return inHunk ? { ...line, hunk } : line;
+	});
+	return { hunks: hunk, lines: numbered };
+}
+
+function countStructuredHunks(lines: StructuredDiffLine[]): number {
+	const assigned = assignHunkNumbers(lines);
+	return assigned.hunks;
+}
+
+function hiddenHunksAfter(allRows: StructuredDiffLine[], shownRows: StructuredDiffLine[]): number {
+	const shown = new Set(shownRows.map((line) => line.hunk).filter((hunk): hunk is number => typeof hunk === "number"));
+	const hidden = new Set(allRows.slice(shownRows.length).map((line) => line.hunk).filter((hunk): hunk is number => typeof hunk === "number"));
+	let count = 0;
+	for (const hunk of hidden) if (!shown.has(hunk)) count++;
+	return count;
 }
 
 function compactStructuredDiffLines(lines: StructuredDiffLine[], contextLines = DIFF_CONTEXT_LINES): StructuredDiffLine[] {
@@ -564,10 +845,11 @@ function buildStructuredDiff(oldText: string, newText: string): StructuredDiff {
 			additions++;
 		}
 	}
-	return { additions, chars: oldText.length + newText.length, lines: compactStructuredDiffLines(lines), removals };
+	const numbered = assignHunkNumbers(compactStructuredDiffLines(lines));
+	return { additions, chars: oldText.length + newText.length, hunks: numbered.hunks, lines: numbered.lines, removals };
 }
 
-function diffStatBar(additions: number, removals: number): string {
+function diffStatBar(additions: number, removals: number, theme: any): string {
 	const total = additions + removals;
 	if (total <= 0) return "";
 	const slots = Math.max(6, Math.min(18, Math.ceil(total / 3)));
@@ -575,38 +857,90 @@ function diffStatBar(additions: number, removals: number): string {
 	if (additions > 0 && addSlots === 0) addSlots = 1;
 	if (removals > 0 && addSlots === slots) addSlots = slots - 1;
 	const delSlots = slots - addSlots;
-	return `${DIFF_FG_DIM}[${DIFF_RESET}${DIFF_FG_ADD}${"━".repeat(addSlots)}${DIFF_FG_DEL}${"━".repeat(delSlots)}${DIFF_RESET}${DIFF_FG_DIM}]${DIFF_RESET}`;
+	return `${theme.fg("dim", "[")}${theme.fg("toolDiffAdded", "━".repeat(addSlots))}${theme.fg("toolDiffRemoved", "━".repeat(delSlots))}${theme.fg("dim", "]")}`;
 }
 
-function diffSummary(diff: StructuredDiff, theme: any): string {
+function diffSummary(diff: StructuredDiff, theme: any, cwd?: string): string {
 	const parts: string[] = [];
 	if (diff.additions > 0) parts.push(theme.fg("success", `+${diff.additions}`));
 	if (diff.removals > 0) parts.push(theme.fg("error", `-${diff.removals}`));
 	if (parts.length === 0) return theme.fg("muted", "no changes");
-	const bar = diffStatBar(diff.additions, diff.removals);
-	return `${parts.join(" ")}${bar ? ` ${bar}` : ""}`;
+	const bar = diffStatBar(diff.additions, diff.removals, theme);
+	const hunks = diff.hunks ?? countStructuredHunks(diff.lines);
+	let summary = `${parts.join(" ")}${bar ? ` ${bar}` : ""}`;
+	if (settingBoolean("showDiffHunkMeta", true, cwd) && hunks > 0) summary += theme.fg("dim", ` · ${hunks} hunk${hunks === 1 ? "" : "s"}`);
+	return summary;
 }
 
-function colorDiffText(line: StructuredDiffLine, text: string): string {
-	if (line.type === "add") return `${DIFF_BG_ADD}${DIFF_FG_ADD}${text}${DIFF_RESET}`;
-	if (line.type === "del") return `${DIFF_BG_DEL}${DIFF_FG_DEL}${text}${DIFF_RESET}`;
-	if (line.type === "sep") return `${DIFF_FG_DIM}${text}${DIFF_RESET}`;
-	return `${DIFF_BG_CTX}${DIFF_FG_DIM}${text}${DIFF_RESET}`;
+function colorDiffText(line: StructuredDiffLine, text: string, theme: any, ranges: Array<[number, number]> = []): string {
+	if (line.type === "sep") return theme.fg("dim", text);
+	if (line.type === "ctx") return hasAnsi(text) ? text : theme.fg("toolDiffContext", text);
+
+	const fgToken = line.type === "add" ? "toolDiffAdded" : "toolDiffRemoved";
+	const bgToken = line.type === "add" ? DIFF_ADD_BG_TOKEN : DIFF_DEL_BG_TOKEN;
+	return styleAnsiVisibleRanges(text, ranges, theme, fgToken, bgToken, DIFF_WORD_BG_TOKEN);
 }
 
 function formatNum(value: number | null, width: number): string {
 	return value === null ? " ".repeat(width) : `${" ".repeat(Math.max(0, width - String(value).length))}${value}`;
 }
 
-function renderUnifiedDiff(diff: StructuredDiff, rows: StructuredDiffLine[], width: number): string[] {
+function lineWordRanges(line: StructuredDiffLine, mate: StructuredDiffLine | null, cwd?: string): Array<[number, number]> {
+	if (!mate || !settingBoolean("wordDiffHighlights", true, cwd)) return [];
+	if (!((line.type === "del" && mate.type === "add") || (line.type === "add" && mate.type === "del"))) return [];
+	const oldText = diffDisplayContent(line.type === "del" ? line.content : mate.content);
+	const newText = diffDisplayContent(line.type === "add" ? line.content : mate.content);
+	const ranges = wordDiffRanges(oldText, newText);
+	if (ranges.similarity < WORD_DIFF_MIN_SIMILARITY) return [];
+	return line.type === "del" ? ranges.oldRanges : ranges.newRanges;
+}
+
+function highlightedLineBody(line: StructuredDiffLine, theme: any, path: string | undefined, cwd?: string): string {
+	if (line.type === "sep") return line.content || " ";
+	return highlightDiffContent(line.content, path, theme, cwd) || " ";
+}
+
+function renderUnifiedLine(
+	line: StructuredDiffLine,
+	width: number,
+	numWidth: number,
+	theme: any,
+	path: string | undefined,
+	cwd: string | undefined,
+	ranges: Array<[number, number]> = [],
+): string {
+	const sign = line.type === "add" ? "+" : line.type === "del" ? "-" : " ";
+	const signToken = line.type === "add" ? "toolDiffAdded" : line.type === "del" ? "toolDiffRemoved" : "toolDiffContext";
+	const gutter = `${theme.fg("muted", `${formatNum(line.oldNum, numWidth)} ${formatNum(line.newNum, numWidth)}`)} ${theme.fg(signToken, sign)} `;
+	const contentWidth = Math.max(10, width - visibleLength(gutter));
+	return `${gutter}${truncateAnsi(colorDiffText(line, highlightedLineBody(line, theme, path, cwd), theme, ranges), contentWidth)}`;
+}
+
+function renderUnifiedDiff(diff: StructuredDiff, rows: StructuredDiffLine[], width: number, theme: any, path?: string, cwd?: string): string[] {
 	const maxNum = Math.max(1, ...diff.lines.map((line) => Math.max(line.oldNum ?? 0, line.newNum ?? 0)));
 	const numWidth = Math.max(2, String(maxNum).length);
-	return rows.map((line) => {
-		const sign = line.type === "add" ? "+" : line.type === "del" ? "-" : " ";
-		const gutter = `${DIFF_FG_NUM}${formatNum(line.oldNum, numWidth)} ${formatNum(line.newNum, numWidth)}${DIFF_RESET} ${line.type === "add" ? DIFF_FG_ADD : line.type === "del" ? DIFF_FG_DEL : DIFF_FG_DIM}${sign}${DIFF_RESET} `;
-		const contentWidth = Math.max(10, width - visibleLength(gutter));
-		return `${gutter}${truncateAnsi(colorDiffText(line, line.content || " "), contentWidth)}`;
-	});
+	const out: string[] = [];
+	let index = 0;
+	while (index < rows.length) {
+		const line = rows[index]!;
+		if (line.type === "ctx" || line.type === "sep") {
+			out.push(renderUnifiedLine(line, width, numWidth, theme, path ?? diff.path, cwd));
+			index++;
+			continue;
+		}
+		const dels: StructuredDiffLine[] = [];
+		const adds: StructuredDiffLine[] = [];
+		while (index < rows.length && rows[index]!.type === "del") dels.push(rows[index++]!);
+		while (index < rows.length && rows[index]!.type === "add") adds.push(rows[index++]!);
+		const count = Math.max(dels.length, adds.length);
+		for (let i = 0; i < count; i++) {
+			const del = dels[i];
+			const add = adds[i];
+			if (del) out.push(renderUnifiedLine(del, width, numWidth, theme, path ?? diff.path, cwd, lineWordRanges(del, add ?? null, cwd)));
+			if (add) out.push(renderUnifiedLine(add, width, numWidth, theme, path ?? diff.path, cwd, lineWordRanges(add, del ?? null, cwd)));
+		}
+	}
+	return out;
 }
 
 function pairDiffRows(rows: StructuredDiffLine[]): Array<{ left: StructuredDiffLine | null; right: StructuredDiffLine | null }> {
@@ -629,40 +963,297 @@ function pairDiffRows(rows: StructuredDiffLine[]): Array<{ left: StructuredDiffL
 	return paired;
 }
 
-function renderDiffHalf(line: StructuredDiffLine | null, side: "old" | "new", width: number, numWidth: number): string {
+function renderDiffHalf(
+	line: StructuredDiffLine | null,
+	side: "old" | "new",
+	width: number,
+	numWidth: number,
+	theme: any,
+	path: string | undefined,
+	cwd: string | undefined,
+	ranges: Array<[number, number]> = [],
+): string {
 	if (!line) return " ".repeat(width);
 	const num = side === "old" ? line.oldNum : line.newNum;
 	const sign = line.type === "add" ? "+" : line.type === "del" ? "-" : " ";
-	const raw = `${formatNum(num, numWidth)} ${sign} ${line.content || " "}`;
-	return padVisible(truncateAnsi(colorDiffText(line, raw), width), width);
+	const body = highlightedLineBody(line, theme, path, cwd);
+	const prefix = `${formatNum(num, numWidth)} ${sign} `;
+	const raw = `${prefix}${body}`;
+	const shiftedRanges = ranges.map(([start, end]): [number, number] => [start + prefix.length, end + prefix.length]);
+	return padVisible(truncateAnsi(colorDiffText(line, raw, theme, shiftedRanges), width), width);
 }
 
-function renderSplitDiff(diff: StructuredDiff, rows: StructuredDiffLine[], width: number): string[] {
+function shouldUseSplitDiff(diff: StructuredDiff, rows: StructuredDiffLine[], width: number): boolean {
+	if (width < DIFF_SPLIT_MIN_WIDTH) return false;
 	const maxNum = Math.max(1, ...diff.lines.map((line) => Math.max(line.oldNum ?? 0, line.newNum ?? 0)));
 	const numWidth = Math.max(2, String(maxNum).length);
-	const divider = `${DIFF_FG_RULE}│${DIFF_RESET}`;
+	const dividerWidth = 1;
+	const half = Math.max(24, Math.floor((width - dividerWidth) / 2));
+	const codeWidth = half - numWidth - 3;
+	if (codeWidth < DIFF_SPLIT_MIN_CODE_WIDTH) return false;
+	let contentLines = 0;
+	let wrapCandidates = 0;
+	for (const line of rows) {
+		if (line.type === "sep") continue;
+		contentLines++;
+		if (visibleLength(diffDisplayContent(line.content)) > codeWidth) wrapCandidates++;
+	}
+	if (contentLines === 0) return true;
+	if (wrapCandidates >= DIFF_SPLIT_MAX_WRAP_LINES) return false;
+	return wrapCandidates / contentLines < DIFF_SPLIT_MAX_WRAP_RATIO;
+}
+
+function renderSplitDiff(diff: StructuredDiff, rows: StructuredDiffLine[], width: number, theme: any, path?: string, cwd?: string): string[] {
+	const maxNum = Math.max(1, ...diff.lines.map((line) => Math.max(line.oldNum ?? 0, line.newNum ?? 0)));
+	const numWidth = Math.max(2, String(maxNum).length);
+	const divider = toolRule(theme, "│");
 	const half = Math.max(24, Math.floor((width - visibleLength(divider)) / 2));
-	const header = `${padVisible(`${DIFF_FG_DIM}old${DIFF_RESET}`, half)}${divider}${DIFF_FG_DIM}new${DIFF_RESET}`;
-	const rule = `${DIFF_FG_RULE}${"─".repeat(half)}${DIFF_RESET}${divider}${DIFF_FG_RULE}${"─".repeat(half)}${DIFF_RESET}`;
-	const out = [header, rule];
+	const rule = `${toolRule(theme, "─".repeat(half))}${divider}${toolRule(theme, "─".repeat(half))}`;
+	const out = [rule];
 	for (const pair of pairDiffRows(rows)) {
-		out.push(`${renderDiffHalf(pair.left, "old", half, numWidth)}${divider}${renderDiffHalf(pair.right, "new", half, numWidth)}`);
+		const leftRanges = pair.left && pair.right ? lineWordRanges(pair.left, pair.right, cwd) : [];
+		const rightRanges = pair.left && pair.right ? lineWordRanges(pair.right, pair.left, cwd) : [];
+		out.push(`${renderDiffHalf(pair.left, "old", half, numWidth, theme, path ?? diff.path, cwd, leftRanges)}${divider}${renderDiffHalf(pair.right, "new", half, numWidth, theme, path ?? diff.path, cwd, rightRanges)}`);
 	}
 	out.push(rule);
 	return out;
 }
 
-function renderStructuredDiff(diff: StructuredDiff, theme: any, expanded: boolean, cwd?: string): string {
-	if (diff.additions === 0 && diff.removals === 0) return theme.fg("muted", "no changes");
-	const width = terminalWidth();
+function configuredDiffRowLimit(expanded: boolean, cwd?: string): number | null {
 	const fallbackLimit = expanded ? 4000 : 24;
 	const configuredLimit = Math.floor(settingNumber(expanded ? "diffExpandedLines" : "diffPreviewLines", fallbackLimit, cwd));
-	const maxRows = expanded && configuredLimit <= 0 ? diff.lines.length : Math.max(4, configuredLimit);
+	return expanded && configuredLimit <= 0 ? null : Math.max(4, configuredLimit);
+}
+
+function collapsedDiffHint(remainingLines: number, hiddenHunks: number, expanded: boolean, shown: number, total: number, width = terminalWidth()): string {
+	const candidates = expanded
+		? [
+			`… ${remainingLines} more diff lines${hiddenHunks > 0 ? ` · ${hiddenHunks} more hunks` : ""} · UI cap ${shown}/${total}`,
+			`… ${remainingLines} more lines${hiddenHunks > 0 ? ` · ${hiddenHunks} hunks` : ""}`,
+			`… +${remainingLines}${hiddenHunks > 0 ? ` · +${hiddenHunks}h` : ""}`,
+			"…",
+		]
+		: [
+			`… ${remainingLines} more diff lines${hiddenHunks > 0 ? ` · ${hiddenHunks} more hunks` : ""} · Ctrl+O to expand`,
+			`… ${remainingLines} more lines${hiddenHunks > 0 ? ` · ${hiddenHunks} hunks` : ""}`,
+			`… +${remainingLines}${hiddenHunks > 0 ? ` · +${hiddenHunks}h` : ""}`,
+			"…",
+		];
+	for (const candidate of candidates) if (visibleWidth(candidate) <= width) return candidate;
+	return "…";
+}
+
+function renderStructuredDiff(diff: StructuredDiff, theme: any, expanded: boolean, cwd?: string, rowLimit?: number | null, path?: string, widthOffset = 0): string {
+	if (diff.additions === 0 && diff.removals === 0) return theme.fg("muted", "no changes");
+	const width = Math.max(40, terminalWidth() - Math.max(0, widthOffset));
+	const configuredLimit = rowLimit === undefined ? configuredDiffRowLimit(expanded, cwd) : rowLimit;
+	const maxRows = configuredLimit === null ? diff.lines.length : Math.max(1, configuredLimit);
 	const rows = diff.lines.slice(0, maxRows);
-	const useSplit = settingBoolean("splitDiffs", true, cwd) && width >= DIFF_SPLIT_MIN_WIDTH;
-	const rendered = useSplit ? renderSplitDiff(diff, rows, width) : renderUnifiedDiff(diff, rows, width);
+	const useSplit = settingBoolean("splitDiffs", true, cwd) && shouldUseSplitDiff(diff, rows, width);
+	const rendered = useSplit ? renderSplitDiff(diff, rows, width, theme, path ?? diff.path, cwd) : renderUnifiedDiff(diff, rows, width, theme, path ?? diff.path, cwd);
 	const remaining = diff.lines.length - rows.length;
-	if (remaining > 0) rendered.push(`${DIFF_FG_DIM}… ${remaining} more diff line(s)${expanded ? ` · UI cap ${rows.length}/${diff.lines.length}` : " · Ctrl+O to expand"}${DIFF_RESET}`);
+	if (remaining > 0) rendered.push(theme.fg("dim", collapsedDiffHint(remaining, hiddenHunksAfter(diff.lines, rows), expanded, rows.length, diff.lines.length, width)));
+	return rendered.join("\n");
+}
+
+interface UnifiedDiffFile {
+	diff: StructuredDiff;
+	path: string;
+}
+
+function splitGitHeaderPaths(rest: string): string[] {
+	const paths: string[] = [];
+	const tokenRe = /"((?:\\.|[^"])*)"|(\S+)/g;
+	let match: RegExpExecArray | null;
+	while ((match = tokenRe.exec(rest))) {
+		const raw = match[1] ?? match[2] ?? "";
+		if (!raw) continue;
+		if (match[1] !== undefined) {
+			try {
+				paths.push(JSON.parse(`"${raw}"`));
+			} catch {
+				paths.push(raw.replace(/\\"/g, "\"").replace(/\\\\/g, "\\"));
+			}
+		} else {
+			paths.push(raw);
+		}
+	}
+	return paths;
+}
+
+function cleanDiffPath(raw: string): string {
+	let path = raw.trim();
+	if (!path || path === "/dev/null") return path;
+	if ((path.startsWith("a/") || path.startsWith("b/")) && path.length > 2) path = path.slice(2);
+	return path;
+}
+
+function diffPathFromHeader(line: string): string {
+	const value = line.replace(/^(?:---|\+\+\+)\s+/, "").trim().split(/\t/)[0] ?? "";
+	return cleanDiffPath(value);
+}
+
+function displayUnifiedDiffPath(path: string, oldPath?: string, newPath?: string): string {
+	const preferred = newPath && newPath !== "/dev/null" ? newPath : oldPath && oldPath !== "/dev/null" ? oldPath : path;
+	return preferred || "diff";
+}
+
+function parseHunkHeader(line: string): { newCount: number; newStart: number; oldCount: number; oldStart: number } | null {
+	const match = line.match(/^@@\s+-(\d+)(?:,(\d+))?\s+\+(\d+)(?:,(\d+))?\s+@@/);
+	if (!match) return null;
+	return {
+		oldStart: Number.parseInt(match[1]!, 10),
+		oldCount: match[2] === undefined ? 1 : Number.parseInt(match[2], 10),
+		newStart: Number.parseInt(match[3]!, 10),
+		newCount: match[4] === undefined ? 1 : Number.parseInt(match[4], 10),
+	};
+}
+
+function parseUnifiedDiffOutput(output: string): UnifiedDiffFile[] | null {
+	const lines = stripAnsi(output).replace(/\r\n/g, "\n").split("\n");
+	const files: UnifiedDiffFile[] = [];
+	let current: {
+		additions: number;
+		chars: number;
+		hunkCount: number;
+		lines: StructuredDiffLine[];
+		newHunkEnd: number | null;
+		newPath?: string;
+		oldHunkEnd: number | null;
+		oldPath?: string;
+		path: string;
+		removals: number;
+		sawHunk: boolean;
+	} | null = null;
+
+	function start(path = "diff") {
+		finish();
+		current = { additions: 0, chars: 0, hunkCount: 0, lines: [], newHunkEnd: null, oldHunkEnd: null, path, removals: 0, sawHunk: false };
+	}
+
+	function finish() {
+		if (!current) return;
+		if (current.sawHunk && (current.additions > 0 || current.removals > 0)) {
+			files.push({
+				diff: { additions: current.additions, chars: current.chars || output.length, hunks: current.hunkCount || countStructuredHunks(current.lines), lines: current.lines, path: displayUnifiedDiffPath(current.path, current.oldPath, current.newPath), removals: current.removals },
+				path: displayUnifiedDiffPath(current.path, current.oldPath, current.newPath),
+			});
+		}
+		current = null;
+	}
+
+	let index = 0;
+	while (index < lines.length) {
+		const line = lines[index] ?? "";
+		if (line.startsWith("diff --git ")) {
+			const paths = splitGitHeaderPaths(line.slice("diff --git ".length)).map(cleanDiffPath);
+			start(paths[1] || paths[0] || "diff");
+			index++;
+			continue;
+		}
+		if (!current && line.startsWith("--- ") && (lines[index + 1] ?? "").startsWith("+++ ")) start(diffPathFromHeader(lines[index + 1] ?? line));
+		if (current && line.startsWith("--- ")) {
+			current.oldPath = diffPathFromHeader(line);
+			index++;
+			continue;
+		}
+		if (current && line.startsWith("+++ ")) {
+			current.newPath = diffPathFromHeader(line);
+			current.path = displayUnifiedDiffPath(current.path, current.oldPath, current.newPath);
+			index++;
+			continue;
+		}
+		const hunk = current ? parseHunkHeader(line) : null;
+		if (!current || !hunk) {
+			index++;
+			continue;
+		}
+
+		if (current.sawHunk && current.oldHunkEnd !== null && current.newHunkEnd !== null) {
+			const hidden = Math.max(hunk.oldStart - current.oldHunkEnd - 1, hunk.newStart - current.newHunkEnd - 1);
+			if (hidden > 0) current.lines.push(hiddenDiffLine(hidden));
+		}
+		current.sawHunk = true;
+		current.hunkCount++;
+		const hunkNumber = current.hunkCount;
+		let oldLine = hunk.oldStart;
+		let newLine = hunk.newStart;
+		let oldConsumed = 0;
+		let newConsumed = 0;
+		index++;
+		while (index < lines.length && (oldConsumed < hunk.oldCount || newConsumed < hunk.newCount)) {
+			const raw = lines[index] ?? "";
+			if (raw.startsWith("\\ No newline at end of file")) {
+				index++;
+				continue;
+			}
+			const marker = raw[0];
+			const content = raw.slice(1);
+			if (marker === " ") {
+				current.lines.push({ content, hunk: hunkNumber, newNum: newLine, oldNum: oldLine, type: "ctx" });
+				oldLine++;
+				newLine++;
+				oldConsumed++;
+				newConsumed++;
+			} else if (marker === "-") {
+				current.lines.push({ content, hunk: hunkNumber, newNum: null, oldNum: oldLine, type: "del" });
+				oldLine++;
+				oldConsumed++;
+				current.removals++;
+			} else if (marker === "+") {
+				current.lines.push({ content, hunk: hunkNumber, newNum: newLine, oldNum: null, type: "add" });
+				newLine++;
+				newConsumed++;
+				current.additions++;
+			} else {
+				break;
+			}
+			current.chars += content.length;
+			index++;
+		}
+		current.oldHunkEnd = oldLine - 1;
+		current.newHunkEnd = newLine - 1;
+	}
+	finish();
+	return files.length > 0 ? files : null;
+}
+
+function renderBashDiffOutput(output: string, theme: any, expanded: boolean, cwd?: string): string | null {
+	if (!settingBoolean("renderBashDiffs", true, cwd)) return null;
+	const files = parseUnifiedDiffOutput(output);
+	if (!files?.length) return null;
+	const totalAdditions = files.reduce((sum, file) => sum + file.diff.additions, 0);
+	const totalRemovals = files.reduce((sum, file) => sum + file.diff.removals, 0);
+	const totalLines = files.reduce((sum, file) => sum + file.diff.lines.length, 0);
+	const totalHunks = files.reduce((sum, file) => sum + (file.diff.hunks ?? countStructuredHunks(file.diff.lines)), 0);
+	let remainingRows = configuredDiffRowLimit(expanded, cwd);
+	const singleFile = files.length === 1;
+	const rendered: string[] = [
+		singleFile
+			? `${toolLabel(theme, "Diff ")}${theme.fg("accent", files[0]!.path)} ${diffSummary(files[0]!.diff, theme, cwd)}`
+			: `${toolLabel(theme, "Diff ")}${theme.fg("muted", `${files.length} files`)} ${diffSummary({ additions: totalAdditions, chars: output.length, hunks: totalHunks, lines: [], removals: totalRemovals }, theme, cwd)}`,
+	];
+	let renderedFiles = 0;
+	for (const file of files) {
+		if (remainingRows !== null && remainingRows <= 0) break;
+		// For multi-file diffs, keep per-file summaries under the aggregate header.
+		// For one-file diffs, the top line already has path/stat/hunk metadata, so
+		// avoid repeating the same summary directly above the table.
+		if (!singleFile) rendered.push(`${theme.fg("accent", file.path)} ${diffSummary(file.diff, theme, cwd)}`);
+		const fileLimit = remainingRows === null ? null : remainingRows;
+		const diffText = renderStructuredDiff(file.diff, theme, expanded, cwd, fileLimit, file.path);
+		// Keep the actual split/unified table flush with the Bash diff block. Prefixing
+		// every table row with a tree stem made git diff tables look oddly indented
+		// and could overflow by the stem width on wide terminals.
+		rendered.push(...diffText.split(/\r?\n/));
+		renderedFiles++;
+		if (remainingRows !== null) remainingRows -= Math.min(file.diff.lines.length, fileLimit ?? file.diff.lines.length);
+	}
+	const hiddenFiles = files.length - renderedFiles;
+	if (hiddenFiles > 0) rendered.push(theme.fg("muted", `… ${hiddenFiles} more file diff${hiddenFiles === 1 ? "" : "s"}${expanded ? ` · UI cap ${Math.max(0, renderedFiles)}/${files.length}` : " · Ctrl+O to expand"}`));
+	else if (remainingRows !== null && totalLines > configuredDiffRowLimit(expanded, cwd)!) {
+		rendered.push(theme.fg("muted", expanded ? "diff UI cap reached" : "Ctrl+O to expand"));
+	}
 	return rendered.join("\n");
 }
 
@@ -678,15 +1269,63 @@ function readTextForDiff(pathValue: unknown, cwd: string): string | undefined {
 	}
 }
 
-function attachDiffDetails(result: any, before: string | undefined, after: string | undefined): any {
+function attachDiffDetails(result: any, before: string | undefined, after: string | undefined, path?: string): any {
 	if (before === undefined && after === undefined) return result;
 	const oldText = before ?? "";
 	const newText = after ?? "";
 	if (oldText === newText) return result;
-	const diff = buildStructuredDiff(oldText, newText);
+	const diff = { ...buildStructuredDiff(oldText, newText), path };
 	const extra = { vstackDiff: diff, vstackDiffWasNewFile: before === undefined };
 	result.details = result?.details && typeof result.details === "object" ? { ...result.details, ...extra } : extra;
 	return result;
+}
+
+function editOperationsFromArgs(args: any): Array<{ oldText: string; newText: string }> {
+	if (Array.isArray(args?.edits)) {
+		return args.edits
+			.map((edit: any) => ({
+				oldText: typeof edit?.oldText === "string" ? edit.oldText : typeof edit?.old_text === "string" ? edit.old_text : "",
+				newText: typeof edit?.newText === "string" ? edit.newText : typeof edit?.new_text === "string" ? edit.new_text : "",
+			}))
+			.filter((edit: { oldText: string; newText: string }) => edit.oldText.length > 0 && edit.oldText !== edit.newText);
+	}
+	const oldText = typeof args?.oldText === "string" ? args.oldText : typeof args?.old_text === "string" ? args.old_text : "";
+	const newText = typeof args?.newText === "string" ? args.newText : typeof args?.new_text === "string" ? args.new_text : "";
+	return oldText.length > 0 && oldText !== newText ? [{ oldText, newText }] : [];
+}
+
+function summarizeDiffs(diffs: StructuredDiff[]): StructuredDiff {
+	return {
+		additions: diffs.reduce((sum, diff) => sum + diff.additions, 0),
+		chars: diffs.reduce((sum, diff) => sum + diff.chars, 0),
+		hunks: diffs.reduce((sum, diff) => sum + (diff.hunks ?? countStructuredHunks(diff.lines)), 0),
+		lines: diffs.flatMap((diff, index) => index === 0 ? diff.lines : [hiddenDiffLine(0), ...diff.lines]),
+		removals: diffs.reduce((sum, diff) => sum + diff.removals, 0),
+	};
+}
+
+function renderMutationCallPreview(kind: "Edit" | "Write" | "Create", targetPath: string, diffs: StructuredDiff[], theme: any, context: any, cwd: string): TruncatedLines | ReturnType<typeof makeEmpty> {
+	if (context?.executionStarted && !context?.isPartial) return makeEmpty();
+	if (!settingBoolean("mutationCallPreview", true, cwd) || diffs.length === 0) return makeEmpty();
+	const total = summarizeDiffs(diffs);
+	const prefix = context?.executionStarted && context?.isPartial ? blinkingPrefix(theme, context) : stackPrefix(theme);
+	let text = `${prefix}${toolLabel(theme, `${kind} `)}${theme.fg("accent", targetPath)}${theme.fg("dim", " · preview · ")}${diffSummary(total, theme, cwd)}`;
+	const maxShown = context?.expanded ? diffs.length : Math.min(1, diffs.length);
+	const perDiffLimit = Math.max(4, Math.floor(settingNumber("mutationCallPreviewLines", 16, cwd) / Math.max(1, maxShown)));
+	for (let index = 0; index < maxShown; index++) {
+		const diff = diffs[index]!;
+		if (diffs.length > 1) text += `\n${treeConnector(theme, "├")}${theme.fg("muted", `edit ${index + 1}/${diffs.length}`)} ${diffSummary(diff, theme, cwd)}`;
+		const stem = treeConnector(theme, "│");
+		const rendered = renderStructuredDiff(diff, theme, Boolean(context?.expanded), cwd, perDiffLimit, targetPath, visibleWidth(stem));
+		text += `\n${rendered.split(/\r?\n/).map((line) => `${stem}${line}`).join("\n")}`;
+	}
+	const hidden = diffs.length - maxShown;
+	if (hidden > 0) text += `\n${treeConnector(theme, "└")}${theme.fg("muted", `… ${hidden} more edit block${hidden === 1 ? "" : "s"} · Ctrl+O to expand`)}`;
+	return makeTruncatedLines(text);
+}
+
+function existingSmallTextOrUndefined(targetPath: string, cwd: string): string | undefined {
+	return readTextForDiff(targetPath, cwd);
 }
 
 type StackableToolName = "read" | "bash" | "grep" | "find" | "ls";
@@ -786,7 +1425,7 @@ function stackItemSummary(item: StackItem, theme: any): string {
 function stackItemPreview(item: StackItem, theme: any, expanded: boolean, cwd?: string): string {
 	if (!item.resultText || item.status === "running") return "";
 	if (item.toolName === "find" || item.toolName === "ls") return renderPathListPreview(item.resultText, item.toolName, theme, expanded, cwd);
-	if (item.toolName === "bash") return preview(item.resultText, Math.max(1, Math.floor(settingNumber("bashPreviewLines", 80, cwd))), "tail", cwd);
+	if (item.toolName === "bash") return renderBashDiffOutput(item.resultText, theme, expanded, cwd) ?? preview(item.resultText, Math.max(1, Math.floor(settingNumber("bashPreviewLines", 80, cwd))), "tail", cwd);
 	if (item.toolName === "read") return preview(item.resultText, Math.max(1, Math.floor(settingNumber("readPreviewLines", 80, cwd))), "head", cwd);
 	return preview(item.resultText, Math.max(1, Math.floor(settingNumber("searchPreviewLines", 80, cwd))), "head", cwd);
 }
@@ -1117,6 +1756,418 @@ function registerToolBatch(pi: ExtensionAPI, agent: any, cwd: string): void {
 	});
 }
 
+const CORE_TOOL_RENDERERS = new Set(["read", "bash", "grep", "find", "ls", "edit", "write", "tool_batch", "todo_write", "bg_task", "bg_status", "question", "subagent"]);
+const OPENAI_STYLE_TOOL_NAMES = new Set([
+	"webfetch",
+	"web_fetch",
+	"web_search",
+	"fetch_content",
+	"get_search_content",
+	"code_search",
+	"context_tag",
+	"context_log",
+	"context_checkout",
+	"annotate",
+	"Skill",
+	"EnterPlanMode",
+	"ExitPlanMode",
+	"Agent",
+	"get_subagent_result",
+	"steer_subagent",
+	"TaskCreate",
+	"TaskList",
+	"TaskGet",
+	"TaskUpdate",
+	"TaskOutput",
+	"TaskStop",
+	"TaskExecute",
+]);
+
+type ToolChromeMode = "off" | "transparent" | "outlines";
+
+function toolChromeMode(cwd?: string): ToolChromeMode {
+	return settingEnum("toolChrome", ["off", "transparent", "outlines"] as const, "off", cwd);
+}
+
+function isMcpToolName(name: string): boolean {
+	return name === "mcp" || name.startsWith("mcp__") || name.startsWith("mcp_") || /(^|[_-])mcp([_-]|$)/i.test(name);
+}
+
+function shouldUseGenericRenderer(name: string): boolean {
+	if (!name || CORE_TOOL_RENDERERS.has(name) || name === "apply_patch") return false;
+	if (isMcpToolName(name)) return true;
+	if (OPENAI_STYLE_TOOL_NAMES.has(name)) return true;
+	return /^Task[A-Z]/.test(name);
+}
+
+function componentDefinesRenderer(component: any, slot: "renderCall" | "renderResult"): boolean {
+	for (const key of ["tool", "toolDefinition", "definition", "toolDef", "toolConfig"]) {
+		const candidate = component?.[key];
+		if (candidate && typeof candidate[slot] === "function") return true;
+	}
+	return false;
+}
+
+function humanizeToolName(name: string): string {
+	return name
+		.replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+		.replace(/[_-]+/g, " ")
+		.replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function oneLine(value: string, max = 72): string {
+	const normalized = value.replace(/\s+/g, " ").trim();
+	return normalized.length > max ? `${normalized.slice(0, Math.max(0, max - 1))}…` : normalized;
+}
+
+function stringArg(args: any, ...keys: string[]): string {
+	for (const key of keys) {
+		const value = args?.[key];
+		if (typeof value === "string" && value.trim()) return value.trim();
+	}
+	return "";
+}
+
+function stringArrayArg(args: any, ...keys: string[]): string[] {
+	for (const key of keys) {
+		const value = args?.[key];
+		if (!Array.isArray(value)) continue;
+		const strings = value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+		if (strings.length > 0) return strings;
+	}
+	return [];
+}
+
+function genericStatusPrefix(context: any, theme: any): string {
+	if (!context?.executionStarted || context?.isPartial) return blinkingPrefix(theme, context);
+	clearBlink(context);
+	return theme.fg(context?.isError ? "error" : "success", "● ");
+}
+
+function patchTextFromArgs(args: any): string {
+	return stringArg(args, "patch", "patchText", "patch_text", "input");
+}
+
+function extractApplyPatchFiles(patchText: string): string[] {
+	const files = new Set<string>();
+	for (const match of patchText.matchAll(/^\*\*\* (?:Add|Update|Delete) File: (.+)$/gm)) {
+		const file = match[1]?.trim();
+		if (file) files.add(file);
+	}
+	return [...files];
+}
+
+function parsePatchBodyLine(rawLine: string): { content: string; marker: "+" | "-" | " " } {
+	const marker = rawLine[0];
+	if (marker === "+" || marker === "-" || marker === " ") return { content: rawLine.slice(1), marker };
+	return { content: rawLine, marker: " " };
+}
+
+function parseApplyPatchUpdateDiff(lines: string[]): StructuredDiff {
+	const diffLines: StructuredDiffLine[] = [];
+	let additions = 0;
+	let removals = 0;
+	let chars = 0;
+	let oldLine: number | null = null;
+	let newLine: number | null = null;
+	let hunk = 0;
+	let inHunk = false;
+	for (const rawLine of lines) {
+		if (rawLine.startsWith("*** Move to: ")) continue;
+		const header = rawLine.match(/^@@\s*-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s*@@/);
+		if (rawLine.startsWith("@@")) {
+			if (diffLines.length > 0 && diffLines[diffLines.length - 1]?.type !== "sep") diffLines.push(hiddenDiffLine(0));
+			oldLine = header ? Number.parseInt(header[1]!, 10) : null;
+			newLine = header ? Number.parseInt(header[2]!, 10) : null;
+			hunk++;
+			inHunk = true;
+			continue;
+		}
+		if (rawLine === "\\ No newline at end of file") continue;
+		if (!inHunk) {
+			hunk++;
+			inHunk = true;
+		}
+		const { content, marker } = parsePatchBodyLine(rawLine);
+		chars += content.length;
+		if (marker === "+") {
+			diffLines.push({ content, hunk, newNum: newLine, oldNum: null, type: "add" });
+			additions++;
+			if (newLine !== null) newLine++;
+		} else if (marker === "-") {
+			diffLines.push({ content, hunk, newNum: null, oldNum: oldLine, type: "del" });
+			removals++;
+			if (oldLine !== null) oldLine++;
+		} else {
+			diffLines.push({ content, hunk, newNum: newLine, oldNum: oldLine, type: "ctx" });
+			if (oldLine !== null) oldLine++;
+			if (newLine !== null) newLine++;
+		}
+	}
+	const numbered = assignHunkNumbers(diffLines);
+	return { additions, chars, hunks: Math.max(hunk, numbered.hunks), lines: numbered.lines, removals };
+}
+
+interface ApplyPatchChange {
+	diff: StructuredDiff;
+	displayPath: string;
+	kind: "add" | "update" | "delete";
+	line: number;
+	moveTo?: string;
+	path: string;
+}
+
+function firstChangedLine(diff: StructuredDiff): number {
+	for (const line of diff.lines) {
+		if (line.type === "add" && line.newNum !== null) return line.newNum;
+		if (line.type === "del" && line.oldNum !== null) return line.oldNum;
+	}
+	return 0;
+}
+
+function parseApplyPatchPreview(patchText: string): ApplyPatchChange[] {
+	const lines = patchText.replace(/\r\n/g, "\n").split("\n");
+	const changes: ApplyPatchChange[] = [];
+	const fileHeader = /^\*\*\* (Add|Update|Delete) File: (.+)$/;
+	let index = 0;
+	while (index < lines.length) {
+		const header = lines[index]?.match(fileHeader);
+		if (!header) {
+			index++;
+			continue;
+		}
+		const kind = header[1]!.toLowerCase() as ApplyPatchChange["kind"];
+		const path = header[2]!.trim();
+		index++;
+		let moveTo: string | undefined;
+		const body: string[] = [];
+		while (index < lines.length && !fileHeader.test(lines[index] ?? "") && !/^\*\*\* End Patch$/.test(lines[index] ?? "")) {
+			const line = lines[index] ?? "";
+			if (line.startsWith("*** Move to: ")) moveTo = line.slice("*** Move to: ".length).trim();
+			else body.push(line);
+			index++;
+		}
+		const diff = kind === "add"
+			? buildStructuredDiff("", body.map((line) => line.startsWith("+") ? line.slice(1) : line).join("\n"))
+			: kind === "delete"
+				? buildStructuredDiff(body.map((line) => line.startsWith("-") ? line.slice(1) : line).join("\n"), "")
+				: parseApplyPatchUpdateDiff(body);
+		diff.path = moveTo || path;
+		changes.push({ diff, displayPath: moveTo ? `${path} → ${moveTo}` : path, kind, line: firstChangedLine(diff), moveTo, path });
+	}
+	return changes;
+}
+
+function summarizeApplyPatchChanges(changes: ApplyPatchChange[]): StructuredDiff {
+	return summarizeDiffs(changes.map((change) => change.diff));
+}
+
+function applyPatchChangeLabel(change: ApplyPatchChange): string {
+	if (change.moveTo) return `Rename ${change.displayPath}`;
+	if (change.kind === "add") return `Create ${change.displayPath}`;
+	if (change.kind === "delete") return `Delete ${change.displayPath}`;
+	return `Update ${change.displayPath}`;
+}
+
+function renderApplyPatchCall(args: any, theme: any, context: any): TruncatedLines {
+	const patchText = patchTextFromArgs(args);
+	const files = extractApplyPatchFiles(patchText);
+	let summary = files.length === 0 ? theme.fg("muted", "patch") : files.length === 1 ? theme.fg("accent", files[0]!) : `${theme.fg("accent", files[0]!)}${theme.fg("muted", ` +${files.length - 1} files`)}`;
+	let text = `${genericStatusPrefix(context, theme)}${toolLabel(theme, "Apply Patch ")}${summary}`;
+	if (context?.argsComplete && patchText && settingBoolean("applyPatchPreview", true, context?.cwd)) {
+		try {
+			const changes = parseApplyPatchPreview(patchText);
+			context.state._vstackApplyPatchChanges = changes;
+			const total = summarizeApplyPatchChanges(changes);
+			text += theme.fg("dim", " · ") + diffSummary(total, theme, context?.cwd);
+			const maxShown = context?.expanded ? changes.length : Math.min(1, changes.length);
+			const rowLimit = Math.max(4, Math.floor(settingNumber("applyPatchPreviewLines", 18, context?.cwd) / Math.max(1, maxShown)));
+			for (let i = 0; i < maxShown; i++) {
+				const change = changes[i]!;
+				text += `\n${treeConnector(theme, changes.length === 1 ? "└" : "├")}${theme.fg("accent", applyPatchChangeLabel(change))}${change.line > 0 ? theme.fg("muted", ` · line ${change.line}`) : ""} ${diffSummary(change.diff, theme, context?.cwd)}`;
+				const stem = treeConnector(theme, "│");
+				text += `\n${renderStructuredDiff(change.diff, theme, Boolean(context?.expanded), context?.cwd, rowLimit, change.diff.path, visibleWidth(stem)).split(/\r?\n/).map((line) => `${stem}${line}`).join("\n")}`;
+			}
+			const hidden = changes.length - maxShown;
+			if (hidden > 0) text += `\n${treeConnector(theme, "└")}${theme.fg("muted", `… ${hidden} more file patch${hidden === 1 ? "" : "es"} · Ctrl+O to expand`)}`;
+		} catch {
+			// Leave compact header only if the patch cannot be parsed.
+		}
+	}
+	return makeTruncatedLines(text);
+}
+
+function renderApplyPatchResult(result: any, { isPartial }: any, theme: any, context: any): TruncatedLines | ReturnType<typeof makeEmpty> {
+	if (isPartial) return renderPendingDetail("applying patch…", theme);
+	clearBlink(context);
+	if (context?.isError) {
+		const first = textContent(result).split(/\r?\n/)[0] || "apply_patch failed";
+		return makeTruncatedLines(`${treeConnector(theme, "└")}${theme.fg("error", first)}`);
+	}
+	const changes = Array.isArray(context?.state?._vstackApplyPatchChanges) ? context.state._vstackApplyPatchChanges as ApplyPatchChange[] : parseApplyPatchPreview(patchTextFromArgs(context?.args ?? {}));
+	if (changes.length === 0) return makeTruncatedLines(`${treeConnector(theme, "└")}${theme.fg("success", "applied")}`);
+	const total = summarizeApplyPatchChanges(changes);
+	return makeTruncatedLines(`${treeConnector(theme, "└")}${theme.fg("success", "applied")} ${theme.fg("muted", `${changes.length} file${changes.length === 1 ? "" : "s"}`)} ${diffSummary(total, theme, context?.cwd)}`);
+}
+
+function summarizeGenericCall(name: string, args: any, theme: any): string {
+	if (isMcpToolName(name)) {
+		const parts = name.split("__").filter(Boolean);
+		const label = parts.length >= 2 ? `${parts[0]}/${parts.slice(1).join("/")}` : humanizeToolName(name);
+		const arg = stringArg(args, "path", "file_path", "query", "url", "name", "prompt", "description");
+		return arg ? `${theme.fg("accent", label)} ${theme.fg("muted", oneLine(arg, 48))}` : theme.fg("accent", label);
+	}
+	switch (name) {
+		case "webfetch":
+		case "web_fetch":
+		case "fetch_content": {
+			const url = stringArg(args, "url") || stringArrayArg(args, "urls")[0] || "fetch";
+			return theme.fg("accent", oneLine(url, 72));
+		}
+		case "web_search":
+		case "code_search": return theme.fg("accent", oneLine(stringArg(args, "query") || stringArrayArg(args, "queries")[0] || "search", 72));
+		case "Agent": return theme.fg("accent", oneLine(stringArg(args, "description", "prompt") || "launch agent", 72));
+		case "TaskCreate": return theme.fg("accent", oneLine(stringArg(args, "subject", "description") || "create task", 72));
+		case "TaskGet":
+		case "TaskUpdate":
+		case "TaskOutput":
+		case "TaskStop": return theme.fg("accent", stringArg(args, "taskId", "task_id") || "task");
+		case "TaskList": return theme.fg("muted", "task list");
+		case "TaskExecute": {
+			const ids = stringArrayArg(args, "taskIds", "task_ids");
+			return ids.length <= 1 ? theme.fg("accent", ids[0] ?? "start tasks") : `${theme.fg("accent", ids[0]!)}${theme.fg("muted", ` +${ids.length - 1} tasks`)}`;
+		}
+		default: return theme.fg("accent", oneLine(stringArg(args, "path", "file_path", "url", "query", "name", "subject", "tool", "description", "prompt") || humanizeToolName(name), 72));
+	}
+}
+
+function renderGenericToolCall(name: string, args: any, theme: any, context: any): TruncatedLines {
+	return makeTruncatedLines(`${genericStatusPrefix(context, theme)}${toolLabel(theme, `${humanizeToolName(name)} `)}${summarizeGenericCall(name, args, theme)}`);
+}
+
+function renderGenericToolResult(name: string, result: any, { expanded, isPartial }: any, theme: any, context: any): TruncatedLines | ReturnType<typeof makeEmpty> {
+	if (isPartial) return renderPendingDetail(`${humanizeToolName(name)}…`, theme);
+	clearBlink(context);
+	const raw = textContent(result).trim();
+	const lines = raw ? raw.split(/\r?\n/) : [];
+	const mode = isMcpToolName(name) ? mcpOutputMode(context?.cwd) : "preview";
+	if (mode === "hidden") return makeEmpty();
+	if (context?.isError) {
+		const first = lines[0] || `${humanizeToolName(name)} failed`;
+		return makeTruncatedLines(`${treeConnector(theme, "└")}${theme.fg("error", first)}`);
+	}
+	if (lines.length === 0) return makeTruncatedLines(`${treeConnector(theme, "└")}${theme.fg("success", "done")}`);
+	if (lines.length === 1) return makeTruncatedLines(`${treeConnector(theme, "└")}${theme.fg("muted", oneLine(lines[0]!, 120))}`);
+	let text = `${treeConnector(theme, "└")}${theme.fg("success", `${lines.length} lines returned`)}`;
+	if (mode === "preview" && expanded) {
+		const limit = Math.max(1, Math.floor(settingNumber(isMcpToolName(name) ? "mcpPreviewLines" : "searchPreviewLines", 80, context?.cwd)));
+		text += `\n${lines.slice(0, limit).map((line) => `${treeConnector(theme, "│")}${theme.fg("dim", clipLine(line, context?.cwd))}`).join("\n")}`;
+		if (lines.length > limit) text += `\n${treeConnector(theme, "│")}${theme.fg("muted", `… ${lines.length - limit} more line(s)`)}`;
+	} else if (mode === "preview") {
+		text += theme.fg("dim", " · Ctrl+O to expand");
+	}
+	return makeTruncatedLines(text);
+}
+
+function installToolExecutionRendererPatch(): void {
+	const proto = ToolExecutionComponent?.prototype as any;
+	if (!proto || proto[TOOL_EXECUTION_RENDERER_PATCH_SYMBOL]) return;
+	const originalGetCallRenderer = proto.getCallRenderer;
+	const originalGetResultRenderer = proto.getResultRenderer;
+	if (typeof originalGetCallRenderer !== "function" || typeof originalGetResultRenderer !== "function") return;
+	proto.getCallRenderer = function patchedGetCallRenderer(this: any) {
+		const toolName = typeof this?.toolName === "string" ? this.toolName : "";
+		if (toolName === "apply_patch" && settingBoolean("applyPatchRenderer", true) && !componentDefinesRenderer(this, "renderCall")) {
+			return (args: any, theme: any, context: any) => renderApplyPatchCall(args, theme, context);
+		}
+		if (settingBoolean("genericToolRenderers", true) && shouldUseGenericRenderer(toolName) && !componentDefinesRenderer(this, "renderCall")) {
+			return (args: any, theme: any, context: any) => renderGenericToolCall(toolName, args, theme, context);
+		}
+		return originalGetCallRenderer.call(this);
+	};
+	proto.getResultRenderer = function patchedGetResultRenderer(this: any) {
+		const toolName = typeof this?.toolName === "string" ? this.toolName : "";
+		if (toolName === "apply_patch" && settingBoolean("applyPatchRenderer", true) && !componentDefinesRenderer(this, "renderResult")) {
+			return (result: any, options: any, theme: any, context: any) => renderApplyPatchResult(result, options, theme, context);
+		}
+		if (settingBoolean("genericToolRenderers", true) && shouldUseGenericRenderer(toolName) && !componentDefinesRenderer(this, "renderResult")) {
+			return (result: any, options: any, theme: any, context: any) => renderGenericToolResult(toolName, result, options, theme, context);
+		}
+		return originalGetResultRenderer.call(this);
+	};
+	proto[TOOL_EXECUTION_RENDERER_PATCH_SYMBOL] = true;
+}
+
+function applyToolChromeTheme(theme: any, cwd?: string): void {
+	if (toolChromeMode(cwd) === "off") return;
+	const transparent = "\x1b[49m";
+	try {
+		if (theme?.bgColors instanceof Map) {
+			theme.bgColors.set("toolPendingBg", transparent);
+			theme.bgColors.set("toolSuccessBg", transparent);
+			theme.bgColors.set("toolErrorBg", transparent);
+		} else if (theme?.bgColors && typeof theme.bgColors === "object") {
+			theme.bgColors.toolPendingBg = transparent;
+			theme.bgColors.toolSuccessBg = transparent;
+			theme.bgColors.toolErrorBg = transparent;
+		}
+	} catch {
+		// Best-effort theme patch only.
+	}
+}
+
+function installToolChromePatch(): void {
+	const proto = Container?.prototype as any;
+	if (!proto || proto[TOOL_CHROME_PATCH_SYMBOL]) return;
+	const originalRender = proto.render;
+	if (typeof originalRender !== "function") return;
+	proto.render = function patchedToolChromeRender(this: any, width: number): string[] {
+		const rendered = originalRender.call(this, width);
+		if (!Array.isArray(rendered) || rendered.length === 0) return rendered;
+		if (typeof this?.toolName !== "string" || typeof this?.toolCallId !== "string") return rendered;
+		const mode = toolChromeMode(this?.cwd ?? process.cwd());
+		if (mode === "off") return rendered;
+		let start = 0;
+		while (start < rendered.length && stripAnsi(rendered[start] ?? "").trim().length === 0) start++;
+		let end = rendered.length - 1;
+		while (end >= start && stripAnsi(rendered[end] ?? "").trim().length === 0) end--;
+		if (start > end) return rendered;
+		const core = rendered.slice(start, end + 1).map((line) => truncateToWidth(line, Math.max(1, width), ""));
+		if (mode === "transparent") return core;
+		const rule = "─".repeat(Math.max(1, width));
+		return [rule, ...core, rule];
+	};
+	proto[TOOL_CHROME_PATCH_SYMBOL] = true;
+}
+
+function registerToolChromeEvents(pi: ExtensionAPI): void {
+	pi.on("session_start", (_event, ctx) => {
+		if (ctx.hasUI) applyToolChromeTheme(ctx.ui.theme, ctx.cwd);
+	});
+	pi.on("turn_start", (_event, ctx) => {
+		if (ctx.hasUI) applyToolChromeTheme(ctx.ui.theme, ctx.cwd);
+	});
+}
+
+function installWorkingIndicator(pi: ExtensionAPI): void {
+	pi.on("session_start", (_event, ctx) => {
+		if (!ctx.hasUI) return;
+		const mode = settingEnum("workingIndicator", ["default", "pulse", "hidden"] as const, "default", ctx.cwd);
+		if (mode === "default") return;
+		if (mode === "hidden") {
+			ctx.ui.setWorkingIndicator({ frames: [] });
+			return;
+		}
+		ctx.ui.setWorkingIndicator({
+			frames: [ctx.ui.theme.fg("dim", "·"), ctx.ui.theme.fg("muted", "•"), ctx.ui.theme.fg("accent", "●"), ctx.ui.theme.fg("muted", "•")],
+			intervalMs: 120,
+		});
+	});
+	pi.on("session_shutdown", (_event, ctx) => {
+		if (ctx.hasUI) ctx.ui.setWorkingIndicator();
+	});
+}
+
 function registerRead(pi: ExtensionAPI, agent: any, cwd: string): void {
 	const original = getBuiltInTool(agent, cwd, "read");
 	if (!original) return;
@@ -1129,21 +2180,23 @@ function registerRead(pi: ExtensionAPI, agent: any, cwd: string): void {
 		async execute(id: string, params: any, signal: AbortSignal | undefined, onUpdate: unknown, context: any) {
 			return getBuiltInTool(agent, contextCwd(context, cwd), "read").execute(id, params, signal, onUpdate);
 		},
-		renderCall() {
-			return makeEmpty();
+		renderCall(args: any, theme: any, context: any) {
+			return renderPendingCall(readCallText(args ?? {}, theme), theme, context, cwd);
 		},
 		renderResult(result: any, { expanded, isPartial }: any, theme: any, context: any) {
 			const stacked = stackToolCalls(context?.cwd ?? cwd);
 			if (stacked) return renderStackedToolResult("read", result, isPartial, expanded, theme, context, cwd);
 			const call = readCallText(context?.args ?? {}, theme);
-			if (isPartial) return makeTruncatedLines(`${blinkingPrefix(theme, context)}${call}${theme.fg("dim", " · ")}${theme.fg("warning", "reading…")}`);
+			if (isPartial) return renderPendingDetail("reading…", theme);
 			clearBlink(context);
 			const content = textContent(result);
 			const count = lineCount(content);
 			let summary = theme.fg("success", `${count} line${count === 1 ? "" : "s"}`);
 			if (resultTruncated(result)) summary += theme.fg("warning", " · truncated");
+			const mode = readOutputMode(context?.cwd ?? cwd);
+			if (mode === "hidden") return makeEmpty();
 			let text = `${stackPrefix(theme)}${call}${theme.fg("dim", " · ")}${summary}`;
-			if (expanded && content) {
+			if (mode === "preview" && expanded && content) {
 				const limit = Math.max(1, Math.floor(settingNumber("readPreviewLines", 80, context?.cwd)));
 				text += `\n${preview(content, limit, "head", context?.cwd)
 					.split(/\r?\n/)
@@ -1168,8 +2221,8 @@ function registerBash(pi: ExtensionAPI, agent: any, cwd: string): void {
 		async execute(id: string, params: any, signal: AbortSignal | undefined, onUpdate: unknown, context: any) {
 			return getBuiltInTool(agent, contextCwd(context, cwd), "bash").execute(id, params, signal, onUpdate);
 		},
-		renderCall() {
-			return makeEmpty();
+		renderCall(args: any, theme: any, context: any) {
+			return renderPendingCall(bashCallText(args ?? {}, theme, context?.cwd ?? cwd), theme, context, cwd);
 		},
 		renderResult(result: any, { expanded, isPartial }: any, theme: any, context: any) {
 			const stacked = stackToolCalls(context?.cwd ?? cwd);
@@ -1179,7 +2232,7 @@ function registerBash(pi: ExtensionAPI, agent: any, cwd: string): void {
 			if (isPartial) {
 				const count = output.trim() ? output.split(/\r?\n/).filter((line) => line.trim().length > 0).length : 0;
 				const lineText = count === 0 ? "starting" : `${count} line${count === 1 ? "" : "s"}`;
-				return makeTruncatedLines(`${blinkingPrefix(theme, context)}${call}${theme.fg("dim", " · ")}${theme.fg("warning", `running… ${lineText}`)}`);
+				return renderPendingDetail(`running… ${lineText}`, theme);
 			}
 			clearBlink(context);
 			const exit = commandExit(output);
@@ -1188,8 +2241,20 @@ function registerBash(pi: ExtensionAPI, agent: any, cwd: string): void {
 			let summary = exit !== null && exit !== 0 ? theme.fg("error", exitLabel) : theme.fg("success", exitLabel);
 			summary += theme.fg("dim", ` · ${count} line${count === 1 ? "" : "s"}`);
 			if (resultTruncated(result)) summary += theme.fg("warning", " · truncated");
+			const mode = bashOutputMode(context?.cwd ?? cwd);
+			if (mode === "hidden") return makeEmpty();
 			let text = `${stackPrefix(theme)}${call}${theme.fg("dim", " · ")}${summary}`;
-			if (expanded && output) {
+			const diffPreview = output && mode !== "summary" ? renderBashDiffOutput(output, theme, expanded, context?.cwd ?? cwd) : null;
+			if (diffPreview) {
+				text += `\n${diffPreview}`;
+			} else if (mode === "preview" && output) {
+				const limit = Math.max(1, Math.floor(settingNumber(expanded ? "bashPreviewLines" : "bashCollapsedLines", expanded ? 80 : 10, context?.cwd)));
+				text += `\n${preview(output, limit, "tail", context?.cwd)
+					.split(/\r?\n/)
+					.map((line) => `${treeConnector(theme, "│")}${theme.fg("dim", line)}`)
+					.join("\n")}`;
+				if (count > limit) text += `\n${treeConnector(theme, "│")}${theme.fg("muted", `… ${count - limit} older line(s)`)}`;
+			} else if (mode === "opencode" && expanded && output) {
 				const limit = Math.max(1, Math.floor(settingNumber("bashPreviewLines", 80, context?.cwd)));
 				text += `\n${preview(output, limit, "tail", context?.cwd)
 					.split(/\r?\n/)
@@ -1217,25 +2282,32 @@ function registerEdit(pi: ExtensionAPI, agent: any, cwd: string): void {
 			const before = readTextForDiff(targetPath, effectiveCwd);
 			const result = await getBuiltInTool(agent, effectiveCwd, "edit").execute(id, params, signal, onUpdate);
 			const after = result?.isError ? before : readTextForDiff(targetPath, effectiveCwd);
-			return attachDiffDetails(result, before, after);
+			return attachDiffDetails(result, before, after, typeof targetPath === "string" ? targetPath : undefined);
 		},
-		renderCall() {
-			return makeEmpty();
+		renderCall(args: any, theme: any, context: any) {
+			const effectiveCwd = context?.cwd ?? cwd;
+			const targetPath = args?.path ?? args?.file_path ?? "";
+			if (context?.argsComplete) {
+				const diffs = editOperationsFromArgs(args).map((edit) => ({ ...buildStructuredDiff(edit.oldText, edit.newText), path: targetPath }));
+				const previewComponent = renderMutationCallPreview("Edit", String(targetPath), diffs, theme, context, effectiveCwd);
+				if (componentHasVisibleLines(previewComponent)) return previewComponent;
+			}
+			return renderPendingCall(`${toolLabel(theme, "Edit ")}${theme.fg("accent", targetPath)}`, theme, context, cwd);
 		},
 		renderResult(result: any, { expanded, isPartial }: any, theme: any, context: any) {
 			const args = context?.args ?? {};
 			const targetPath = args.path ?? args.file_path ?? "";
 			const call = `${toolLabel(theme, "Edit ")}${theme.fg("accent", targetPath)}`;
-			if (isPartial) return makeTruncatedLines(`${blinkingPrefix(theme, context)}${call}${theme.fg("dim", " · ")}${theme.fg("warning", "editing…")}`);
+			if (isPartial) return renderPendingDetail("editing…", theme);
 			clearBlink(context);
 			const structured = result?.details?.vstackDiff as StructuredDiff | undefined;
 			if (context?.isError || result?.isError) {
 				const errorText = textContent(result).split(/\r?\n/)[0] || "edit failed";
 				return makeTruncatedLines(`${stackPrefix(theme)}${call}${theme.fg("dim", " · ")}${theme.fg("error", errorText)}`);
 			}
-			const summary = structured ? diffSummary(structured, theme) : theme.fg("success", "applied");
+			const summary = structured ? diffSummary(structured, theme, context?.cwd ?? cwd) : theme.fg("success", "applied");
 			let text = `${stackPrefix(theme)}${call}${theme.fg("dim", " · ")}${summary}`;
-			if (structured) text += `\n${renderStructuredDiff(structured, theme, expanded, context?.cwd ?? cwd)}`;
+			if (structured) text += `\n${renderStructuredDiff(structured, theme, expanded, context?.cwd ?? cwd, undefined, targetPath)}`;
 			return makeTruncatedLines(text);
 		},
 	});
@@ -1256,10 +2328,20 @@ function registerWrite(pi: ExtensionAPI, agent: any, cwd: string): void {
 			const before = readTextForDiff(targetPath, effectiveCwd);
 			const result = await getBuiltInTool(agent, effectiveCwd, "write").execute(id, params, signal, onUpdate);
 			const after = result?.isError ? before : typeof params?.content === "string" ? params.content : readTextForDiff(targetPath, effectiveCwd);
-			return attachDiffDetails(result, before, after);
+			return attachDiffDetails(result, before, after, typeof targetPath === "string" ? targetPath : undefined);
 		},
-		renderCall() {
-			return makeEmpty();
+		renderCall(args: any, theme: any, context: any) {
+			const effectiveCwd = context?.cwd ?? cwd;
+			const targetPath = args?.path ?? args?.file_path ?? "";
+			const lineTotal = lineCount(args?.content ?? "");
+			if (context?.argsComplete && typeof args?.content === "string") {
+				const before = existingSmallTextOrUndefined(String(targetPath), effectiveCwd);
+				const label: "Write" | "Create" = before === undefined ? "Create" : "Write";
+				const diff = { ...buildStructuredDiff(before ?? "", args.content), path: String(targetPath) };
+				const previewComponent = renderMutationCallPreview(label, String(targetPath), [diff], theme, context, effectiveCwd);
+				if (componentHasVisibleLines(previewComponent)) return previewComponent;
+			}
+			return renderPendingCall(`${toolLabel(theme, "Write ")}${theme.fg("accent", targetPath)} ${theme.fg("dim", `· ${lineTotal} lines`)}`, theme, context, cwd);
 		},
 		renderResult(result: any, { expanded, isPartial }: any, theme: any, context: any) {
 			const args = context?.args ?? {};
@@ -1267,16 +2349,16 @@ function registerWrite(pi: ExtensionAPI, agent: any, cwd: string): void {
 			const lineTotal = lineCount(args.content ?? "");
 			const label = result?.details?.vstackDiffWasNewFile ? "Create " : "Write ";
 			const call = `${toolLabel(theme, label)}${theme.fg("accent", targetPath)} ${theme.fg("dim", `· ${lineTotal} lines`)}`;
-			if (isPartial) return makeTruncatedLines(`${blinkingPrefix(theme, context)}${call}${theme.fg("dim", " · ")}${theme.fg("warning", "writing…")}`);
+			if (isPartial) return renderPendingDetail("writing…", theme);
 			clearBlink(context);
 			const structured = result?.details?.vstackDiff as StructuredDiff | undefined;
 			if (context?.isError || result?.isError) {
 				const errorText = textContent(result).split(/\r?\n/)[0] || "write failed";
 				return makeTruncatedLines(`${stackPrefix(theme)}${call}${theme.fg("dim", " · ")}${theme.fg("error", errorText)}`);
 			}
-			const summary = structured ? diffSummary(structured, theme) : theme.fg("success", "written");
+			const summary = structured ? diffSummary(structured, theme, context?.cwd ?? cwd) : theme.fg("success", "written");
 			let text = `${stackPrefix(theme)}${call}${theme.fg("dim", " · ")}${summary}`;
-			if (structured) text += `\n${renderStructuredDiff(structured, theme, expanded, context?.cwd ?? cwd)}`;
+			if (structured) text += `\n${renderStructuredDiff(structured, theme, expanded, context?.cwd ?? cwd, undefined, targetPath)}`;
 			return makeTruncatedLines(text);
 		},
 	});
@@ -1294,14 +2376,14 @@ function registerReadOnly(pi: ExtensionAPI, agent: any, cwd: string, toolName: "
 		async execute(id: string, params: any, signal: AbortSignal | undefined, onUpdate: unknown, context: any) {
 			return getBuiltInTool(agent, contextCwd(context, cwd), toolName).execute(id, params, signal, onUpdate);
 		},
-		renderCall() {
-			return makeEmpty();
+		renderCall(args: any, theme: any, context: any) {
+			return renderPendingCall(readOnlyCallText(toolName, args ?? {}, theme, context?.cwd ?? cwd), theme, context, cwd);
 		},
 		renderResult(result: any, { expanded, isPartial }: any, theme: any, context: any) {
 			const stacked = stackToolCalls(context?.cwd ?? cwd);
 			if (stacked) return renderStackedToolResult(toolName, result, isPartial, expanded, theme, context, cwd);
 			const call = readOnlyCallText(toolName, context?.args ?? {}, theme, context?.cwd ?? cwd);
-			if (isPartial) return makeTruncatedLines(`${blinkingPrefix(theme, context)}${call}${theme.fg("dim", " · ")}${theme.fg("warning", `${toolName}…`)}`);
+			if (isPartial) return renderPendingDetail(`${toolName}…`, theme);
 			clearBlink(context);
 			const output = textContent(result);
 			const count = output.trim() ? lineCount(output) : 0;
@@ -1309,8 +2391,10 @@ function registerReadOnly(pi: ExtensionAPI, agent: any, cwd: string, toolName: "
 			const label = toolName === "ls" ? `${count} ${noun}${count === 1 ? "y" : "ies"}` : `${count} ${noun}${count === 1 ? "" : "s"}`;
 			let summary = count === 0 ? theme.fg("muted", toolName === "grep" ? "no matches" : toolName === "ls" ? "empty" : "no files") : theme.fg("success", label);
 			if (resultTruncated(result)) summary += theme.fg("warning", " · truncated");
+			const mode = searchOutputMode(context?.cwd ?? cwd);
+			if (mode === "hidden") return makeEmpty();
 			let text = `${stackPrefix(theme)}${call}${theme.fg("dim", " · ")}${summary}`;
-			if (expanded && output) {
+			if (mode === "preview" && expanded && output) {
 				if (toolName === "find" || toolName === "ls") {
 					text += `\n${renderPathListPreview(output, toolName, theme, expanded, context?.cwd)}`;
 				} else {
@@ -1334,6 +2418,10 @@ export default async function toolRenderer(pi: ExtensionAPI): Promise<void> {
 	if (!settingBoolean("enabled", true)) return;
 
 	registerStackEvents(pi);
+	installToolExecutionRendererPatch();
+	installToolChromePatch();
+	registerToolChromeEvents(pi);
+	installWorkingIndicator(pi);
 
 	const agent = await import("@mariozechner/pi-coding-agent");
 	installUserMessageRenderer(pi, agent.UserMessageComponent);
