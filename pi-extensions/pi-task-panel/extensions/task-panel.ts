@@ -9,6 +9,7 @@ import { Type } from "typebox";
 const INSTALL_SYMBOL = Symbol.for("vstack.pi-task-panel.installed");
 const STATE_TYPE = "vstack-task-panel:state";
 const TASK_CONTEXT_TYPE = "vstack-task-panel:context";
+const TASK_COMPLETE_MESSAGE_TYPE = "vstack-task-panel:complete";
 const WIDGET_KEY = "vstack-task-panel";
 const PANEL_INDENT = "  ";
 const PANEL_BAR = "┃";
@@ -579,6 +580,12 @@ export default function taskPanel(pi: ExtensionAPI): void {
 
 	pi.registerCommand("todo", { description: "Manage the persistent task panel", handler: async (args, ctx) => handleTodoCommand(args, ctx) });
 
+	pi.registerMessageRenderer(TASK_COMPLETE_MESSAGE_TYPE, (message: any, _options: any, theme: Theme) => {
+		const summary = typeof message?.details?.summary === "string" ? message.details.summary : typeof message?.content === "string" ? message.content : "Tasks complete";
+		const action = typeof message?.details?.action === "string" ? message.details.action : "mark_done";
+		return singleLine(renderTodoToolSummary(summary, action, theme));
+	});
+
 	const compactToolOutput = settingBoolean("compactToolOutput", true);
 
 	pi.registerTool({
@@ -614,12 +621,17 @@ export default function taskPanel(pi: ExtensionAPI): void {
 				}
 			});
 			const summary = toolResultSummary(params.action, message, state);
-			return { content: [{ type: "text", text: toolResultContent(summary, state, runCtx.cwd) }], details: { action: params.action, message, summary, state: cloneState(state) } };
+			const deferAllCompleteDisplay = state.tasks.length > 0 && remainingCount(state) === 0 && !summary.startsWith("No task");
+			if (deferAllCompleteDisplay) {
+				pi.sendMessage({ customType: TASK_COMPLETE_MESSAGE_TYPE, content: summary, display: true, details: { action: params.action, summary } }, { deliverAs: "steer", triggerTurn: false });
+			}
+			return { content: [{ type: "text", text: toolResultContent(summary, state, runCtx.cwd) }], details: { action: params.action, deferDisplay: deferAllCompleteDisplay, message, summary, state: cloneState(state) } };
 		},
 		renderCall(_args, theme) {
 			return compactToolOutput ? singleLine("") : new Text(theme.fg("toolTitle", "todo_write"), 0, 0);
 		},
 		renderResult(result, _options, theme) {
+			if (result.details?.deferDisplay) return singleLine("");
 			const summary = result.details?.summary ?? result.content?.find((part: any) => part?.type === "text")?.text?.replace(/^•\s*/, "") ?? "tasks updated";
 			const action = result.details?.action ?? "";
 			if (compactToolOutput) return singleLine(renderTodoToolSummary(summary, action, theme));

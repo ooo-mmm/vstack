@@ -516,12 +516,13 @@ const ToolBatchParams = {
 			minItems: 1,
 			items: {
 				type: "object",
-				additionalProperties: false,
+				additionalProperties: true,
+				description: "One tool call. Prefer { tool, args }, but flat fields such as { tool: 'read', path: 'README.md' } are also accepted.",
 				properties: {
 					tool: { type: "string", enum: ["read", "grep", "find", "ls", "bash"], description: "Tool to run inside the batch." },
-					args: { type: "object", additionalProperties: true, description: "Arguments for the selected tool." },
+					args: { type: "object", additionalProperties: true, description: "Arguments for the selected tool. Optional; flat sibling fields are folded into args." },
 				},
-				required: ["tool", "args"],
+				required: ["tool"],
 			},
 		},
 		concurrency: { type: "number", description: "Maximum calls to run at once. Defaults to all calls, capped by settings." },
@@ -536,8 +537,12 @@ function normalizeBatchCalls(value: unknown): BatchToolCall[] {
 		if (!raw || typeof raw !== "object") continue;
 		const tool = (raw as any).tool;
 		if (!isStackableToolName(tool)) continue;
-		const args = (raw as any).args && typeof (raw as any).args === "object" ? (raw as any).args : {};
-		calls.push({ args, tool });
+		const flatArgs: Record<string, unknown> = {};
+		for (const [key, val] of Object.entries(raw as Record<string, unknown>)) {
+			if (key !== "tool" && key !== "args") flatArgs[key] = val;
+		}
+		const nestedArgs = (raw as any).args && typeof (raw as any).args === "object" && !Array.isArray((raw as any).args) ? (raw as any).args : {};
+		calls.push({ args: { ...flatArgs, ...nestedArgs }, tool });
 	}
 	return calls;
 }

@@ -18,6 +18,6 @@ When `stackToolCalls=true`, current Pi still reserves vertical space for each na
 
 Known limitation: Pi currently reserves spacer rows for hidden tool entries, and hidden `Thinking...` labels cannot be fully removed from an extension; fixing those requires Pi core renderer changes.
 
-`tool_batch` is an optional composite tool registered by this package and preferred for multiple independent read/search/list/diagnostic bash operations. It runs `read`/`grep`/`find`/`ls`/diagnostic `bash` calls through Pi's original built-ins but returns one renderable tool result, avoiding the hidden-sibling spacer problem for calls the model chooses to batch. Avoid mutating or order-dependent bash commands in `tool_batch`; keep those as separate `bash` calls.
+`tool_batch` is an optional composite tool registered by this package and preferred for multiple independent read/search/list/diagnostic bash operations. It runs `read`/`grep`/`find`/`ls`/diagnostic `bash` calls through Pi's original built-ins but returns one renderable tool result, avoiding the hidden-sibling spacer problem for calls the model chooses to batch. Per-call arguments prefer `{ tool, args }`, but flat calls such as `{ tool: "read", path: "README.md" }` are accepted and normalized. Avoid mutating or order-dependent bash commands in `tool_batch`; keep those as separate `bash` calls.
 
 Set `renderMutationTools=true` to opt into compact `edit`/`write` renderers. When enabled, expanded edit diffs are rendered in full and are not line-truncated by this extension.
