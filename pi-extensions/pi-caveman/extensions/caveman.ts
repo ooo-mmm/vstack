@@ -7,8 +7,22 @@ const INSTALL_SYMBOL = Symbol.for("vstack.pi-caveman.installed");
 const STATE_TYPE = "vstack-caveman:state";
 const STATUS_KEY = "caveman";
 
-type Mode = "off" | "lite" | "full" | "ultra" | "wenyan-lite" | "wenyan-full" | "wenyan-ultra";
+type Mode = "off" | "lite" | "full" | "ultra" | "micro";
 type VstackConfig = Record<string, unknown>;
+
+const MODE_VALUES: readonly Mode[] = ["off", "lite", "full", "ultra", "micro"];
+const STOP_ALIASES = new Set(["stop", "quit"]);
+const COMMAND_COMPLETIONS = [
+	{ value: "lite", label: "lite", description: "Professional, no fluff" },
+	{ value: "full", label: "full", description: "Classic caveman" },
+	{ value: "ultra", label: "ultra", description: "Maximum compression" },
+	{ value: "micro", label: "micro", description: "Prompt-minimized compression" },
+	{ value: "toggle", label: "toggle", description: "Toggle caveman mode on/off" },
+	{ value: "off", label: "off", description: "Disable caveman mode" },
+	{ value: "stop", label: "stop", description: "Disable caveman mode" },
+	{ value: "quit", label: "quit", description: "Disable caveman mode" },
+	{ value: "status", label: "status", description: "Show current caveman mode" },
+] as const;
 
 interface CavemanState {
 	mode: Mode;
@@ -66,8 +80,8 @@ function settingString(key: string, fallback: string, cwd?: string): string {
 
 function normalizeMode(input: string | undefined): Mode | undefined {
 	const mode = (input ?? "").trim().toLowerCase();
-	if (mode === "wenyan") return "wenyan-full";
-	if (["off", "lite", "full", "ultra", "wenyan-lite", "wenyan-full", "wenyan-ultra"].includes(mode)) return mode as Mode;
+	if (STOP_ALIASES.has(mode)) return "off";
+	if (MODE_VALUES.includes(mode as Mode)) return mode as Mode;
 	return undefined;
 }
 
@@ -103,13 +117,23 @@ function instructions(mode: Mode, cwd: string, clarityEscape: boolean): string {
 			suffix,
 		].filter(Boolean).join("\n");
 	}
-	const modeText: Record<Exclude<Mode, "off">, string> = {
+	if (mode === "micro") {
+		const compactBoundaries: string[] = [];
+		if (settingBoolean("boundaryNormalForCode", true, cwd)) compactBoundaries.push("Code/commands/identifiers/quoted errors unchanged.");
+		if (settingBoolean("boundaryNormalForCommits", true, cwd)) compactBoundaries.push("Commit/PR text normal unless user asks caveman.");
+		if (settingBoolean("boundaryNormalForReviews", true, cwd)) compactBoundaries.push("Formal reviews normal unless user asks caveman.");
+		return [
+			"Token efficiency mode: terse smart caveman.",
+			"Cut filler/pleasantries/hedging. Fragments OK. Technical terms exact. Accuracy > brevity.",
+			"Use normal clarity for security/destructive/ambiguous turns, then resume.",
+			...compactBoundaries,
+			suffix,
+		].filter(Boolean).join("\n");
+	}
+	const modeText: Record<Exclude<Mode, "off" | "micro">, string> = {
 		lite: "Lite: remove filler, hedging, and pleasantries. Keep articles and professional complete sentences, but be tight.",
 		full: "Full: terse smart caveman. Drop articles/filler/hedging. Fragments OK. Pattern: [thing] [action] [reason]. [next step]. Technical terms exact.",
 		ultra: "Ultra: maximum terse English. Abbreviate common technical words, use arrows for causality, one word when one word enough. Preserve exact technical terms.",
-		"wenyan-lite": "Wenyan-lite: concise semi-classical Chinese register. Drop filler/hedging, keep clarity and technical terms exact.",
-		"wenyan-full": "Wenyan-full: maximum classical terseness. Classical Chinese style, subjects often omitted, preserve technical terms/code exact.",
-		"wenyan-ultra": "Wenyan-ultra: extreme compact classical Chinese feel. Maximum compression while preserving correctness and technical identifiers.",
 	};
 	return [
 		"Caveman communication mode active for assistant natural-language chat.",
@@ -164,28 +188,26 @@ export default function caveman(pi: ExtensionAPI): void {
 	pi.on("session_shutdown", (_event, ctx) => ctx.ui.setStatus(STATUS_KEY, undefined));
 
 	pi.registerCommand("caveman", {
-		description: "Control caveman mode: /caveman [lite|full|ultra|wenyan-full|off|status]",
+		description: "Control caveman mode: /caveman [lite|full|ultra|micro|toggle|off|status]",
+		getArgumentCompletions: (prefix: string) => {
+			const normalized = prefix.trim().toLowerCase();
+			const items = COMMAND_COMPLETIONS.filter((item) => item.value.startsWith(normalized));
+			return items.length > 0 ? items : null;
+		},
 		handler: async (args, ctx) => {
 			activeCtx = ctx;
 			const arg = args.trim().toLowerCase();
-			if (!arg || arg === "status") {
-				if (!arg && state.mode === "off") {
-					if (!settingBoolean("sessionOverrideAllowed", true, ctx.cwd)) {
-						ctx.ui.notify("Session override disabled in caveman settings.", "warning");
-						return;
-					}
-					state = { mode: defaultMode(ctx.cwd), source: "session", updatedAt: new Date().toISOString() };
-					persist();
-					syncStatus(ctx);
-					ctx.ui.notify(`Caveman ${state.mode} enabled.`, "info");
-					return;
-				}
+			if (arg === "status") {
 				ctx.ui.notify(statusText(state), "info");
 				return;
 			}
-			const mode = normalizeMode(arg);
+			if (!arg && state.mode !== "off") {
+				ctx.ui.notify(statusText(state), "info");
+				return;
+			}
+			const mode = arg === "toggle" ? (state.mode === "off" ? defaultMode(ctx.cwd) : "off") : normalizeMode(arg || defaultMode(ctx.cwd));
 			if (!mode) {
-				ctx.ui.notify("Unknown caveman mode. Use off, lite, full, ultra, wenyan-lite, wenyan-full/wenyan, or wenyan-ultra.", "warning");
+				ctx.ui.notify("Unknown caveman mode. Use off/stop/quit, lite, full, ultra, micro, toggle, or status.", "warning");
 				return;
 			}
 			if (!settingBoolean("sessionOverrideAllowed", true, ctx.cwd)) {
