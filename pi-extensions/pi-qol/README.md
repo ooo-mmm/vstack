@@ -9,7 +9,8 @@ Features:
 - Styles `[Image #1]`, `[Image #2]`, ... placeholders as compact filled chips in the editor using the active theme's `accent` color.
 - Collapses existing pasted image file paths to `[Image #N]` aliases and attaches those images on submit.
 - Adds `/session-name [name]` to set or show the current session's friendly name in Pi's session selector (toggle with `enableSessionNameCommand`, default on).
-- Adds `/handoff <goal>` to generate a focused handoff prompt, optionally review it, and open a new session with that prompt as a draft (toggle with `enableHandoffCommand`, default on; review with `handoffReviewPrompt`, default on).
+- Adds `/search` plus optional `F3` overlay to search previous Pi sessions, preview snippets, resume a session, inject a summary into the current context, or start a new session with summarized context.
+- Adds `/handoff <goal>` to generate a focused handoff prompt, optionally review it, and open a new session with that prompt as a draft. Handoff preserves the latest compaction summary plus retained branch entries so compacted sessions transfer useful context instead of only post-compaction messages (toggle with `enableHandoffCommand`, default on; review with `handoffReviewPrompt`, default on).
 - Prompts before configured bash command fragments run through the agent `bash` tool. Default prompt list is `rm -Rf` only.
 - Sends external terminal/tmux notifications when Pi is ready for input, asks a structured question, appears to need direction, completes a full task list, or reports critical/blocked information. Channels include BEL, OSC 777/OSC 99, Windows Terminal toast, and optional tmux `display-message`.
 - Optionally overrides Pi compaction summaries with a custom summarizer modeled after Pi's `custom-compaction.ts` example. It can use a configured model (default `google/gemini-2.5-flash`) or a remote HTTP endpoint, supports concise/balanced/exhaustive summary profiles, and can also override requested `/tree` branch summaries.
@@ -24,7 +25,27 @@ Commands:
 - `/qol collapse`
 - `/qol reset`
 - `/session-name [name]`
+- `/search [query]`
+- `/search resume <sessionPath>`
+- `/search refresh` / `/search reindex`
+- `/search stats`
 - `/handoff <goal>`
+
+## Session search settings
+
+Session search lists session files first. Each row uses the same primary title idea as `/resume` (explicit session name, otherwise first user prompt), shows the project/path, and shows the latest user prompt or search match. Press Enter to browse all user prompts from that session as one-line, scrollable rows; press Enter on a prompt to resume, copy it into the editor, inject a focused summary, or start a new session with focused context.
+
+All are exposed through `pi-extension-manager` under **QOL**:
+
+- `sessionSearch.enabled`: register the `/search` command and session search overlay.
+- `sessionSearch.shortcutKey`: shortcut to open search. Default `f3`; set to `none` to disable. (`Ctrl+F` and `Alt+F` are Pi editor bindings.)
+- `sessionSearch.sortMode`: `relevance` or `recent`.
+- `sessionSearch.resultLimit`, `sessionSearch.maxVisible`, `sessionSearch.messageMaxVisible`, `sessionSearch.previewSnippets`, `sessionSearch.overlayWidth`, `sessionSearch.cacheTtlSeconds`.
+- `sessionSearch.summaryModel`: summarizer model (`current`, `provider/model`, or bare model id). Default `current` avoids extra provider setup.
+- `sessionSearch.summaryMaxTokens`: max output tokens for imported-session summaries.
+- `sessionSearch.summaryInputMaxChars`: cap for previous-session transcript text sent to the QOL summarizer.
+
+Implementation note: this intentionally uses Pi's current `SessionManager.list/listAll`, `session_start` replacement lifecycle, and `ctx.newSession(..., { withSession })` APIs instead of `pi-session-search`'s older hardcoded `~/.pi/agent/sessions` scan, native SQLite dependency, nonexistent `session_switch` hook, and OpenRouter-specific secret file.
 
 ## Notification settings
 

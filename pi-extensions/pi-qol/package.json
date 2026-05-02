@@ -1,7 +1,7 @@
 {
   "name": "pi-qol",
   "version": "0.1.0",
-  "description": "Pi quality-of-life extension: reliable multiline input, styled pasted-image chips, session naming, handoff, permission prompts, notifications, custom compaction, and a collapsed-thinking timer.",
+  "description": "Pi quality-of-life extension: reliable multiline input, styled pasted-image chips, session naming, session search/context import, handoff, permission prompts, notifications, custom compaction, and a collapsed-thinking timer.",
   "license": "MIT",
   "keywords": [
     "pi-package",
@@ -117,6 +117,120 @@
           "type": "boolean",
           "default": true,
           "category": "Session",
+          "apply": "live"
+        },
+        {
+          "key": "sessionSearch.enabled",
+          "label": "Enable session search",
+          "description": "Register the previous-session search palette, preview, resume, and context-import actions.",
+          "type": "boolean",
+          "default": true,
+          "category": "Session Search",
+          "apply": "reload",
+          "requiresReload": true
+        },
+        {
+          "key": "sessionSearch.shortcutKey",
+          "label": "Session search shortcut",
+          "description": "Keyboard shortcut to open the session search overlay. Default f3 avoids Pi's built-in Ctrl+F and Alt+F editor bindings. Set to none to disable.",
+          "type": "string",
+          "default": "f3",
+          "category": "Session Search",
+          "apply": "reload",
+          "requiresReload": true
+        },
+        {
+          "key": "sessionSearch.sortMode",
+          "label": "Session search sort mode",
+          "description": "Sort matches by relevance score or by most recent session modification time.",
+          "type": "enum",
+          "enumValues": [
+            "relevance",
+            "recent"
+          ],
+          "default": "relevance",
+          "category": "Session Search",
+          "apply": "live"
+        },
+        {
+          "key": "sessionSearch.resultLimit",
+          "label": "Session search result limit",
+          "description": "Maximum number of matching sessions returned by the search palette.",
+          "type": "number",
+          "default": 40,
+          "category": "Session Search",
+          "apply": "live"
+        },
+        {
+          "key": "sessionSearch.maxVisible",
+          "label": "Visible session rows",
+          "description": "Maximum number of sessions shown at once in the overlay before scrolling.",
+          "type": "number",
+          "default": 10,
+          "category": "Session Search",
+          "apply": "live"
+        },
+        {
+          "key": "sessionSearch.previewSnippets",
+          "label": "Preview snippets",
+          "description": "Maximum matching snippets shown on the selected session preview screen.",
+          "type": "number",
+          "default": 6,
+          "category": "Session Search",
+          "apply": "live"
+        },
+        {
+          "key": "sessionSearch.overlayWidth",
+          "label": "Overlay width",
+          "description": "Preferred session search overlay width in terminal columns.",
+          "type": "number",
+          "default": 104,
+          "category": "Session Search",
+          "apply": "live"
+        },
+        {
+          "key": "sessionSearch.messageMaxVisible",
+          "label": "Visible user prompt rows",
+          "description": "Maximum number of one-line user prompts shown at once in the session prompt browser before scrolling.",
+          "type": "number",
+          "default": 12,
+          "category": "Session Search",
+          "apply": "live"
+        },
+        {
+          "key": "sessionSearch.cacheTtlSeconds",
+          "label": "Session cache TTL",
+          "description": "Seconds before the in-memory session list is refreshed. Use /search refresh or /search reindex to force a refresh.",
+          "type": "number",
+          "default": 45,
+          "category": "Session Search",
+          "apply": "live"
+        },
+        {
+          "key": "sessionSearch.summaryModel",
+          "label": "Session summary model",
+          "description": "Model used to summarize an imported previous session. Use current, provider/model, or a bare model id. Defaults to current so no extra provider setup is required.",
+          "type": "string",
+          "default": "current",
+          "category": "Session Search Summary",
+          "apply": "live"
+        },
+        {
+          "key": "sessionSearch.summaryMaxTokens",
+          "label": "Session summary max output tokens",
+          "description": "Maximum tokens requested from the session-search summarizer.",
+          "type": "number",
+          "default": 4096,
+          "category": "Session Search Summary",
+          "apply": "live"
+        },
+        {
+          "key": "sessionSearch.summaryInputMaxChars",
+          "label": "Summary input character cap",
+          "description": "Maximum previous-session transcript characters sent to the summarizer; long sessions keep the beginning and end.",
+          "type": "number",
+          "default": 180000,
+          "category": "Session Search Summary",
           "apply": "live"
         },
         {
@@ -476,6 +590,7 @@
     }
   },
   "peerDependencies": {
+    "@mariozechner/pi-agent-core": "*",
     "@mariozechner/pi-ai": "*",
     "@mariozechner/pi-coding-agent": "*",
     "@mariozechner/pi-tui": "*"

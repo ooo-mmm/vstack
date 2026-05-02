@@ -1,16 +1,17 @@
+import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import { complete, type Message } from "@mariozechner/pi-ai";
-import { AssistantMessageComponent, BorderedLoader, convertToLlm, CustomEditor, serializeConversation, type ExtensionAPI, type ExtensionCommandContext, type ExtensionContext, type KeybindingsManager, type SessionEntry, type SessionMessageEntry, type Theme } from "@mariozechner/pi-coding-agent";
+import { AssistantMessageComponent, BorderedLoader, convertToLlm, CustomEditor, serializeConversation, SessionManager, type ExtensionAPI, type ExtensionCommandContext, type ExtensionContext, type KeybindingsManager, type SessionEntry, type Theme } from "@mariozechner/pi-coding-agent";
 import type { AutocompleteItem, AutocompleteSuggestions, EditorTheme, TUI } from "@mariozechner/pi-tui";
-import { matchesKey, Text, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
+import { matchesKey, Text, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@mariozechner/pi-tui";
 import { execFile, execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 
 const INSTALL_SYMBOL = Symbol.for("vstack.pi-qol.installed");
 const STATUS_KEY = "qol-attachments";
-const DIM = "\x1b[38;5;8m";
-const RESET = "\x1b[0m";
+const SESSION_SEARCH_STATUS_KEY = "qol-session-search";
+const SESSION_SEARCH_CONTEXT_TYPE = "qol-session-context";
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tif", ".tiff", ".heic", ".heif"]);
 const IMAGE_PATH_PATTERN = /(^|[\s(\[{<"'`])(@?(?:~|\.\.?|\/)[^\s)\]}>"'`]+?\.(?:png|jpe?g|gif|webp|bmp|tiff?|heic|heif))(?=$|[\s)\]}>"'`,.;:!?])/gi;
 const IMAGE_ALIAS_SYMBOL = Symbol.for("vstack.pi-qol.image-path-aliases");
@@ -18,6 +19,7 @@ const QUESTION_SERVICE_SYMBOL = Symbol.for("vstack.pi-questions.service");
 const QOL_NOTIFICATION_SERVICE_SYMBOL = Symbol.for("vstack.pi-qol.notification-service");
 const THINKING_TIMER_STORE_SYMBOL = Symbol.for("vstack.pi-qol.thinking-timer.store");
 const THINKING_TIMER_PATCH_SYMBOL = Symbol.for("vstack.pi-qol.thinking-timer.patch");
+const SESSION_SEARCH_PENDING_SYMBOL = Symbol.for("vstack.pi-qol.session-search.pending-context");
 const QUESTION_OPENED_EVENT = "vstack:pi-questions:opened";
 const QUESTION_NOTIFY_DEDUP_MS = 2000;
 const DEFAULT_NOTIFICATION_TITLE = "Pi";
@@ -29,6 +31,12 @@ const DEFAULT_COMPACTION_MAX_TOKENS = 8192;
 const DEFAULT_IDLE_COMPACTION_THRESHOLD_TOKENS = 200000;
 const DEFAULT_IDLE_COMPACTION_SECONDS = 300;
 const DEFAULT_PERMISSION_GATE_COMMANDS = "rm -Rf";
+const DEFAULT_SESSION_SEARCH_LIMIT = 40;
+const DEFAULT_SESSION_SEARCH_PREVIEW_SNIPPETS = 6;
+const DEFAULT_SESSION_SEARCH_SHORTCUT = "f3";
+const DEFAULT_SESSION_SEARCH_SUMMARY_INPUT_CHARS = 180_000;
+const DEFAULT_SESSION_SEARCH_SUMMARY_MAX_TOKENS = 4096;
+const DEFAULT_SESSION_SEARCH_CACHE_TTL_SECONDS = 45;
 
 const HANDOFF_SYSTEM_PROMPT = `You are a context transfer assistant. Given a conversation history and the user's goal for a new thread, generate a focused prompt that:
 
@@ -657,7 +665,7 @@ function attachmentLabels(text: string, cwd = process.cwd()): string[] {
 function chip(label: string, theme?: Theme): string {
 	const text = ` ${label} `;
 	if (theme) return theme.fg("accent", theme.inverse(text));
-	return `\x1b[7m${text}${RESET}`;
+	return `[${label}]`;
 }
 
 interface VisibleMap {
@@ -850,7 +858,7 @@ function collapseEditorImagePaths(ctx: ExtensionContext): boolean {
 }
 
 type QolSummaryProfile = "concise" | "balanced" | "exhaustive";
-type QolSummaryPurpose = "compaction" | "branch-summary";
+type QolSummaryPurpose = "compaction" | "branch-summary" | "session-search";
 
 const QOL_COMPACTION_SYSTEM_PROMPT = "You summarize coding-agent sessions for continuation. Preserve exact technical facts, filenames, commands, constraints, decisions, blockers, and next actions. Do not invent details.";
 
@@ -876,7 +884,11 @@ function buildSummaryPrompt(options: {
 	profile: QolSummaryProfile;
 	purpose: QolSummaryPurpose;
 }): string {
-	const purposeText = options.purpose === "branch-summary" ? "the branch being left during /tree navigation" : "the conversation span being compacted";
+	const purposeText = options.purpose === "branch-summary"
+		? "the branch being left during /tree navigation"
+		: options.purpose === "session-search"
+			? "the previous session being imported into the current context"
+			: "the conversation span being compacted";
 	const previous = options.previousSummary ? `<previous-summary>\n${options.previousSummary}\n</previous-summary>\n\n` : "";
 	const custom = options.customInstructions?.trim() ? `<custom-instructions>\n${options.customInstructions.trim()}\n</custom-instructions>\n\n` : "";
 	return `${custom}${previous}<conversation>\n${options.conversationText}\n</conversation>\n\nSummarize ${purposeText} for a coding agent that must continue the work.\n\n${compactionProfileInstructions(options.profile)}\n\nUse this markdown shape:\n\n## Goal\n[What the user is trying to accomplish]\n\n## Constraints & Preferences\n- [Requirements, style, safety, or user preferences]\n\n## Progress\n### Done\n- [x] [Completed work]\n\n### In Progress\n- [ ] [Current partial work]\n\n### Blocked\n- [Blockers or none]\n\n## Key Decisions\n- **[Decision]**: [Rationale]\n\n## Files & Commands\n- [Files read/modified and important commands/results]\n\n## Next Steps\n1. [Most important next action]\n\n## Critical Context\n- [Anything easy to lose but needed later]`;
@@ -905,8 +917,7 @@ async function summarizeWithRemote(endpoint: string, systemPrompt: string, promp
 	throw new Error("Remote compaction response missing summary");
 }
 
-function resolveCompactionModel(ctx: ExtensionContext): any | undefined {
-	const configured = settingString("compaction.model", DEFAULT_COMPACTION_MODEL, ctx.cwd);
+function resolveConfiguredModel(ctx: ExtensionContext, configured: string): any | undefined {
 	if (!configured || configured === "current") return ctx.model;
 	const withoutThinking = configured.replace(/:(off|minimal|low|medium|high|xhigh)$/i, "");
 	const slash = withoutThinking.indexOf("/");
@@ -919,6 +930,10 @@ function resolveCompactionModel(ctx: ExtensionContext): any | undefined {
 	return undefined;
 }
 
+function resolveCompactionModel(ctx: ExtensionContext): any | undefined {
+	return resolveConfiguredModel(ctx, settingString("compaction.model", DEFAULT_COMPACTION_MODEL, ctx.cwd));
+}
+
 function modelLabel(model: any): string {
 	return model ? `${model.provider}/${model.id}` : "unknown model";
 }
@@ -927,10 +942,12 @@ async function generateQolSummary(ctx: ExtensionContext, options: {
 	conversationText: string;
 	customInstructions?: string;
 	previousSummary?: string;
+	maxTokens?: number;
+	model?: string;
 	purpose: QolSummaryPurpose;
 	signal?: AbortSignal;
 }): Promise<{ model: string; summary: string; via: "model" | "remote" }> {
-	const maxTokens = Math.max(256, Math.floor(settingNumber("compaction.maxTokens", DEFAULT_COMPACTION_MAX_TOKENS, ctx.cwd)));
+	const maxTokens = Math.max(256, Math.floor(options.maxTokens ?? settingNumber("compaction.maxTokens", DEFAULT_COMPACTION_MAX_TOKENS, ctx.cwd)));
 	const promptText = buildSummaryPrompt({
 		conversationText: options.conversationText,
 		customInstructions: options.customInstructions,
@@ -949,8 +966,9 @@ async function generateQolSummary(ctx: ExtensionContext, options: {
 		}
 	}
 
-	const model = resolveCompactionModel(ctx);
-	if (!model) throw new Error(`Compaction model not found: ${settingString("compaction.model", DEFAULT_COMPACTION_MODEL, ctx.cwd)}`);
+	const configuredModel = options.model ?? settingString("compaction.model", DEFAULT_COMPACTION_MODEL, ctx.cwd);
+	const model = resolveConfiguredModel(ctx, configuredModel);
+	if (!model) throw new Error(`Summary model not found: ${configuredModel}`);
 	const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
 	if (!auth.ok) throw new Error(auth.error);
 	if (!auth.apiKey) throw new Error(`No API key for ${model.provider}`);
@@ -1131,6 +1149,39 @@ function getQuestionService(): QuestionServiceLike | undefined {
 	return undefined;
 }
 
+function entryToHandoffMessage(entry: SessionEntry): AgentMessage | undefined {
+	if (entry.type === "message") return entry.message;
+	if (entry.type === "compaction") {
+		return {
+			role: "compactionSummary",
+			summary: entry.summary,
+			tokensBefore: entry.tokensBefore,
+			timestamp: new Date(entry.timestamp).getTime(),
+		};
+	}
+	return undefined;
+}
+
+function getHandoffMessages(branch: SessionEntry[]): AgentMessage[] {
+	let compactionIndex = -1;
+	for (let i = branch.length - 1; i >= 0; i -= 1) {
+		if (branch[i]?.type === "compaction") {
+			compactionIndex = i;
+			break;
+		}
+	}
+	if (compactionIndex < 0) return branch.map(entryToHandoffMessage).filter((message): message is AgentMessage => message !== undefined);
+
+	const compaction = branch[compactionIndex];
+	const firstKeptIndex = compaction?.type === "compaction" ? branch.findIndex((entry) => entry.id === compaction.firstKeptEntryId) : -1;
+	const compactedBranch = [
+		compaction,
+		...(firstKeptIndex >= 0 ? branch.slice(firstKeptIndex, compactionIndex) : []),
+		...branch.slice(compactionIndex + 1),
+	];
+	return compactedBranch.map(entryToHandoffMessage).filter((message): message is AgentMessage => message !== undefined);
+}
+
 async function runHandoff(args: string, ctx: ExtensionCommandContext): Promise<void> {
 	if (!ctx.hasUI) {
 		ctx.ui.notify("handoff requires interactive mode", "error");
@@ -1148,10 +1199,7 @@ async function runHandoff(args: string, ctx: ExtensionCommandContext): Promise<v
 		return;
 	}
 
-	const branch = ctx.sessionManager.getBranch();
-	const messages = branch
-		.filter((entry: SessionEntry): entry is SessionMessageEntry => entry.type === "message")
-		.map((entry: SessionMessageEntry) => entry.message);
+	const messages = getHandoffMessages(ctx.sessionManager.getBranch());
 
 	if (messages.length === 0) {
 		ctx.ui.notify("No conversation to hand off", "error");
@@ -1232,6 +1280,7 @@ async function runHandoff(args: string, ctx: ExtensionCommandContext): Promise<v
 
 function statusMessage(ctx: ExtensionContext): string {
 	const labels = attachmentLabels(currentEditorText(ctx), ctx.cwd);
+	const searchShortcut = sessionSearchShortcut(ctx.cwd);
 	return [
 		"Pi QOL status",
 		`Shift+Enter newline: ${settingBoolean("newlineOnShiftEnter", true, ctx.cwd) ? "enabled" : "disabled"}`,
@@ -1241,6 +1290,7 @@ function statusMessage(ctx: ExtensionContext): string {
 		`Session-name command: ${settingBoolean("enableSessionNameCommand", true, ctx.cwd) ? "enabled" : "disabled"}`,
 		`Handoff command: ${settingBoolean("enableHandoffCommand", true, ctx.cwd) ? "enabled" : "disabled"}`,
 		`Handoff prompt review: ${settingBoolean("handoffReviewPrompt", true, ctx.cwd) ? "enabled" : "disabled"}`,
+		`Session search: ${settingBoolean("sessionSearch.enabled", true, ctx.cwd) ? `enabled (/search${searchShortcut ? `, ${searchShortcut}` : ""})` : "disabled"}`,
 		`Custom compaction: ${settingBoolean("compaction.customEnabled", false, ctx.cwd) ? `enabled (${settingString("compaction.model", DEFAULT_COMPACTION_MODEL, ctx.cwd)}, ${compactionProfile(ctx.cwd)})` : "disabled (Pi default)"}`,
 		`Idle compaction: ${settingBoolean("compaction.idleEnabled", false, ctx.cwd) ? `enabled after ${Math.max(1, Math.floor(settingNumber("compaction.idleTimeoutSeconds", DEFAULT_IDLE_COMPACTION_SECONDS, ctx.cwd)))}s idle` : "disabled"}`,
 		`Branch summary override: ${settingBoolean("compaction.branchSummaryEnabled", false, ctx.cwd) ? "enabled" : "disabled"}`,
@@ -1249,6 +1299,1145 @@ function statusMessage(ctx: ExtensionContext): string {
 		`Thinking timer: ${settingBoolean("thinkingTimer.enabled", true, ctx.cwd) ? "enabled" : "disabled"}`,
 		"If Shift+Enter still submits, configure your terminal/tmux to send a distinct Shift+Enter sequence or use the fallback key.",
 	].join("\n");
+}
+
+
+type QolSessionSortMode = "recent" | "relevance";
+
+type QolSessionAction = "resume" | "copy" | "summarize" | "newSession" | "back";
+
+const QOL_SESSION_ACTIONS: QolSessionAction[] = ["resume", "copy", "summarize", "newSession", "back"];
+const QOL_SESSION_ACTION_LABELS: Record<QolSessionAction, string> = {
+	resume: "↩ Resume",
+	copy: "✎ Copy Prompt",
+	summarize: "📋 Inject Summary",
+	newSession: "✦ New + Context",
+	back: "← Back",
+};
+
+interface QolSessionSearchSession {
+	allMessagesText: string;
+	created: Date;
+	cwd: string;
+	firstMessage: string;
+	id: string;
+	messageCount: number;
+	modified: Date;
+	name?: string;
+	parentSessionPath?: string;
+	path: string;
+}
+
+interface QolSessionSearchResult extends QolSessionSearchSession {
+	rank: number;
+	snippets: string[];
+}
+
+interface QolParsedSessionQuery {
+	mode: "tokens" | "regex";
+	tokens: Array<{ kind: "fuzzy" | "phrase"; value: string }>;
+	regex?: RegExp;
+	error?: string;
+}
+
+interface QolSessionSearchState {
+	cursor: number;
+	query: string;
+	results: QolSessionSearchResult[];
+	selected: number;
+	total: number;
+}
+
+interface QolSessionUserMessage {
+	index: number;
+	text: string;
+	timestamp?: number;
+}
+
+interface QolSessionMessagesState {
+	messages: QolSessionUserMessage[];
+	result: QolSessionSearchResult;
+	selected: number;
+}
+
+interface QolSessionActionState {
+	actionIndex: number;
+	message: QolSessionUserMessage;
+	result: QolSessionSearchResult;
+}
+
+interface QolSessionFocusState {
+	cursor: number;
+	message: QolSessionUserMessage;
+	prompt: string;
+	result: QolSessionSearchResult;
+	type: "summarize" | "newSession";
+}
+
+interface QolSessionSearchPendingMessage {
+	content: string;
+	details: Record<string, unknown>;
+}
+
+interface QolSessionPaletteAction {
+	type: "cancel" | "resume" | "copy" | "summarize" | "newSession";
+	customPrompt?: string;
+	message?: QolSessionUserMessage;
+	result?: QolSessionSearchResult;
+}
+
+let qolSessionSearchCache: QolSessionSearchSession[] = [];
+let qolSessionSearchLoadedAt = 0;
+let qolSessionSearchLoading: Promise<QolSessionSearchSession[]> | undefined;
+const qolSessionUserMessagesCache = new Map<string, QolSessionUserMessage[]>();
+
+function getPendingSessionSearchMessage(): QolSessionSearchPendingMessage | undefined {
+	return (globalThis as unknown as Record<PropertyKey, unknown>)[SESSION_SEARCH_PENDING_SYMBOL] as QolSessionSearchPendingMessage | undefined;
+}
+
+function setPendingSessionSearchMessage(message: QolSessionSearchPendingMessage | undefined): void {
+	const host = globalThis as unknown as Record<PropertyKey, unknown>;
+	if (message) host[SESSION_SEARCH_PENDING_SYMBOL] = message;
+	else delete host[SESSION_SEARCH_PENDING_SYMBOL];
+}
+
+function coerceDate(value: unknown): Date {
+	if (value instanceof Date && !Number.isNaN(value.getTime())) return value;
+	const date = new Date(typeof value === "string" || typeof value === "number" ? value : 0);
+	return Number.isNaN(date.getTime()) ? new Date(0) : date;
+}
+
+function sessionInfoToSearchSession(info: any): QolSessionSearchSession | undefined {
+	if (!info || typeof info.path !== "string") return undefined;
+	return {
+		allMessagesText: typeof info.allMessagesText === "string" ? info.allMessagesText : "",
+		created: coerceDate(info.created),
+		cwd: typeof info.cwd === "string" ? info.cwd : "",
+		firstMessage: typeof info.firstMessage === "string" ? info.firstMessage : "(no messages)",
+		id: typeof info.id === "string" ? info.id : basename(info.path),
+		messageCount: Number.isFinite(Number(info.messageCount)) ? Number(info.messageCount) : 0,
+		modified: coerceDate(info.modified),
+		name: typeof info.name === "string" && info.name.trim() ? info.name.trim() : undefined,
+		parentSessionPath: typeof info.parentSessionPath === "string" ? info.parentSessionPath : undefined,
+		path: info.path,
+	};
+}
+
+function resolveSettingsRelativePath(value: string, settingsPath: string): string {
+	const expanded = expandHome(value.trim());
+	return isAbsolute(expanded) ? expanded : resolve(dirname(settingsPath), expanded);
+}
+
+function sessionSearchShortcut(cwd?: string): string | undefined {
+	// Legacy escape hatch from the original Ctrl+F setting. If users disabled it,
+	// keep shortcuts disabled even though the default shortcut is now conflict-free.
+	if (!settingBoolean("sessionSearch.ctrlFShortcut", true, cwd)) return undefined;
+	const shortcut = settingStringAllowEmpty("sessionSearch.shortcutKey", DEFAULT_SESSION_SEARCH_SHORTCUT, cwd).trim().toLowerCase();
+	if (!shortcut || shortcut === "none" || shortcut === "off" || shortcut === "false") return undefined;
+	return shortcut;
+}
+
+function configuredSessionDir(cwd: string): string | undefined {
+	const envDir = process.env.PI_CODING_AGENT_SESSION_DIR?.trim();
+	if (envDir) return resolveSettingsRelativePath(envDir, join(resolve(cwd), ".pi", "settings.json"));
+	let configured: string | undefined;
+	for (const settingsPath of piSettingsPaths(cwd)) {
+		if (!existsSync(settingsPath)) continue;
+		try {
+			const parsed = JSON.parse(readFileSync(settingsPath, "utf8"));
+			if (typeof parsed?.sessionDir === "string" && parsed.sessionDir.trim()) {
+				configured = resolveSettingsRelativePath(parsed.sessionDir, settingsPath);
+			}
+		} catch {
+			// Ignore malformed optional settings.
+		}
+	}
+	return configured;
+}
+
+async function loadQolSessionSearchSessions(ctx: ExtensionContext, onProgress?: (loaded: number, total: number) => void): Promise<QolSessionSearchSession[]> {
+	const customSessionDir = configuredSessionDir(ctx.cwd);
+	const infos = customSessionDir
+		? await SessionManager.list(ctx.cwd, customSessionDir, onProgress)
+		: await SessionManager.listAll(onProgress);
+	return infos.map(sessionInfoToSearchSession).filter((session): session is QolSessionSearchSession => session !== undefined);
+}
+
+async function refreshQolSessionSearchCache(ctx: ExtensionContext, options?: { force?: boolean; quiet?: boolean }): Promise<QolSessionSearchSession[]> {
+	const ttlMs = Math.max(0, settingNumber("sessionSearch.cacheTtlSeconds", DEFAULT_SESSION_SEARCH_CACHE_TTL_SECONDS, ctx.cwd) * 1000);
+	const fresh = qolSessionSearchCache.length > 0 && (ttlMs === 0 || Date.now() - qolSessionSearchLoadedAt < ttlMs);
+	if (!options?.force && fresh) return qolSessionSearchCache;
+	if (qolSessionSearchLoading) return qolSessionSearchLoading;
+
+	if (!options?.quiet && ctx.hasUI) ctx.ui.setStatus(SESSION_SEARCH_STATUS_KEY, "🔍 Loading sessions...");
+	qolSessionSearchLoading = loadQolSessionSearchSessions(ctx, (loaded, total) => {
+		if (!options?.quiet && ctx.hasUI) ctx.ui.setStatus(SESSION_SEARCH_STATUS_KEY, `🔍 Loading sessions ${loaded}/${total}`);
+	}).then((sessions) => {
+		qolSessionSearchCache = sessions;
+		qolSessionSearchLoadedAt = Date.now();
+		qolSessionUserMessagesCache.clear();
+		return sessions;
+	}).finally(() => {
+		qolSessionSearchLoading = undefined;
+		if (!options?.quiet && ctx.hasUI) ctx.ui.setStatus(SESSION_SEARCH_STATUS_KEY, undefined);
+	});
+	return qolSessionSearchLoading;
+}
+
+function formatSessionSearchDate(date: Date): string {
+	const now = Date.now();
+	const diffMs = Math.max(0, now - date.getTime());
+	const diffMins = Math.floor(diffMs / 60_000);
+	const diffHours = Math.floor(diffMs / 3_600_000);
+	const diffDays = Math.floor(diffMs / 86_400_000);
+	if (diffMins < 1) return "now";
+	if (diffMins < 60) return `${diffMins}m ago`;
+	if (diffHours < 24) return `${diffHours}h ago`;
+	if (diffDays < 7) return `${diffDays}d ago`;
+	return date.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+}
+
+const ANSI_ESCAPE_RE = /\x1b\[[0-?]*[ -/]*[@-~]/g;
+
+function oneLine(text: string): string {
+	return text
+		.replace(ANSI_ESCAPE_RE, "")
+		.replace(/[\r\n\t]+/g, " ")
+		.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, " ")
+		.replace(/\s+/g, " ")
+		.trim();
+}
+
+function sessionDisplayName(session: QolSessionSearchSession): string {
+	if (session.name) return oneLine(session.name) || "session";
+	if (session.cwd) {
+		const parts = oneLine(session.cwd).split(/[\\/]+/).filter(Boolean);
+		if (parts.length >= 2) return parts.slice(-2).join("/");
+		if (parts.length === 1) return parts[0]!;
+	}
+	return oneLine(basename(session.path) || "session") || "session";
+}
+
+function sessionResumeTitle(session: QolSessionSearchSession): string {
+	// Match /resume's primary label: explicit session name, otherwise first user prompt.
+	if (session.name) return oneLine(session.name) || sessionDisplayName(session);
+	if (session.firstMessage && session.firstMessage !== "(no messages)") return oneLine(session.firstMessage) || sessionDisplayName(session);
+	return sessionDisplayName(session);
+}
+
+function shortPathForUi(path: string): string {
+	const cleaned = oneLine(path);
+	const home = homedir();
+	if (cleaned === home) return "~";
+	if (cleaned.startsWith(`${home}/`)) return `~${cleaned.slice(home.length)}`;
+	return cleaned;
+}
+
+function messageContentText(content: unknown): string {
+	if (typeof content === "string") return content;
+	if (!Array.isArray(content)) return "";
+	return content.map((part: any) => {
+		if (part?.type === "text" && typeof part.text === "string") return part.text;
+		if (part?.type === "image") return "[image]";
+		return "";
+	}).filter(Boolean).join(" ");
+}
+
+function sessionUserMessages(sessionPath: string): QolSessionUserMessage[] {
+	const cached = qolSessionUserMessagesCache.get(sessionPath);
+	if (cached) return cached;
+	const messages: QolSessionUserMessage[] = [];
+	try {
+		const lines = readFileSync(sessionPath, "utf8").split(/\r?\n/);
+		for (const line of lines) {
+			if (!line.trim()) continue;
+			let entry: any;
+			try { entry = JSON.parse(line); } catch { continue; }
+			const message = entry?.type === "message" ? entry.message : undefined;
+			if (!message || message.role !== "user") continue;
+			const text = oneLine(messageContentText(message.content));
+			if (!text) continue;
+			messages.push({
+				index: messages.length + 1,
+				text,
+				timestamp: typeof message.timestamp === "number" ? message.timestamp : undefined,
+			});
+		}
+	} catch {
+		// Ignore unreadable sessions; callers fall back to SessionInfo.firstMessage.
+	}
+	qolSessionUserMessagesCache.set(sessionPath, messages);
+	return messages;
+}
+
+function userMessagesForResult(result: QolSessionSearchResult): QolSessionUserMessage[] {
+	const messages = sessionUserMessages(result.path);
+	if (messages.length > 0) return messages;
+	return [{ index: 1, text: oneLine(result.firstMessage || "No user messages") }];
+}
+
+function sessionUserPromptCount(session: QolSessionSearchSession): number {
+	const count = sessionUserMessages(session.path).length;
+	if (count > 0) return count;
+	return session.firstMessage && session.firstMessage !== "(no messages)" ? 1 : 0;
+}
+
+function promptCountLabel(count: number): string {
+	return `${count} prompt${count === 1 ? "" : "s"}`;
+}
+
+function lastUserMessageSnippet(session: QolSessionSearchSession): string {
+	const messages = sessionUserMessages(session.path);
+	return messages[messages.length - 1]?.text || oneLine(session.firstMessage || "No user messages");
+}
+
+function sessionSearchText(session: QolSessionSearchSession): string {
+	return [session.id, session.name ?? "", session.cwd, session.path, session.firstMessage, session.allMessagesText].join("\n");
+}
+
+function normalizeSearchText(text: string): string {
+	return text.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function parseSessionSearchQuery(query: string): QolParsedSessionQuery {
+	const trimmed = query.trim();
+	if (!trimmed) return { mode: "tokens", tokens: [] };
+	if (trimmed.startsWith("re:")) {
+		const source = trimmed.slice(3).trim();
+		if (!source) return { error: "Empty regex", mode: "regex", tokens: [] };
+		try {
+			return { mode: "regex", regex: new RegExp(source, "i"), tokens: [] };
+		} catch (error) {
+			return { error: stringifyError(error), mode: "regex", tokens: [] };
+		}
+	}
+
+	const tokens: QolParsedSessionQuery["tokens"] = [];
+	let buffer = "";
+	let inQuote = false;
+	let unclosed = false;
+	const flush = (kind: "fuzzy" | "phrase") => {
+		const value = buffer.trim();
+		buffer = "";
+		if (value) tokens.push({ kind, value });
+	};
+
+	for (let i = 0; i < trimmed.length; i++) {
+		const char = trimmed[i]!;
+		if (char === '"') {
+			if (inQuote) {
+				flush("phrase");
+				inQuote = false;
+			} else {
+				flush("fuzzy");
+				inQuote = true;
+			}
+			continue;
+		}
+		if (!inQuote && /\s/.test(char)) {
+			flush("fuzzy");
+			continue;
+		}
+		buffer += char;
+	}
+	if (inQuote) unclosed = true;
+	if (unclosed) {
+		return {
+			mode: "tokens",
+			tokens: trimmed.split(/\s+/).filter(Boolean).map((value) => ({ kind: "fuzzy", value })),
+		};
+	}
+	flush(inQuote ? "phrase" : "fuzzy");
+	return { mode: "tokens", tokens };
+}
+
+function simpleFuzzyScore(needle: string, haystack: string): number | undefined {
+	const query = needle.toLowerCase();
+	const text = haystack.toLowerCase();
+	if (!query) return 0;
+	const direct = text.indexOf(query);
+	if (direct >= 0) return direct * 0.1;
+	let pos = 0;
+	let score = 0;
+	for (const char of query) {
+		const found = text.indexOf(char, pos);
+		if (found < 0) return undefined;
+		score += found - pos + 1;
+		pos = found + 1;
+	}
+	return score + 1000;
+}
+
+function matchSessionSearch(session: QolSessionSearchSession, parsed: QolParsedSessionQuery): { matches: boolean; score: number } {
+	const text = sessionSearchText(session);
+	if (parsed.mode === "regex") {
+		if (!parsed.regex) return { matches: false, score: 0 };
+		const index = text.search(parsed.regex);
+		return index < 0 ? { matches: false, score: 0 } : { matches: true, score: index * 0.1 };
+	}
+	if (parsed.tokens.length === 0) return { matches: true, score: 0 };
+	let score = 0;
+	let normalized: string | undefined;
+	for (const token of parsed.tokens) {
+		if (token.kind === "phrase") {
+			normalized ??= normalizeSearchText(text);
+			const phrase = normalizeSearchText(token.value);
+			const index = normalized.indexOf(phrase);
+			if (index < 0) return { matches: false, score: 0 };
+			score += index * 0.1;
+			continue;
+		}
+		const tokenScore = simpleFuzzyScore(token.value, text);
+		if (tokenScore === undefined) return { matches: false, score: 0 };
+		score += tokenScore;
+	}
+	return { matches: true, score };
+}
+
+function escapeForRegex(input: string): string {
+	return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function sessionSnippetSource(session: QolSessionSearchSession): string {
+	return (session.allMessagesText || session.firstMessage || "").replace(/\s+/g, " ").trim();
+}
+
+function snippetAround(text: string, start: number, length: number, width: number): string {
+	const safeStart = Math.max(0, start - Math.floor(width / 3));
+	const safeEnd = Math.min(text.length, start + length + Math.floor((width * 2) / 3));
+	const prefix = safeStart > 0 ? "…" : "";
+	const suffix = safeEnd < text.length ? "…" : "";
+	return `${prefix}${text.slice(safeStart, safeEnd)}${suffix}`;
+}
+
+function buildSessionSnippets(session: QolSessionSearchSession, parsed: QolParsedSessionQuery, limit: number): string[] {
+	const source = sessionSnippetSource(session);
+	if (!source) return [];
+	if (parsed.mode === "regex" && parsed.regex) {
+		parsed.regex.lastIndex = 0;
+		const match = parsed.regex.exec(source);
+		return match ? [snippetAround(source, match.index, match[0].length, 220)] : [];
+	}
+	if (parsed.tokens.length === 0) return [source.slice(0, 220)];
+	const snippets: string[] = [];
+	const lower = source.toLowerCase();
+	const seen = new Set<string>();
+	for (const token of parsed.tokens) {
+		const value = normalizeSearchText(token.value);
+		if (!value) continue;
+		const index = lower.indexOf(value.toLowerCase());
+		if (index < 0) continue;
+		const snippet = snippetAround(source, index, value.length, 220);
+		const key = snippet.toLowerCase();
+		if (!seen.has(key)) {
+			seen.add(key);
+			snippets.push(snippet);
+		}
+		if (snippets.length >= limit) break;
+	}
+	return snippets.length > 0 ? snippets : [source.slice(0, 220)];
+}
+
+function searchQolSessions(sessions: QolSessionSearchSession[], query: string, cwd: string): QolSessionSearchResult[] {
+	const limit = Math.max(1, Math.floor(settingNumber("sessionSearch.resultLimit", DEFAULT_SESSION_SEARCH_LIMIT, cwd)));
+	const snippetLimit = Math.max(1, Math.floor(settingNumber("sessionSearch.previewSnippets", DEFAULT_SESSION_SEARCH_PREVIEW_SNIPPETS, cwd)));
+	const parsed = parseSessionSearchQuery(query);
+	if (parsed.error) return [];
+	if (!query.trim()) {
+		return sessions
+			.slice()
+			.sort((a, b) => b.modified.getTime() - a.modified.getTime())
+			.slice(0, limit)
+			.map((session) => ({ ...session, rank: 0, snippets: buildSessionSnippets(session, { mode: "tokens", tokens: [] }, 1) }));
+	}
+	const results: QolSessionSearchResult[] = [];
+	for (const session of sessions) {
+		const match = matchSessionSearch(session, parsed);
+		if (!match.matches) continue;
+		results.push({ ...session, rank: match.score, snippets: buildSessionSnippets(session, parsed, snippetLimit) });
+	}
+	const sortMode = settingString("sessionSearch.sortMode", "relevance", cwd) === "recent" ? "recent" : "relevance" as QolSessionSortMode;
+	results.sort((a, b) => sortMode === "recent" ? b.modified.getTime() - a.modified.getTime() : a.rank - b.rank || b.modified.getTime() - a.modified.getTime());
+	return results.slice(0, limit);
+}
+
+function styleSessionSnippet(snippet: string, query: string, theme: Theme): string {
+	let styled = snippet;
+	const parsed = parseSessionSearchQuery(query);
+	if (parsed.mode === "tokens") {
+		for (const token of parsed.tokens) {
+			const value = token.value.trim();
+			if (!value || value.length > 80) continue;
+			try {
+				styled = styled.replace(new RegExp(escapeForRegex(value), "gi"), (match) => theme.bold(theme.fg("warning", match)));
+			} catch {
+				// Ignore highlighting failures; search result remains readable.
+			}
+		}
+	}
+	return styled;
+}
+
+function boxParts(width: number, theme: Theme) {
+	const safeWidth = Math.max(24, width);
+	const inner = Math.max(10, safeWidth - 2);
+	const border = (s: string) => theme.fg("borderAccent", s);
+	const row = (content = "") => {
+		// A single accidental newline in a session name/prompt can tear the box apart.
+		// Preserve ANSI styling, but collapse hard line breaks before measuring.
+		const safeContent = content.replace(/[\r\n\t]+/g, " ");
+		const clipped = truncateToWidth(safeContent, inner - 1, "");
+		const pad = Math.max(0, inner - visibleWidth(clipped) - 1);
+		return `${border("│")} ${clipped}${" ".repeat(pad)}${border("│")}`;
+	};
+	const empty = () => `${border("│")}${" ".repeat(inner)}${border("│")}`;
+	const divider = () => border(`├${"─".repeat(inner)}┤`);
+	const top = (title: string) => {
+		const label = ` ${title} `;
+		const labelWidth = visibleWidth(label);
+		const remaining = Math.max(0, inner - labelWidth);
+		const left = Math.floor(remaining / 2);
+		const right = remaining - left;
+		return `${border(`╭${"─".repeat(left)}`)}${theme.fg("accent", label)}${border(`${"─".repeat(right)}╮`)}`;
+	};
+	const bottom = () => border(`╰${"─".repeat(inner)}╯`);
+	return { bottom, divider, empty, inner, row, top };
+}
+
+function isPrintableInput(data: string): boolean {
+	return data.length >= 1 && data.charCodeAt(0) >= 32 && !data.startsWith("\x1b") && data !== "\x7f";
+}
+
+class QolSessionSearchComponent {
+	private screen: "search" | "messages" | "actions" | "focus" = "search";
+	private searchState: QolSessionSearchState;
+	private messagesState: QolSessionMessagesState | undefined;
+	private actionState: QolSessionActionState | undefined;
+	private focusState: QolSessionFocusState | undefined;
+
+	constructor(
+		private readonly done: (action: QolSessionPaletteAction) => void,
+		private readonly tui: { requestRender(): void },
+		private readonly theme: Theme,
+		private readonly sessions: QolSessionSearchSession[],
+		private readonly cwd: string,
+		initialQuery = "",
+	) {
+		const query = initialQuery.trim();
+		this.searchState = {
+			cursor: query.length,
+			query,
+			results: searchQolSessions(sessions, query, cwd),
+			selected: 0,
+			total: sessions.length,
+		};
+	}
+
+	invalidate(): void {}
+
+	render(width: number): string[] {
+		const configured = Math.max(70, Math.floor(settingNumber("sessionSearch.overlayWidth", 104, this.cwd)));
+		const renderWidth = Math.min(Math.max(48, width), configured);
+		if (this.screen === "messages" && this.messagesState) return this.renderMessages(renderWidth, this.messagesState);
+		if (this.screen === "actions" && this.actionState) return this.renderActions(renderWidth, this.actionState);
+		if (this.screen === "focus" && this.focusState) return this.renderFocus(renderWidth, this.focusState);
+		return this.renderSearch(renderWidth);
+	}
+
+	handleInput(data: string): void {
+		if (this.screen === "messages") this.handleMessagesInput(data);
+		else if (this.screen === "actions") this.handleActionInput(data);
+		else if (this.screen === "focus") this.handleFocusInput(data);
+		else this.handleSearchInput(data);
+		this.tui.requestRender();
+	}
+
+	private clampSelection(): void {
+		this.searchState.selected = Math.max(0, Math.min(this.searchState.selected, Math.max(0, this.searchState.results.length - 1)));
+	}
+
+	private updateQuery(query: string, cursor: number): void {
+		this.searchState.query = query;
+		this.searchState.cursor = Math.max(0, Math.min(cursor, query.length));
+		this.searchState.results = searchQolSessions(this.sessions, query, this.cwd);
+		this.searchState.selected = 0;
+		this.clampSelection();
+	}
+
+	private selectedMessageIndex(messages: QolSessionUserMessage[], query: string): number {
+		const trimmed = query.trim().toLowerCase();
+		if (trimmed) {
+			const firstToken = trimmed.replace(/^re:/, "").replace(/["']/g, "").split(/\s+/).find(Boolean);
+			if (firstToken) {
+				const found = messages.findIndex((message) => message.text.toLowerCase().includes(firstToken));
+				if (found >= 0) return found;
+			}
+		}
+		return Math.max(0, messages.length - 1);
+	}
+
+	private openMessages(result: QolSessionSearchResult): void {
+		const messages = userMessagesForResult(result);
+		this.messagesState = {
+			messages,
+			result,
+			selected: this.selectedMessageIndex(messages, this.searchState.query),
+		};
+		this.screen = "messages";
+	}
+
+	private selectedFocusText(message: QolSessionUserMessage): string {
+		return `Focus on user message #${message.index}: ${message.text}`;
+	}
+
+	private handleSearchInput(data: string): void {
+		const state = this.searchState;
+		if (matchesKey(data, "escape")) {
+			this.done({ type: "cancel" });
+			return;
+		}
+		if (matchesKey(data, "return") || matchesKey(data, "enter")) {
+			const result = state.results[state.selected];
+			if (!result) return;
+			this.openMessages(result);
+			return;
+		}
+		if (matchesKey(data, "up")) {
+			state.selected = Math.max(0, state.selected - 1);
+			return;
+		}
+		if (matchesKey(data, "down")) {
+			state.selected = Math.min(state.results.length - 1, state.selected + 1);
+			return;
+		}
+		if (matchesKey(data, "pageup")) {
+			state.selected = Math.max(0, state.selected - 10);
+			return;
+		}
+		if (matchesKey(data, "pagedown")) {
+			state.selected = Math.min(state.results.length - 1, state.selected + 10);
+			return;
+		}
+		if (matchesKey(data, "left")) {
+			state.cursor = Math.max(0, state.cursor - 1);
+			return;
+		}
+		if (matchesKey(data, "right")) {
+			state.cursor = Math.min(state.query.length, state.cursor + 1);
+			return;
+		}
+		if (matchesKey(data, "home") || matchesKey(data, "ctrl+a")) {
+			state.cursor = 0;
+			return;
+		}
+		if (matchesKey(data, "end") || matchesKey(data, "ctrl+e")) {
+			state.cursor = state.query.length;
+			return;
+		}
+		if (matchesKey(data, "ctrl+u")) {
+			this.updateQuery("", 0);
+			return;
+		}
+		if (matchesKey(data, "ctrl+w") || matchesKey(data, "alt+backspace")) {
+			const before = state.query.slice(0, state.cursor);
+			const after = state.query.slice(state.cursor);
+			let i = before.length;
+			while (i > 0 && /\s/.test(before[i - 1]!)) i -= 1;
+			while (i > 0 && !/\s/.test(before[i - 1]!)) i -= 1;
+			this.updateQuery(`${before.slice(0, i)}${after}`, i);
+			return;
+		}
+		if (matchesKey(data, "backspace")) {
+			if (state.cursor > 0) this.updateQuery(`${state.query.slice(0, state.cursor - 1)}${state.query.slice(state.cursor)}`, state.cursor - 1);
+			return;
+		}
+		if (matchesKey(data, "delete")) {
+			if (state.cursor < state.query.length) this.updateQuery(`${state.query.slice(0, state.cursor)}${state.query.slice(state.cursor + 1)}`, state.cursor);
+			return;
+		}
+		if (isPrintableInput(data)) this.updateQuery(`${state.query.slice(0, state.cursor)}${data}${state.query.slice(state.cursor)}`, state.cursor + data.length);
+	}
+
+	private handleMessagesInput(data: string): void {
+		const state = this.messagesState;
+		if (!state) return;
+		if (matchesKey(data, "escape") || matchesKey(data, "backspace")) {
+			this.screen = "search";
+			return;
+		}
+		if (matchesKey(data, "return") || matchesKey(data, "enter")) {
+			const message = state.messages[state.selected];
+			if (!message) return;
+			this.actionState = { actionIndex: 0, message, result: state.result };
+			this.screen = "actions";
+			return;
+		}
+		if (matchesKey(data, "up")) {
+			state.selected = Math.max(0, state.selected - 1);
+			return;
+		}
+		if (matchesKey(data, "down")) {
+			state.selected = Math.min(state.messages.length - 1, state.selected + 1);
+			return;
+		}
+		if (matchesKey(data, "pageup")) {
+			state.selected = Math.max(0, state.selected - 10);
+			return;
+		}
+		if (matchesKey(data, "pagedown")) {
+			state.selected = Math.min(state.messages.length - 1, state.selected + 10);
+			return;
+		}
+		if (matchesKey(data, "home") || matchesKey(data, "ctrl+a")) {
+			state.selected = 0;
+			return;
+		}
+		if (matchesKey(data, "end") || matchesKey(data, "ctrl+e")) {
+			state.selected = Math.max(0, state.messages.length - 1);
+		}
+	}
+
+	private handleActionInput(data: string): void {
+		const state = this.actionState;
+		if (!state) return;
+		if (matchesKey(data, "escape") || matchesKey(data, "backspace")) {
+			this.screen = "messages";
+			return;
+		}
+		if (matchesKey(data, "tab") || matchesKey(data, "right")) {
+			state.actionIndex = (state.actionIndex + 1) % QOL_SESSION_ACTIONS.length;
+			return;
+		}
+		if (matchesKey(data, "shift+tab") || matchesKey(data, "left")) {
+			state.actionIndex = (state.actionIndex - 1 + QOL_SESSION_ACTIONS.length) % QOL_SESSION_ACTIONS.length;
+			return;
+		}
+		if (matchesKey(data, "return") || matchesKey(data, "enter")) {
+			const action = QOL_SESSION_ACTIONS[state.actionIndex];
+			if (action === "back") {
+				this.screen = "messages";
+				return;
+			}
+			if (action === "resume" || action === "copy") {
+				this.done({ message: state.message, result: state.result, type: action });
+				return;
+			}
+			this.focusState = { cursor: 0, message: state.message, prompt: "", result: state.result, type: action };
+			this.screen = "focus";
+		}
+	}
+
+	private handleFocusInput(data: string): void {
+		const state = this.focusState;
+		if (!state) return;
+		if (matchesKey(data, "escape")) {
+			this.screen = "actions";
+			return;
+		}
+		if (matchesKey(data, "return") || matchesKey(data, "enter")) {
+			this.done({ customPrompt: state.prompt.trim() || this.selectedFocusText(state.message), message: state.message, result: state.result, type: state.type });
+			return;
+		}
+		if (matchesKey(data, "left")) {
+			state.cursor = Math.max(0, state.cursor - 1);
+			return;
+		}
+		if (matchesKey(data, "right")) {
+			state.cursor = Math.min(state.prompt.length, state.cursor + 1);
+			return;
+		}
+		if (matchesKey(data, "home") || matchesKey(data, "ctrl+a")) {
+			state.cursor = 0;
+			return;
+		}
+		if (matchesKey(data, "end") || matchesKey(data, "ctrl+e")) {
+			state.cursor = state.prompt.length;
+			return;
+		}
+		if (matchesKey(data, "ctrl+u")) {
+			state.prompt = "";
+			state.cursor = 0;
+			return;
+		}
+		if (matchesKey(data, "ctrl+w") || matchesKey(data, "alt+backspace")) {
+			const before = state.prompt.slice(0, state.cursor);
+			const after = state.prompt.slice(state.cursor);
+			let i = before.length;
+			while (i > 0 && /\s/.test(before[i - 1]!)) i -= 1;
+			while (i > 0 && !/\s/.test(before[i - 1]!)) i -= 1;
+			state.prompt = `${before.slice(0, i)}${after}`;
+			state.cursor = i;
+			return;
+		}
+		if (matchesKey(data, "backspace")) {
+			if (state.cursor > 0) {
+				state.prompt = `${state.prompt.slice(0, state.cursor - 1)}${state.prompt.slice(state.cursor)}`;
+				state.cursor -= 1;
+			}
+			return;
+		}
+		if (matchesKey(data, "delete")) {
+			if (state.cursor < state.prompt.length) state.prompt = `${state.prompt.slice(0, state.cursor)}${state.prompt.slice(state.cursor + 1)}`;
+			return;
+		}
+		if (isPrintableInput(data)) {
+			state.prompt = `${state.prompt.slice(0, state.cursor)}${data}${state.prompt.slice(state.cursor)}`;
+			state.cursor += data.length;
+		}
+	}
+
+	private renderSearch(width: number): string[] {
+		const { bottom, divider, empty, inner, row, top } = boxParts(width, this.theme);
+		const state = this.searchState;
+		const lines: string[] = [top("Session Search"), empty()];
+		const accent = (s: string) => this.theme.fg("accent", s);
+		const dim = (s: string) => this.theme.fg("dim", s);
+		const muted = (s: string) => this.theme.fg("muted", s);
+		const cursor = accent("│");
+		const queryDisplay = state.query
+			? `${state.query.slice(0, state.cursor)}${cursor}${state.query.slice(state.cursor)}`
+			: `${cursor}${muted("type to search sessions...")}`;
+		lines.push(row(`  ${dim("◎")} ${queryDisplay}`));
+		lines.push(row(dim(`    ${state.total} sessions · re:<pattern> regex · "phrase" exact`)));
+		lines.push(empty(), divider(), empty());
+		if (state.results.length === 0) {
+			lines.push(row(muted(state.query.trim() ? "  No sessions match your search" : "  No sessions found")), empty());
+		} else {
+			const maxVisible = Math.max(3, Math.floor(settingNumber("sessionSearch.maxVisible", 8, this.cwd)));
+			const start = Math.max(0, Math.min(state.selected - Math.floor(maxVisible / 2), state.results.length - maxVisible));
+			const end = Math.min(start + maxVisible, state.results.length);
+			const rowBudget = Math.max(10, inner - 1); // box row reserves one leading pad column
+			for (let i = start; i < end; i++) {
+				const result = state.results[i]!;
+				const selected = i === state.selected;
+				const prefix = selected ? accent("▸") : dim("·");
+				const title = sessionResumeTitle(result);
+				const right = dim(`${promptCountLabel(sessionUserPromptCount(result))} · ${formatSessionSearchDate(result.modified)}`);
+				const prefixText = ` ${prefix} `;
+				const titleBudget = Math.max(12, rowBudget - visibleWidth(prefixText) - visibleWidth(right) - 1);
+				const titleText = truncateToWidth(title, titleBudget, "…");
+				const left = `${prefixText}${selected ? this.theme.bold(accent(titleText)) : this.theme.bold(titleText)}`;
+				const gap = Math.max(1, rowBudget - visibleWidth(left) - visibleWidth(right));
+				lines.push(row(`${left}${" ".repeat(gap)}${right}`));
+
+				const folder = shortPathForUi(result.cwd || dirname(result.path));
+				const project = sessionDisplayName(result);
+				lines.push(row(`    ${muted(truncateToWidth(`${project} · ${folder}`, inner - 8, "…"))}`));
+
+				const snippet = state.query.trim() ? (result.snippets[0] || lastUserMessageSnippet(result)) : lastUserMessageSnippet(result);
+				const label = state.query.trim() ? "match" : "last";
+				lines.push(row(`    ${dim(`${label}:`)} ${truncateToWidth(styleSessionSnippet(snippet, state.query, this.theme), inner - 12, "…")}`));
+				if (i < end - 1) lines.push(row(dim(`  ${"─".repeat(Math.max(8, inner - 4))}`)));
+			}
+			if (state.results.length > maxVisible) lines.push(empty(), row(dim(`  ${state.selected + 1}/${state.results.length} ${state.query.trim() ? "matches" : "recent sessions"}`)));
+		}
+		lines.push(divider());
+		lines.push(row(`${accent("↑↓")} ${dim("sessions")}  ${accent("enter")} ${dim("prompts")}  ${accent("ctrl+u")} ${dim("clear")}  ${accent("esc")} ${dim("close")}`));
+		lines.push(bottom());
+		return lines;
+	}
+
+	private renderMessages(width: number, state: QolSessionMessagesState): string[] {
+		const { bottom, divider, empty, inner, row, top } = boxParts(width, this.theme);
+		const accent = (s: string) => this.theme.fg("accent", s);
+		const dim = (s: string) => this.theme.fg("dim", s);
+		const muted = (s: string) => this.theme.fg("muted", s);
+		const result = state.result;
+		const lines: string[] = [top("Your Prompts"), empty()];
+		const headerBudget = Math.max(10, inner - 1);
+		const right = dim(`${promptCountLabel(state.messages.length)} · ${formatSessionSearchDate(result.modified)}`);
+		const title = truncateToWidth(sessionResumeTitle(result), Math.max(12, headerBudget - visibleWidth(right) - 3), "…");
+		const left = `  ${this.theme.bold(accent(title))}`;
+		const gap = Math.max(1, headerBudget - visibleWidth(left) - visibleWidth(right));
+		lines.push(row(`${left}${" ".repeat(gap)}${right}`));
+		lines.push(row(`  ${muted(truncateToWidth(shortPathForUi(result.cwd || result.path), inner - 4, "…"))}`));
+		lines.push(row(dim(`  ${state.messages.length} user prompt${state.messages.length === 1 ? "" : "s"} · choose one for actions/focus`)));
+		lines.push(empty(), divider(), empty());
+
+		const maxVisible = Math.max(6, Math.floor(settingNumber("sessionSearch.messageMaxVisible", 12, this.cwd)));
+		const start = Math.max(0, Math.min(state.selected - Math.floor(maxVisible / 2), state.messages.length - maxVisible));
+		const end = Math.min(start + maxVisible, state.messages.length);
+		for (let i = start; i < end; i++) {
+			const message = state.messages[i]!;
+			const selected = i === state.selected;
+			const prefix = selected ? accent("▸") : dim("·");
+			const number = dim(`#${message.index}`.padStart(4));
+			const textWidth = Math.max(12, inner - visibleWidth(prefix) - visibleWidth(number) - 8);
+			const text = truncateToWidth(message.text, textWidth, "…");
+			lines.push(row(` ${prefix} ${number} ${selected ? this.theme.bold(accent(text)) : text}`));
+		}
+		if (state.messages.length > maxVisible) lines.push(empty(), row(dim(`  ${state.selected + 1}/${state.messages.length} user prompts`)));
+		lines.push(divider());
+		lines.push(row(`${accent("↑↓")} ${dim("prompts")}  ${accent("enter")} ${dim("actions")}  ${accent("esc")} ${dim("sessions")}`));
+		lines.push(bottom());
+		return lines;
+	}
+
+	private renderActions(width: number, state: QolSessionActionState): string[] {
+		const { bottom, divider, empty, inner, row, top } = boxParts(width, this.theme);
+		const accent = (s: string) => this.theme.fg("accent", s);
+		const dim = (s: string) => this.theme.fg("dim", s);
+		const muted = (s: string) => this.theme.fg("muted", s);
+		const lines: string[] = [top("Message Actions"), empty()];
+		lines.push(row(`  ${this.theme.bold(accent(sessionResumeTitle(state.result)))}  ${dim(`#${state.message.index}`)}`));
+		lines.push(row(`  ${muted(truncateToWidth(shortPathForUi(state.result.cwd || state.result.path), inner - 4, "…"))}`));
+		lines.push(empty(), divider(), empty());
+		lines.push(row(dim("  Selected prompt:")));
+		const wrapped = wrapVisible(state.message.text, inner - 6, 4);
+		for (const line of wrapped) lines.push(row(`  ${line}`));
+		lines.push(empty());
+		lines.push(row(dim("  Resume opens the full session. Summary actions use this prompt as focus.")));
+		lines.push(empty(), divider());
+		const actions = QOL_SESSION_ACTIONS.map((action, index) => {
+			const label = QOL_SESSION_ACTION_LABELS[action];
+			return index === state.actionIndex ? this.theme.bold(accent(`[${label}]`)) : dim(`[${label}]`);
+		});
+		lines.push(row(`  ${actions.join(" ")}`));
+		lines.push(row(`${accent("tab")}/${accent("←→")} ${dim("cycle")}  ${accent("enter")} ${dim("choose")}  ${accent("esc")} ${dim("prompts")}`));
+		lines.push(bottom());
+		return lines;
+	}
+
+	private renderFocus(width: number, state: QolSessionFocusState): string[] {
+		const { bottom, divider, empty, inner, row, top } = boxParts(width, this.theme);
+		const accent = (s: string) => this.theme.fg("accent", s);
+		const dim = (s: string) => this.theme.fg("dim", s);
+		const muted = (s: string) => this.theme.fg("muted", s);
+		const action = state.type === "newSession" ? "New + Context" : "Inject Summary";
+		const lines: string[] = [top("Summary Focus"), empty()];
+		lines.push(row(`  ${accent(sessionResumeTitle(state.result))}  ${dim(`→ ${action}`)}`));
+		lines.push(row(`  ${muted(truncateToWidth(`Default focus: #${state.message.index} ${state.message.text}`, inner - 4, "…"))}`));
+		lines.push(empty(), divider(), empty());
+		const cursor = accent("│");
+		const prefix = `  ${dim("✎")} `;
+		const textWidth = Math.max(10, inner - visibleWidth(prefix) - 2);
+		if (!state.prompt) {
+			lines.push(row(`${prefix}${cursor}${muted("optional override; Enter uses selected prompt as focus...")}`));
+		} else {
+			const text = `${state.prompt.slice(0, state.cursor)}${cursor}${state.prompt.slice(state.cursor)}`;
+			const wrapped = wrapVisible(text, textWidth, 5);
+			for (let i = 0; i < wrapped.length; i++) lines.push(row(`${i === 0 ? prefix : " ".repeat(visibleWidth(prefix))}${wrapped[i]}`));
+		}
+		lines.push(empty(), divider());
+		lines.push(row(`${accent("enter")} ${dim("summarize")}  ${accent("esc")} ${dim("actions")}`));
+		lines.push(bottom());
+		return lines;
+	}
+}
+
+function wrapVisible(text: string, width: number, maxLines: number): string[] {
+	const wrapped = wrapTextWithAnsi(text, width);
+	if (wrapped.length <= maxLines) return wrapped;
+	const head = wrapped.slice(0, Math.max(0, maxLines - 1));
+	const tail = wrapped.slice(Math.max(0, maxLines - 1)).join(" ");
+	return [...head, truncateToWidth(tail, width, "…")];
+}
+
+function trimSessionSummaryInput(text: string, cwd: string): string {
+	const maxChars = Math.max(20_000, Math.floor(settingNumber("sessionSearch.summaryInputMaxChars", DEFAULT_SESSION_SEARCH_SUMMARY_INPUT_CHARS, cwd)));
+	if (text.length <= maxChars) return text;
+	const headChars = Math.floor(maxChars * 0.35);
+	const tailChars = maxChars - headChars;
+	const omitted = text.length - maxChars;
+	return `${text.slice(0, headChars)}\n\n[... ${omitted.toLocaleString()} character(s) omitted from the middle of this imported session ...]\n\n${text.slice(-tailChars)}`;
+}
+
+function messagesForSessionSummary(sessionPath: string): AgentMessage[] {
+	try {
+		const manager = SessionManager.open(sessionPath);
+		const context = manager.buildSessionContext();
+		if (Array.isArray(context.messages) && context.messages.length > 0) return context.messages as AgentMessage[];
+	} catch {
+		// Fall back to a direct JSONL parse below.
+	}
+	try {
+		const lines = readFileSync(sessionPath, "utf8").split(/\r?\n/);
+		const messages: AgentMessage[] = [];
+		for (const line of lines) {
+			if (!line.trim()) continue;
+			let entry: any;
+			try { entry = JSON.parse(line); } catch { continue; }
+			if (entry?.type === "message" && entry.message) messages.push(entry.message);
+		}
+		return messages;
+	} catch {
+		return [];
+	}
+}
+
+async function buildSessionSearchContextMessage(ctx: ExtensionContext, result: QolSessionSearchResult, customPrompt?: string): Promise<QolSessionSearchPendingMessage> {
+	const messages = messagesForSessionSummary(result.path);
+	const fallbackText = result.allMessagesText || result.firstMessage;
+	const conversationText = messages.length > 0 ? serializeConversation(convertToLlm(messages)) : fallbackText;
+	if (!conversationText.trim()) throw new Error("Selected session has no text content to summarize");
+	const focus = customPrompt?.trim();
+	const summary = await generateQolSummary(ctx, {
+		conversationText: trimSessionSummaryInput(conversationText, ctx.cwd),
+		maxTokens: Math.max(256, Math.floor(settingNumber("sessionSearch.summaryMaxTokens", DEFAULT_SESSION_SEARCH_SUMMARY_MAX_TOKENS, ctx.cwd))),
+		model: settingString("sessionSearch.summaryModel", "current", ctx.cwd),
+		customInstructions: [
+			`Source session file: ${result.path}`,
+			`Source project/cwd: ${result.cwd || sessionDisplayName(result)}`,
+			focus ? `User focus: ${focus}` : "Focus on facts needed to continue or reference this previous session.",
+		].join("\n"),
+		purpose: "session-search",
+		signal: ctx.signal,
+	});
+	const title = sessionDisplayName(result);
+	const content = [
+		`## Session Search Context: ${title}`,
+		`**Date:** ${result.modified.toISOString()} | **File:** ${result.path}`,
+		focus ? `**Focus:** ${focus}` : undefined,
+		"",
+		summary.summary,
+	].filter((line): line is string => line !== undefined).join("\n");
+	return {
+		content,
+		details: {
+			file: result.path,
+			focus,
+			model: summary.model,
+			project: result.cwd || title,
+			source: "pi-qol-session-search",
+			via: summary.via,
+		},
+	};
+}
+
+async function injectSessionSearchContext(pi: ExtensionAPI, ctx: ExtensionContext, result: QolSessionSearchResult, customPrompt?: string): Promise<void> {
+	const title = sessionDisplayName(result);
+	ctx.ui.setStatus(SESSION_SEARCH_STATUS_KEY, `🔍 Summarizing ${title}...`);
+	try {
+		const message = await buildSessionSearchContextMessage(ctx, result, customPrompt);
+		pi.sendMessage({ customType: SESSION_SEARCH_CONTEXT_TYPE, content: message.content, details: message.details, display: true }, { deliverAs: "followUp", triggerTurn: false });
+		ctx.ui.notify(`Session context injected: ${title}`, "info");
+	} finally {
+		ctx.ui.setStatus(SESSION_SEARCH_STATUS_KEY, undefined);
+	}
+}
+
+function asCommandContext(ctx: ExtensionContext): (ExtensionContext & Partial<ExtensionCommandContext>) {
+	return ctx as ExtensionContext & Partial<ExtensionCommandContext>;
+}
+
+async function createNewSessionWithSearchContext(pi: ExtensionAPI, ctx: ExtensionContext, result: QolSessionSearchResult, customPrompt?: string): Promise<void> {
+	const title = sessionDisplayName(result);
+	ctx.ui.setStatus(SESSION_SEARCH_STATUS_KEY, `🔍 Summarizing ${title}...`);
+	try {
+		const message = await buildSessionSearchContextMessage(ctx, result, customPrompt);
+		const commandCtx = asCommandContext(ctx);
+		if (typeof commandCtx.newSession === "function") {
+			const parentSession = ctx.sessionManager.getSessionFile?.();
+			const switchResult = await commandCtx.newSession({
+				parentSession,
+				withSession: async (replacementCtx: any) => {
+					if (typeof replacementCtx.sendMessage === "function") {
+						await replacementCtx.sendMessage({ customType: SESSION_SEARCH_CONTEXT_TYPE, content: message.content, details: message.details, display: true }, { triggerTurn: false });
+					}
+					replacementCtx.ui.notify(`New session has context from ${title}`, "info");
+				},
+			});
+			if (switchResult.cancelled) ctx.ui.notify("New session cancelled", "info");
+			return;
+		}
+		setPendingSessionSearchMessage(message);
+		ctx.ui.setEditorText("/new");
+		ctx.ui.notify(`${title} — press Enter to create a new session with this context`, "info");
+	} finally {
+		ctx.ui.setStatus(SESSION_SEARCH_STATUS_KEY, undefined);
+	}
+}
+
+async function consumePendingSessionSearchContext(pi: ExtensionAPI, ctx: ExtensionContext, reason: unknown): Promise<void> {
+	if (reason !== "new") return;
+	const pending = getPendingSessionSearchMessage();
+	if (!pending) return;
+	setPendingSessionSearchMessage(undefined);
+	pi.sendMessage({ customType: SESSION_SEARCH_CONTEXT_TYPE, content: pending.content, details: pending.details, display: true }, { triggerTurn: false });
+	if (ctx.hasUI) ctx.ui.notify("Imported session-search context.", "info");
+}
+
+async function openQolSessionSearch(pi: ExtensionAPI, ctx: ExtensionContext, initialQuery = ""): Promise<void> {
+	if (!ctx.hasUI) {
+		ctx.ui.notify("Session search requires interactive UI", "warning");
+		return;
+	}
+	const sessions = await refreshQolSessionSearchCache(ctx);
+	const action = await ctx.ui.custom<QolSessionPaletteAction>((tui, theme, _keybindings, done) =>
+		new QolSessionSearchComponent(done, tui, theme, sessions, ctx.cwd, initialQuery), {
+		overlay: true,
+		overlayOptions: {
+			anchor: "center",
+			width: Math.max(70, Math.floor(settingNumber("sessionSearch.overlayWidth", 104, ctx.cwd))),
+			maxHeight: "90%",
+		},
+	});
+	if (!action || action.type === "cancel" || !action.result) return;
+	if (action.type === "resume") {
+		const commandCtx = asCommandContext(ctx);
+		if (typeof commandCtx.switchSession === "function") {
+			try {
+				const result = await commandCtx.switchSession(action.result.path);
+				if (!result.cancelled) ctx.ui.notify(`Resumed ${sessionDisplayName(action.result)}`, "info");
+			} catch (error) {
+				ctx.ui.notify(`Resume failed: ${stringifyError(error)}`, "error");
+			}
+			return;
+		}
+		ctx.ui.setEditorText(`/search resume ${quoteSessionSearchArg(action.result.path)}`);
+		ctx.ui.notify(`${sessionDisplayName(action.result)} — press Enter to resume`, "info");
+		return;
+	}
+	if (action.type === "copy") {
+		const text = action.message?.text || action.result.firstMessage;
+		ctx.ui.setEditorText(text);
+		ctx.ui.notify("Copied selected prompt into the editor", "info");
+		return;
+	}
+	if (action.type === "summarize") {
+		try {
+			await injectSessionSearchContext(pi, ctx, action.result, action.customPrompt);
+		} catch (error) {
+			ctx.ui.notify(`Session summary failed: ${stringifyError(error)}`, "error");
+			ctx.ui.setStatus(SESSION_SEARCH_STATUS_KEY, undefined);
+		}
+		return;
+	}
+	if (action.type === "newSession") {
+		try {
+			await createNewSessionWithSearchContext(pi, ctx, action.result, action.customPrompt);
+		} catch (error) {
+			ctx.ui.notify(`New session context failed: ${stringifyError(error)}`, "error");
+			ctx.ui.setStatus(SESSION_SEARCH_STATUS_KEY, undefined);
+		}
+	}
+}
+
+function quoteSessionSearchArg(value: string): string {
+	return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
+
+function parseSessionSearchResumeArg(args: string): string | undefined | null {
+	const trimmed = args.trim();
+	if (!/^resume(?:\s+|$)/.test(trimmed)) return null;
+	const rest = trimmed.slice("resume".length).trim();
+	if (!rest) return undefined;
+	if ((rest.startsWith('"') && rest.endsWith('"')) || (rest.startsWith("'") && rest.endsWith("'"))) return rest.slice(1, -1);
+	return rest;
+}
+
+function renderSessionSearchContextMessage(message: any, options: any, theme: Theme): Text {
+	const raw = typeof message.content === "string"
+		? message.content
+		: Array.isArray(message.content)
+			? message.content.map((part: any) => part?.type === "text" ? part.text ?? "" : "").join("")
+			: "";
+	const title = raw.match(/^## Session Search Context:\s*(.+)$/m)?.[1]?.trim() || "session";
+	const date = raw.match(/\*\*Date:\*\*\s*([^|\n]+)/)?.[1]?.trim() || "";
+	const header = `${theme.fg("accent", "🔍 ")}${theme.fg("customMessageLabel", theme.bold("Session context: "))}${theme.fg("accent", title)}${date ? theme.fg("muted", ` (${date})`) : ""}`;
+	if (!options?.expanded) return new Text(header, 0, 0);
+	const body = raw.slice(raw.indexOf("\n") + 1).trim();
+	return new Text(body ? `${header}\n\n${theme.fg("muted", body)}` : header, 0, 0);
 }
 
 export default function qol(pi: ExtensionAPI): void {
@@ -1269,6 +2458,7 @@ export default function qol(pi: ExtensionAPI): void {
 	let editorPollTimer: ReturnType<typeof setInterval> | undefined;
 	let idleCompactionTimer: ReturnType<typeof setTimeout> | undefined;
 	let questionSubscribeTimer: ReturnType<typeof setInterval> | undefined;
+	let sessionSearchWarmupTimer: ReturnType<typeof setTimeout> | undefined;
 	let thinkingTimerTicker: ReturnType<typeof setInterval> | undefined;
 	let questionUnsubscribe: (() => void) | undefined;
 	let lastPolledDraft = "";
@@ -1406,9 +2596,10 @@ export default function qol(pi: ExtensionAPI): void {
 		notifyQuestionOpened(currentCtx, event, "question");
 	});
 
-	pi.on("session_start", (_event, ctx) => {
+	pi.on("session_start", (event, ctx) => {
 		currentCtx = ctx;
 		resetThinkingTimer(ctx);
+		void consumePendingSessionSearchContext(pi, ctx, event.reason);
 		installAutocompleteHintStyling(ctx);
 		ctx.ui.setEditorComponent((tui, theme, keybindings) => new QolEditor(tui, theme, keybindings, ctx));
 		if (editorPollTimer) clearInterval(editorPollTimer);
@@ -1431,6 +2622,14 @@ export default function qol(pi: ExtensionAPI): void {
 			ctx.ui.notify(`QOL multiline input active. Shift+Enter inserts newline when your terminal reports it; fallback: ${fallback}.`, "info");
 		}
 		startQuestionSubscription(ctx);
+		if (settingBoolean("sessionSearch.enabled", true, ctx.cwd)) {
+			if (sessionSearchWarmupTimer) clearTimeout(sessionSearchWarmupTimer);
+			sessionSearchWarmupTimer = setTimeout(() => {
+				sessionSearchWarmupTimer = undefined;
+				void refreshQolSessionSearchCache(ctx, { quiet: true }).catch(() => undefined);
+			}, 500);
+			sessionSearchWarmupTimer.unref?.();
+		}
 	});
 
 	pi.on("session_shutdown", (_event, ctx) => {
@@ -1438,6 +2637,8 @@ export default function qol(pi: ExtensionAPI): void {
 		editorPollTimer = undefined;
 		clearIdleCompactionTimer();
 		clearQuestionSubscribeTimer();
+		if (sessionSearchWarmupTimer) clearTimeout(sessionSearchWarmupTimer);
+		sessionSearchWarmupTimer = undefined;
 		resetThinkingTimer(undefined);
 		clearTmuxWindowMark();
 		questionUnsubscribe?.();
@@ -1446,6 +2647,7 @@ export default function qol(pi: ExtensionAPI): void {
 		const host = globalThis as unknown as Record<PropertyKey, unknown>;
 		if (host[QOL_NOTIFICATION_SERVICE_SYMBOL] === notificationService) delete host[QOL_NOTIFICATION_SERVICE_SYMBOL];
 		ctx.ui.setStatus(STATUS_KEY, undefined);
+		ctx.ui.setStatus(SESSION_SEARCH_STATUS_KEY, undefined);
 		ctx.ui.setEditorComponent(undefined);
 	});
 
@@ -1560,6 +2762,56 @@ export default function qol(pi: ExtensionAPI): void {
 			description: "Transfer context to a new focused session (usage: /handoff <goal>)",
 			handler: async (args, ctx) => runHandoff(args, ctx),
 		});
+	}
+
+	if (settingBoolean("sessionSearch.enabled", true)) {
+		pi.registerMessageRenderer(SESSION_SEARCH_CONTEXT_TYPE, renderSessionSearchContextMessage);
+
+		const handleSearchCommand = async (args: string, ctx: ExtensionCommandContext) => {
+			const trimmed = args.trim();
+			const resumePath = parseSessionSearchResumeArg(trimmed);
+			if (resumePath !== null) {
+				if (!resumePath) {
+					ctx.ui.notify("Usage: /search resume <sessionPath>", "warning");
+					return;
+				}
+				try {
+					const result = await ctx.switchSession(resumePath);
+					if (!result.cancelled) ctx.ui.notify(`Resumed: ${resumePath}`, "info");
+				} catch (error) {
+					ctx.ui.notify(`Resume failed: ${stringifyError(error)}`, "error");
+				}
+				return;
+			}
+			if (trimmed === "reindex" || trimmed === "refresh") {
+				try {
+					const sessions = await refreshQolSessionSearchCache(ctx, { force: true });
+					ctx.ui.notify(`Session search refreshed: ${sessions.length} session(s)`, "info");
+				} catch (error) {
+					ctx.ui.notify(`Session search refresh failed: ${stringifyError(error)}`, "error");
+				}
+				return;
+			}
+			if (trimmed === "stats") {
+				const sessions = await refreshQolSessionSearchCache(ctx);
+				const loaded = qolSessionSearchLoadedAt ? new Date(qolSessionSearchLoadedAt).toLocaleString() : "never";
+				ctx.ui.notify(`Sessions: ${sessions.length} | Loaded: ${loaded}`, "info");
+				return;
+			}
+			await openQolSessionSearch(pi, ctx, trimmed);
+		};
+
+		pi.registerCommand("search", {
+			description: "Search, preview, resume, and import context from previous Pi sessions",
+			handler: handleSearchCommand,
+		});
+		const shortcut = sessionSearchShortcut();
+		if (shortcut) {
+			pi.registerShortcut(shortcut, {
+				description: "Search previous sessions",
+				handler: async (ctx) => openQolSessionSearch(pi, ctx as ExtensionContext),
+			});
+		}
 	}
 
 	pi.registerCommand("qol", {
