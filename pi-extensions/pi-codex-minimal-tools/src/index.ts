@@ -3,7 +3,11 @@ import { calculateImageRows, getCapabilities, getImageDimensions, getCellDimensi
 import { hasOpenAiModelsLoaded } from "./activation.js";
 import { computeNextActiveTools, computeToolCapabilities, modelKey, PACKAGE_TOOL_NAMES, type ModelLike } from "./capabilities.js";
 import { rewriteNativeOpenAiTools } from "./provider-native-tools.js";
-import { installNativeAwareCodexProviderShim, isNativeAwareCodexProviderShimInstalled } from "./provider-shim.js";
+import {
+	getShimInvocationCount,
+	installNativeAwareCodexProviderShim,
+	isNativeAwareCodexProviderShimInstalled,
+} from "./provider-shim.js";
 import { loadSettings, settingsDiagnostics } from "./settings.js";
 import { createApplyPatchToolDefinition } from "./tools/apply-patch.js";
 import { createImageGenerationToolDefinition } from "./tools/image-generation.js";
@@ -159,6 +163,7 @@ function statusLines(pi: ExtensionAPI, ctx: ExtensionContext): string[] {
 		`autoEnable: ${settings.autoEnable}`,
 		`nativeProviderTools: ${settings.nativeProviderTools}`,
 		`provider shim installed: ${isNativeAwareCodexProviderShimInstalled()}`,
+		`provider shim invocations: ${getShimInvocationCount()}`,
 		"tools:",
 		...Object.entries(capabilities).map(([name, capability]) => `- ${name}: ${capability.enabled ? "supported" : "disabled"}${active.has(name) ? ", active" : ""} — ${capability.reason}`),
 	];
@@ -230,12 +235,25 @@ export default function codexMinimalTools(pi: ExtensionAPI): void {
 	if (guard[INSTALL_SYMBOL]) return;
 	guard[INSTALL_SYMBOL] = true;
 
+	// Install the provider shim eagerly at extension load time. We can't gate
+	// this on session_start because pi-coding-agent may resolve the api
+	// provider for streamSimple before our event handler runs. The shim is
+	// idempotent (early-returns if already installed) and only intercepts the
+	// openai-codex-responses api, so installing unconditionally is safe.
+	const eagerSettings = loadSettings();
+	if (eagerSettings.enabled && eagerSettings.nativeProviderTools) {
+		installNativeAwareCodexProviderShim();
+	}
+
 	let toolsRegistered = false;
 	const ensureToolsRegistered = (ctx: ExtensionContext): boolean => {
-		if (toolsRegistered) return true;
 		const settings = loadSettings(ctx.cwd);
 		if (!settings.enabled || !hasOpenAiModelsLoaded(ctx)) return false;
+		// Always re-install on lifecycle events; the shim's registerApiProvider
+		// is a Map.set so re-installing simply overwrites, which is required
+		// after pi-coding-agent's /reload calls resetApiProviders().
 		if (settings.nativeProviderTools) installNativeAwareCodexProviderShim();
+		if (toolsRegistered) return true;
 		registerTools(pi);
 		toolsRegistered = true;
 		return true;

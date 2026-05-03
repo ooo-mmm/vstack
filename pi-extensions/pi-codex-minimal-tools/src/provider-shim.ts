@@ -1,5 +1,6 @@
 import {
 	createAssistantMessageEventStream,
+	getApiProvider,
 	getEnvApiKey,
 	registerApiProvider,
 	type AssistantMessage,
@@ -671,7 +672,15 @@ function emptyAssistant(model: Model<"openai-codex-responses">): AssistantMessag
 	};
 }
 
+let shimInvocations = 0;
+
+export function getShimInvocationCount(): number {
+	return shimInvocations;
+}
+
 function streamNativeAwareOpenAICodexResponses(model: Model<"openai-codex-responses">, context: Context, options?: SimpleStreamOptions) {
+	shimInvocations++;
+	debugTrace("STREAM invoked", `model=${model.id} api=${model.api}`);
 	const stream = createAssistantMessageEventStream();
 	void (async () => {
 		const output = emptyAssistant(model);
@@ -717,12 +726,35 @@ export function isNativeAwareCodexProviderShimInstalled(): boolean {
 	return installed;
 }
 
+function debugTrace(label: string, detail?: string): void {
+	const path = process.env.PI_CODEX_DEBUG_EVENTS;
+	if (!path) return;
+	const target = path === "1" || path.toLowerCase() === "true" ? "/tmp/pi-codex-events.log" : path;
+	try {
+		const fs = require("node:fs") as typeof import("node:fs");
+		fs.appendFileSync(target, `${new Date().toISOString()} ${label}${detail ? " " + detail : ""}\n`);
+	} catch {
+		// Best-effort.
+	}
+}
+
+export function probeApiRegistry(api: string): { hasProvider: boolean } {
+	const provider = getApiProvider(api as never);
+	return { hasProvider: Boolean(provider) };
+}
+
+// Idempotent registration. We re-register on every call so we recover from
+// pi-coding-agent's resetApiProviders() during /reload, which clears the api
+// registry and re-registers built-ins; our handler must overwrite the built-in
+// again after the reset.
 export function installNativeAwareCodexProviderShim(): void {
-	if (installed) return;
+	debugTrace("REGISTER call");
 	registerApiProvider({
 		api: "openai-codex-responses",
 		stream: streamNativeAwareOpenAICodexResponses as never,
 		streamSimple: streamNativeAwareOpenAICodexResponses as never,
 	}, SHIM_SOURCE_ID);
 	installed = true;
+	const probe = getApiProvider("openai-codex-responses" as never);
+	debugTrace("REGISTER done", `getApiProvider=${probe ? "present" : "MISSING"}`);
 }
