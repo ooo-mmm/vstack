@@ -25,8 +25,10 @@ async function emit(pi: ReturnType<typeof fakePi>, event: string, ctx: any): Pro
 
 test("hasOpenAiModelsLoaded detects active or registry OpenAI models", () => {
 	assert.equal(hasOpenAiModelsLoaded({ model: { provider: "anthropic", id: "claude" }, modelRegistry: { getAll: () => [] } }), false);
+	assert.equal(hasOpenAiModelsLoaded({ model: { provider: "notopenai", id: "claude" }, modelRegistry: { getAll: () => [] } }), false);
 	assert.equal(hasOpenAiModelsLoaded({ model: { provider: "openai-codex", id: "gpt-5.5" }, modelRegistry: { getAll: () => [] } }), true);
 	assert.equal(hasOpenAiModelsLoaded({ modelRegistry: { getAll: () => [{ provider: "openai", id: "gpt-5.5" }] } }), true);
+	assert.equal(hasOpenAiModelsLoaded({ modelRegistry: { find: (provider, id) => provider === "openai" && id === "gpt-5.2" ? { provider, id } : undefined } }), true);
 });
 
 test("extension does not register tools until OpenAI models are loaded", async () => {

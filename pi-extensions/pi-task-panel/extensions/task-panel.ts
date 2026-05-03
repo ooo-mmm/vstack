@@ -12,13 +12,12 @@ const TASK_CONTEXT_TYPE = "vstack-task-panel:context";
 const TASK_COMPLETE_MESSAGE_TYPE = "vstack-task-panel:complete";
 const WIDGET_KEY = "vstack-task-panel";
 const VSTACK_MODAL_LOCK_SYMBOL = Symbol.for("vstack.pi.modal-lock");
-const PANEL_INDENT = "  ";
-const PANEL_BAR = "┃";
 const PANEL_BAR_COLOR = "borderAccent";
 const PANEL_TITLE_COLOR = "customMessageLabel";
 const PANEL_RULE_COLOR = "borderMuted";
 const POPUP_PADDING_X = 2;
 const POPUP_PADDING_Y = 1;
+const PANEL_CARD_PADDING_X = 1;
 const MANAGE_TASK_ROWS = 12;
 
 type Status = "pending" | "in_progress" | "completed" | "abandoned";
@@ -123,6 +122,54 @@ function acquireVstackModalLock(): () => void {
 function padAnsi(text: string, width: number): string {
 	const truncated = truncateToWidth(text, width, "");
 	return `${truncated}${" ".repeat(Math.max(0, width - visibleWidth(truncated)))}`;
+}
+
+function panelFrameContentWidth(width: number): number {
+	return Math.max(1, width - 2 - PANEL_CARD_PADDING_X * 2);
+}
+
+function panelFrame(lines: string[], width: number, theme: Theme): string[] {
+	const safeWidth = Math.max(1, width);
+	if (safeWidth < 8) return lines.map((line) => truncateToWidth(line, safeWidth, ""));
+	const inner = Math.max(1, safeWidth - 2);
+	const contentWidth = panelFrameContentWidth(safeWidth);
+	const border = (text: string) => theme.fg(PANEL_BAR_COLOR, text);
+	return [
+		`${border("┏")}${border("━".repeat(inner))}${border("┓")}`,
+		...lines.map((line) => `${border("┃")}${" ".repeat(PANEL_CARD_PADDING_X)}${padAnsi(line, contentWidth)}${" ".repeat(PANEL_CARD_PADDING_X)}${border("┃")}`),
+		`${border("┗")}${border("━".repeat(inner))}${border("┛")}`,
+	].map((line) => truncateToWidth(line, safeWidth, ""));
+}
+
+function panelTreeStyle(cwd?: string): "unicode" | "ascii" {
+	const value = readVstackConfig(cwd).treeStyle;
+	return value === "ascii" || value === "unicode" ? value : "unicode";
+}
+
+function panelBranch(theme: Theme, branch: "├" | "└" | "│", cwd?: string): string {
+	if (panelTreeStyle(cwd) === "ascii") {
+		if (branch === "│") return theme.fg(PANEL_RULE_COLOR, "|  ");
+		return theme.fg(PANEL_RULE_COLOR, branch === "└" ? "`-- " : "|-- ");
+	}
+	if (branch === "│") return theme.fg(PANEL_RULE_COLOR, "│  ");
+	return theme.fg(PANEL_RULE_COLOR, `${branch}─ `);
+}
+
+function panelGroupRoot(theme: Theme, title: string, count: number, isLastGroup: boolean, cwd?: string): string {
+	const prefix = panelTreeStyle(cwd) === "ascii" ? (isLastGroup ? "`-- " : "|-- ") : (isLastGroup ? "└─ " : "├─ ");
+	const titleText = theme.fg("mdHeading", theme.bold(title));
+	const countText = theme.fg("dim", ` ${count}`);
+	return `${theme.fg(PANEL_RULE_COLOR, prefix)}${titleText}${countText}`;
+}
+
+function panelGroupBranch(theme: Theme, isLastTask: boolean, isLastGroup: boolean, cwd?: string): string {
+	if (panelTreeStyle(cwd) === "ascii") return theme.fg(PANEL_RULE_COLOR, `${isLastGroup ? "    " : "|   "}${isLastTask ? "`-- " : "|-- "}`);
+	return theme.fg(PANEL_RULE_COLOR, `${isLastGroup ? "   " : "│  "}${isLastTask ? "└─ " : "├─ "}`);
+}
+
+function panelGroupStem(theme: Theme, isLastTask: boolean, isLastGroup: boolean, cwd?: string): string {
+	if (panelTreeStyle(cwd) === "ascii") return theme.fg(PANEL_RULE_COLOR, `${isLastGroup ? "    " : "|   "}${isLastTask ? "    " : "|   "}`);
+	return theme.fg(PANEL_RULE_COLOR, `${isLastGroup ? "   " : "│  "}${isLastTask ? "   " : "│  "}`);
 }
 
 function framePopup(lines: string[], width: number, theme: Theme): string[] {
@@ -405,8 +452,7 @@ function parseEditableText(text: string, cwd?: string): TaskPanelState {
 function renderPanelWidgetLines(state: TaskPanelState, theme: Theme, cwd: string, width: number): string[] {
 	const lines = renderPanelLines(state, theme, cwd);
 	if (lines.length === 0) return [];
-	const prefix = `${PANEL_INDENT}${theme.fg(PANEL_BAR_COLOR, PANEL_BAR)} `;
-	return lines.map((line) => truncateToWidth(`${prefix}${line}`, Math.max(1, width), ""));
+	return panelFrame(lines, Math.max(1, width), theme);
 }
 
 function renderPanelHeader(state: TaskPanelState, theme: Theme, active?: TaskItem, hint = ""): string {
@@ -419,9 +465,9 @@ function renderPanelHeader(state: TaskPanelState, theme: Theme, active?: TaskIte
 	return `${theme.fg(PANEL_TITLE_COLOR, theme.bold("Tasks"))}${phaseBadge} ${theme.fg("muted", `${completedCount(state)}/${state.tasks.length} done · ${remaining} remaining`)}${toggleHint}`;
 }
 
-function pushTaskGroup(lines: string[], title: string, tasks: TaskItem[], theme: Theme, cwd: string): void {
-	if (lines.length > 1) lines.push(theme.fg(PANEL_RULE_COLOR, "│"));
-	lines.push(...renderTaskGroup(title, tasks, theme, cwd));
+function pushTaskGroup(lines: string[], title: string, tasks: TaskItem[], theme: Theme, cwd: string, isLastGroup: boolean): void {
+	if (lines.length > 1) lines.push("");
+	lines.push(...renderTaskGroup(title, tasks, theme, cwd, isLastGroup));
 }
 
 function renderPanelLines(state: TaskPanelState, theme: Theme, cwd: string): string[] {
@@ -436,36 +482,40 @@ function renderPanelLines(state: TaskPanelState, theme: Theme, cwd: string): str
 		const incomplete = candidates.filter((task) => task.status !== "completed" && task.status !== "abandoned");
 		const visible = incomplete.filter((task) => task.id !== active?.id).slice(0, Math.max(0, limit - (active ? 1 : 0)));
 		const lines = [header];
-		if (active) lines.push(renderTaskLine(active, theme, true));
-		for (const task of visible) lines.push(renderTaskLine(task, theme));
+		const compactTasks = [active, ...visible].filter((task): task is TaskItem => Boolean(task));
+		for (const [index, task] of compactTasks.entries()) {
+			const isLast = index === compactTasks.length - 1 && remaining <= compactTasks.length;
+			lines.push(renderTaskLine(task, theme, task.id === active?.id, panelBranch(theme, isLast ? "└" : "├", cwd)));
+		}
 		const shown = visible.length + (active ? 1 : 0);
 		const hidden = Math.max(0, remaining - shown);
-		if (hidden > 0) lines.push(theme.fg("dim", ` ╰ +${hidden} more`));
+		if (hidden > 0) lines.push(`${panelBranch(theme, "└", cwd)}${theme.fg("muted", `… ${hidden} more · /tasks show-all`)}`);
 		return lines;
 	}
 	const lines = [header];
-	const phases = [...state.phases].sort((a, b) => a.order - b.order);
+	const groups: Array<{ title: string; tasks: TaskItem[] }> = [];
 	const unphased = sortTasks(state.tasks.filter((task) => !task.phaseId));
-	if (unphased.length) pushTaskGroup(lines, "Unphased", unphased, theme, cwd);
+	if (unphased.length) groups.push({ title: "Unphased", tasks: unphased });
+	const phases = [...state.phases].sort((a, b) => a.order - b.order);
 	for (const phase of phases) {
 		const tasks = sortTasks(state.tasks.filter((task) => task.phaseId === phase.id));
-		if (tasks.length) pushTaskGroup(lines, phase.title, tasks, theme, cwd);
+		if (tasks.length) groups.push({ title: phase.title, tasks });
+	}
+	for (const [index, group] of groups.entries()) {
+		pushTaskGroup(lines, group.title, group.tasks, theme, cwd, index === groups.length - 1);
 	}
 	return lines;
 }
 
-function renderTaskGroup(title: string, tasks: TaskItem[], theme: Theme, cwd: string): string[] {
-	const rule = theme.fg(PANEL_RULE_COLOR, "╭─");
-	const titleText = theme.fg("mdHeading", theme.bold(title));
-	const count = theme.fg("dim", ` ${tasks.length}`);
-	const lines = [`${rule} ${titleText}${count}`];
+function renderTaskGroup(title: string, tasks: TaskItem[], theme: Theme, cwd: string, isLastGroup: boolean): string[] {
+	const lines = [panelGroupRoot(theme, title, tasks.length, isLastGroup, cwd)];
 	const active = tasks.find((task) => task.status === "in_progress");
 	for (let index = 0; index < tasks.length; index++) {
 		const task = tasks[index]!;
-		const isLast = index === tasks.length - 1;
+		const isLastTask = index === tasks.length - 1;
 		const isActive = active?.id === task.id;
-		const branch = theme.fg(PANEL_RULE_COLOR, isLast ? "╰─ " : "├─ ");
-		const stem = theme.fg(PANEL_RULE_COLOR, isLast ? "   " : "│  ");
+		const branch = panelGroupBranch(theme, isLastTask, isLastGroup, cwd);
+		const stem = panelGroupStem(theme, isLastTask, isLastGroup, cwd);
 		lines.push(renderTaskLine(task, theme, isActive, branch));
 		if (isActive && settingBoolean("showNotesInExpanded", true, cwd)) {
 			for (const note of task.notes) lines.push(`${stem}${theme.fg("dim", `note: ${note}`)}`);

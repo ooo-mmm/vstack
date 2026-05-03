@@ -67,7 +67,7 @@ test("applyPatch rejects path traversal by default", async () => {
 	);
 });
 
-test("applyPatch reports partial failure recovery context", async () => {
+test("applyPatch reports partial failure and rolls back touched files", async () => {
 	const cwd = tempDir();
 	await assert.rejects(
 		() => applyPatch(`*** Begin Patch
@@ -78,7 +78,36 @@ test("applyPatch reports partial failure recovery context", async () => {
 -old
 +new
 *** End Patch`, { cwd }),
-		/Partial apply status: completed actions before failure: add ok.txt/,
+		/Rolled back touched files/,
 	);
-	assert.equal(readFileSync(join(cwd, "ok.txt"), "utf8"), "ok");
+	assert.equal(existsSync(join(cwd, "ok.txt")), false);
+});
+
+test("applyPatch rejects ambiguous update context", async () => {
+	const cwd = tempDir();
+	writeFileSync(join(cwd, "ambiguous.txt"), "same\nsame\n");
+	await assert.rejects(
+		() => applyPatch(`*** Begin Patch
+*** Update File: ambiguous.txt
+@@
+-same
++different
+*** End Patch`, { cwd }),
+		/ambiguous/,
+	);
+	assert.equal(readFileSync(join(cwd, "ambiguous.txt"), "utf8"), "same\nsame\n");
+});
+
+test("applyPatch preserves CRLF files when patch context uses LF", async () => {
+	const cwd = tempDir();
+	writeFileSync(join(cwd, "crlf.txt"), "alpha\r\nold\r\nomega\r\n");
+	await applyPatch(`*** Begin Patch
+*** Update File: crlf.txt
+@@
+ alpha
+-old
++new
+ omega
+*** End Patch`, { cwd });
+	assert.equal(readFileSync(join(cwd, "crlf.txt"), "utf8"), "alpha\r\nnew\r\nomega\r\n");
 });

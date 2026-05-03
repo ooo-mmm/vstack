@@ -16,3 +16,8 @@ test("rewriteNativeOpenAiTools rewrites function tools to native Responses tools
 	assert.deepEqual(result.payload.tools[1], { type: "web_search", external_web_access: true });
 	assert.equal((result.payload.tools[2] as any).name, "read");
 });
+
+test("rewriteNativeOpenAiTools honors external web access setting", () => {
+	const result = rewriteNativeOpenAiTools({ tools: [{ type: "function", name: "web_search" }] }, { webSearchExternalAccess: false });
+	assert.deepEqual(result.payload.tools[0], { type: "web_search", external_web_access: false });
+});

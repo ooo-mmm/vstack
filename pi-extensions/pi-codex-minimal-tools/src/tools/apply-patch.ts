@@ -70,8 +70,5 @@ export function createApplyPatchToolDefinition(options: { cwd?: string; allowAbs
 			return executeApplyPatchTool(params, cwd, allowAbsolutePaths);
 		},
 	};
-	if (!options.deferRendering) {
-		// Intentionally no default custom renderer. The branch is reserved for a future opt-in renderer.
-	}
 	return definition;
 }

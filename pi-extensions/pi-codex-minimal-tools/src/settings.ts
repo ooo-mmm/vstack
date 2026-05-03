@@ -13,6 +13,7 @@ export interface CodexMinimalToolsSettings {
 	imageModel: "gpt-image-2" | "gpt-image-1.5" | "gpt-image-1";
 	directImageApiFallback: boolean;
 	webSearch: boolean;
+	webSearchExternalAccess: boolean;
 	showWebSearchSessionNotice: boolean;
 	viewImage: boolean;
 	applyPatchEnabled: boolean;
@@ -30,6 +31,7 @@ export const DEFAULT_SETTINGS: CodexMinimalToolsSettings = {
 	imageModel: "gpt-image-2",
 	directImageApiFallback: false,
 	webSearch: true,
+	webSearchExternalAccess: true,
 	showWebSearchSessionNotice: false,
 	viewImage: true,
 	applyPatchEnabled: true,
@@ -39,6 +41,7 @@ export const DEFAULT_SETTINGS: CodexMinimalToolsSettings = {
 };
 
 type SettingsRecord = Record<string, unknown>;
+const settingsParseWarnings = new Map<string, string>();
 
 function expandHome(input: string): string {
 	if (input === "~") return homedir();
@@ -76,13 +79,22 @@ export function readRawVstackConfig(cwd?: string): SettingsRecord {
 		if (!existsSync(path)) continue;
 		try {
 			const parsed = JSON.parse(readFileSync(path, "utf8"));
+			settingsParseWarnings.delete(path);
 			const config = asRecord(asRecord(asRecord(parsed?.vstack)?.extensionManager)?.config)?.[PACKAGE_ID];
 			if (config && typeof config === "object" && !Array.isArray(config)) Object.assign(merged, config);
-		} catch {
-			// Ignore malformed optional settings.
+		} catch (error) {
+			settingsParseWarnings.set(path, error instanceof Error ? error.message : String(error));
 		}
 	}
 	return merged;
+}
+
+export function settingsDiagnostics(cwd?: string): string[] {
+	readRawVstackConfig(cwd);
+	return piSettingsPaths(cwd).flatMap((path) => {
+		const warning = settingsParseWarnings.get(path);
+		return warning ? [`${path}: ${warning}`] : [];
+	});
 }
 
 function boolSetting(raw: SettingsRecord, key: keyof CodexMinimalToolsSettings): boolean {
@@ -113,6 +125,7 @@ export function loadSettings(cwd?: string): CodexMinimalToolsSettings {
 		imageModel: imageModelSetting(raw),
 		directImageApiFallback: boolSetting(raw, "directImageApiFallback"),
 		webSearch: boolSetting(raw, "webSearch"),
+		webSearchExternalAccess: boolSetting(raw, "webSearchExternalAccess"),
 		showWebSearchSessionNotice: boolSetting(raw, "showWebSearchSessionNotice"),
 		viewImage: boolSetting(raw, "viewImage"),
 		applyPatchEnabled: boolSetting(raw, "applyPatchEnabled"),

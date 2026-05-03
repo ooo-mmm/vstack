@@ -12,7 +12,7 @@
  * Uses JSON mode to capture structured output from subagents.
  */
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -39,11 +39,14 @@ const MAX_PARALLEL_TASKS = 8;
 const MAX_CONCURRENCY = 4;
 const COLLAPSED_ITEM_COUNT = 10;
 const PANE_LAUNCHER_VERSION = 8;
+const SUBAGENT_WIDGET_KEY = "vstack-subagents-dashboard";
 const FIRST_AGENT_COLUMN_ROWS = 3;
 const NEXT_AGENT_COLUMN_ROWS = 4;
 const DETAIL_STRING_MAX_CHARS = 8 * 1024;
 const DEFAULT_RESULT_MAX_BYTES = 100 * 1024;
 const DEFAULT_RESULT_MAX_LINES = 4_000;
+const TRACE_VIEWER_WIDTH = "92%";
+const TRACE_VIEWER_MAX_HEIGHT = "88%";
 
 type VstackConfig = Record<string, unknown>;
 
@@ -124,6 +127,11 @@ function settingBoolean(key: string, fallback: boolean, cwd?: string): boolean {
 	return typeof value === "boolean" ? value : fallback;
 }
 
+function settingString(key: string, fallback: string, cwd?: string): string {
+	const value = readVstackConfig(cwd)[key];
+	return typeof value === "string" && value.trim().length > 0 ? value.trim() : fallback;
+}
+
 function formatTokens(count: number): string {
 	if (count < 1000) return count.toString();
 	if (count < 10000) return `${(count / 1000).toFixed(1)}k`;
@@ -172,6 +180,56 @@ function subagentStem(theme: Theme, isLast: boolean, cwd?: string): string {
 
 function padAnsi(text: string, width: number): string {
 	return `${text}${" ".repeat(Math.max(0, width - visibleWidth(text)))}`;
+}
+
+function simpleFrame(lines: string[], width: number, theme: Theme): string[] {
+	if (width < 8) return lines.map((line) => truncateToWidth(line, width, ""));
+	const border = (text: string) => theme.fg("borderAccent", text);
+	const innerWidth = Math.max(1, width - 4);
+	return [
+		`${border("┏")}${border("━".repeat(width - 2))}${border("┓")}`,
+		...lines.map((line) => `${border("┃")} ${padAnsi(truncateToWidth(line, innerWidth, ""), innerWidth)} ${border("┃")}`),
+		`${border("┗")}${border("━".repeat(width - 2))}${border("┛")}`,
+	].map((line) => truncateToWidth(line, width, ""));
+}
+
+function activePill(theme: Theme, label: string): string {
+	return theme.fg("accent", theme.inverse(theme.bold(label)));
+}
+
+function inactivePill(theme: Theme, label: string): string {
+	return theme.bg("selectedBg", theme.fg("accent", label));
+}
+
+function divider(width: number, theme: Theme): string {
+	return theme.fg("borderMuted", "─".repeat(Math.max(1, width)));
+}
+
+function dashboardEnabled(cwd?: string): boolean {
+	return settingBoolean("dashboard", true, cwd);
+}
+
+function quietInline(cwd?: string): boolean {
+	return settingBoolean("quietInlineWhenDashboard", true, cwd);
+}
+
+function dashboardMaxItems(cwd?: string): number {
+	return Math.max(1, Math.floor(settingNumber("dashboardMaxItems", 6, cwd)));
+}
+
+function dashboardDefaultCollapsed(cwd?: string): boolean {
+	return settingBoolean("dashboardCollapsed", false, cwd);
+}
+
+function dashboardShortcut(cwd?: string): string {
+	return settingString("dashboardShortcut", "alt+a", cwd);
+}
+
+function formatShortcutHint(shortcut: string): string {
+	return shortcut
+		.split("+")
+		.map((part) => (part.length === 1 ? part.toUpperCase() : part.charAt(0).toUpperCase() + part.slice(1).toLowerCase()))
+		.join("+");
 }
 
 function formatUsageStats(
@@ -1007,6 +1065,7 @@ interface PaneCompletionDetails {
 	archivePath?: string;
 	transcriptPath?: string;
 	completedAt: string;
+	paneId?: string;
 }
 
 interface PaneCompletionMessageDetails {
@@ -1035,6 +1094,32 @@ interface PaneTaskRecord {
 
 type PaneRegistry = Record<string, PaneRegistryEntry>;
 type PaneTaskRegistry = Record<string, PaneTaskRecord>;
+
+type DashboardDisplayMode = "compact" | "normal" | "expanded";
+type DashboardKind = "pane" | "oneshot";
+
+interface SubagentDashboardItem {
+	agent: string;
+	artifacts?: boolean;
+	bridge?: boolean;
+	completedAt?: string;
+	kind: DashboardKind;
+	message?: string;
+	paneId?: string;
+	startedAt?: string;
+	status: PaneTaskStatus | "running";
+	task?: string;
+	taskId: string;
+	transcriptPath?: string;
+	updatedAt: string;
+}
+
+interface SubagentDashboardState {
+	collapsed: boolean;
+	mode: DashboardDisplayMode;
+	visible: boolean;
+	items: Record<string, SubagentDashboardItem>;
+}
 
 function safeFileName(value: string): string {
 	return value.replace(/[^\w.-]+/g, "_");
@@ -1602,6 +1687,115 @@ function emitSubagentEvent(pi: ExtensionAPI, event: string, payload: Record<stri
 	}
 }
 
+function dashboardStatusIcon(status: SubagentDashboardItem["status"], theme: Theme): string {
+	if (status === "completed") return theme.fg("success", "✓");
+	if (status === "failed") return theme.fg("error", "✗");
+	if (status === "blocked") return theme.fg("warning", "◐");
+	if (status === "running") return theme.fg("warning", "●");
+	return theme.fg("accent", "●");
+}
+
+function dashboardStatusText(item: SubagentDashboardItem, theme: Theme): string {
+	if (item.status === "completed") return theme.fg("success", "done");
+	if (item.status === "failed") return theme.fg("error", "failed");
+	if (item.status === "blocked") return theme.fg("warning", "blocked");
+	if (item.status === "running") return theme.fg("warning", "running");
+	return theme.fg("accent", item.status);
+}
+
+function dashboardFrame(lines: string[], width: number, theme: Theme): string[] {
+	return simpleFrame(lines, width, theme);
+}
+
+function dashboardTranscriptLabel(items: SubagentDashboardItem[], cwd: string): string {
+	const refs = [...new Set(items.map((item) => dashboardTraceRef(item)).filter(Boolean))];
+	if (refs.length === 0) return "transcripts available";
+	if (refs.length === 1) return `transcript ${refs[0]}`;
+	const sessionRefs = [...new Set(refs.map((ref) => ref.split("/")[0]).filter(Boolean))];
+	if (sessionRefs.length === 1) return `${refs.length} transcripts · session ${sessionRefs[0]}`;
+	return `${refs.length} transcripts · ${refs[0]} +${refs.length - 1}`;
+}
+
+function shortRuntimeSessionIdFromPath(filePath: string | undefined): string {
+	if (!filePath) return "session";
+	const parts = path.normalize(filePath).split(path.sep).filter(Boolean);
+	const rootIndex = parts.lastIndexOf("pi-subagents-tmux");
+	const sessionsIndex = rootIndex >= 0 ? parts.indexOf("sessions", rootIndex + 1) : parts.lastIndexOf("sessions");
+	const parentSession = sessionsIndex >= 0 ? parts[sessionsIndex + 1] : undefined;
+	return parentSession ? oneLinePreview(parentSession, 8) : "session";
+}
+
+function shortTaskRef(taskId: string | undefined): string {
+	if (!taskId) return "task";
+	const hash = taskId.match(/-([a-f0-9]{8,})$/)?.[1]?.slice(0, 8);
+	const timestamp = taskId.match(/-(\d{10,})-/)?.[1];
+	return hash ? `${timestamp ? `${timestamp.slice(-6)}-` : ""}${hash}` : oneLinePreview(taskId, 16);
+}
+
+function dashboardTraceRef(item: Pick<SubagentDashboardItem, "agent" | "taskId" | "transcriptPath" | "kind">): string {
+	const session = shortRuntimeSessionIdFromPath(item.transcriptPath);
+	if (item.kind === "pane") return `${session}/${item.agent}/${shortTaskRef(item.taskId)}`;
+	return dashboardTranscriptRef(item.transcriptPath) || `${session}/${item.agent}/${shortTaskRef(item.taskId)}`;
+}
+
+function dashboardTranscriptRef(filePath: string | undefined): string {
+	if (!filePath) return "";
+	const parts = path.normalize(filePath).split(path.sep).filter(Boolean);
+	const rootIndex = parts.lastIndexOf("pi-subagents-tmux");
+	const sessionsIndex = rootIndex >= 0 ? parts.indexOf("sessions", rootIndex + 1) : parts.lastIndexOf("sessions");
+	const parentSession = sessionsIndex >= 0 ? parts[sessionsIndex + 1] : undefined;
+	const shortSession = parentSession ? oneLinePreview(parentSession, 8) : "session";
+	const runtimeRelative = sessionsIndex >= 0 && parentSession ? parts.slice(sessionsIndex + 2) : [];
+	const file = path.basename(filePath, path.extname(filePath));
+	if (runtimeRelative[0] === "sessions") return `${shortSession}/${file}`;
+	if (runtimeRelative[0] === "transcripts" && runtimeRelative[1]) {
+		const hash = file.match(/-([a-f0-9]{8,})$/)?.[1]?.slice(0, 8);
+		const timestamp = file.match(/-(\d{10,})-/)?.[1];
+		const suffix = hash ? `${timestamp ? `${timestamp.slice(-6)}-` : ""}${hash}` : "";
+		return `${shortSession}/${runtimeRelative[1]}${suffix ? `/${suffix}` : ""}`;
+	}
+	return `${shortSession}/${file}`;
+}
+
+function renderDashboardWidgetLines(state: SubagentDashboardState, theme: Theme, cwd: string, width: number): string[] {
+	const items = Object.values(state.items).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+	if (!dashboardEnabled(cwd) || !state.visible || items.length === 0) return [];
+	const running = items.filter((item) => item.status === "running" || item.status === "queued").length;
+	const done = items.filter((item) => item.status === "completed").length;
+	const failed = items.filter((item) => item.status === "failed" || item.status === "blocked").length;
+	const shortcut = dashboardShortcut(cwd);
+	const hint = shortcut === "none" ? "" : theme.fg("dim", ` · ${formatShortcutHint(shortcut)} toggle`);
+	const headerParts = [
+		`${done} done`,
+		running ? theme.fg("warning", `${running} active`) : "",
+		failed ? theme.fg("error", `${failed} attention`) : "",
+	].filter(Boolean);
+	const title = `${theme.fg("customMessageLabel", theme.bold("Subagents"))} ${theme.fg("muted", headerParts.join(" · "))}${hint}`;
+	const lines = [title];
+	if (running === 0 && state.mode === "compact") {
+		lines.push(`${subagentBranch(theme, "└", cwd)}${theme.fg("success", "done")} ${theme.fg("dim", dashboardTranscriptLabel(items, cwd))}`);
+		return dashboardFrame(lines.map((line) => truncateToWidth(line, Math.max(1, width - 4), "")), Math.max(1, width), theme);
+	}
+	const maxItems = state.mode === "compact" || state.collapsed ? 1 : state.mode === "normal" ? Math.min(3, dashboardMaxItems(cwd)) : dashboardMaxItems(cwd);
+	const shown = items.slice(0, maxItems);
+	const nameWidth = Math.min(24, Math.max(0, ...shown.map((item) => visibleWidth(item.agent))));
+	for (const [index, item] of shown.entries()) {
+		const branch = subagentBranch(theme, index === shown.length - 1 && items.length <= shown.length ? "└" : "├", cwd);
+		const name = padAnsi(theme.fg("accent", theme.bold(item.agent)), nameWidth);
+		const where = item.paneId ? theme.fg("dim", `pane ${item.paneId}`) : theme.fg("dim", item.kind);
+		const bridge = item.bridge ? theme.fg("success", " · bridge") : "";
+		const transcriptRef = dashboardTraceRef(item);
+		const transcript = transcriptRef ? theme.fg("dim", ` · trace ${transcriptRef}`) : "";
+		lines.push(`${branch}${dashboardStatusIcon(item.status, theme)} ${name}  ${dashboardStatusText(item, theme)} ${where}${bridge}${transcript}`);
+		if (state.mode === "expanded" && !state.collapsed && item.message) {
+			lines.push(`${subagentStem(theme, index === shown.length - 1 && items.length <= shown.length, cwd)}${theme.fg("toolOutput", oneLinePreview(item.message, Math.max(48, width - 16)))}`);
+		}
+	}
+	const hidden = items.length - shown.length;
+	if (hidden > 0) lines.push(`${subagentBranch(theme, "└", cwd)}${theme.fg("muted", `… ${hidden} more · /agents toggle`)}`);
+	return dashboardFrame(lines.map((line) => truncateToWidth(line, Math.max(1, width - 4), "")), Math.max(1, width), theme);
+}
+
 function resolveSessionBridgeExtension(cwd?: string): string | undefined {
 	const projectPackagesDir = path.join(path.dirname(projectSettingsPath(cwd ?? process.cwd())), "packages");
 	const candidates = [
@@ -1861,6 +2055,7 @@ function paneCompletionDetailsFromCompletion(
 		archivePath,
 		transcriptPath: record?.transcriptPath ?? registry[agent]?.sessionFile,
 		completedAt: new Date().toISOString(),
+		paneId: record?.paneId ?? registry[agent]?.paneId,
 	};
 }
 
@@ -1934,6 +2129,7 @@ async function pollPaneCompletions(runtimeRoot: string, pi: ExtensionAPI, trigge
 						task: existing?.task ?? "",
 						createdAt: existing?.createdAt ?? detail.completedAt,
 						status: detail.status,
+						paneId: detail.paneId,
 						completionSourcePath: detail.sourcePath,
 						completionArchivePath: detail.archivePath,
 						transcriptPath: detail.transcriptPath,
@@ -1947,8 +2143,10 @@ async function pollPaneCompletions(runtimeRoot: string, pi: ExtensionAPI, trigge
 				emitSubagentEvent(pi, detail.status === "completed" ? "subagents:completed" : "subagents:failed", {
 					mode: "pane",
 					agent: detail.agent,
+					paneId: detail.paneId,
 					taskId: detail.taskId,
 					status: detail.status,
+					summary: detail.summary,
 					runtimeRoot,
 					transcriptPath: detail.transcriptPath,
 					completionPath: detail.archivePath ?? detail.sourcePath,
@@ -2486,6 +2684,253 @@ function formatTaskRecordResult(record: PaneTaskRecord, verbose = false): string
 	return lines.filter(Boolean).join("\n");
 }
 
+function recordTraceRef(record: PaneTaskRecord): string {
+	return dashboardTraceRef({ agent: record.agent, kind: record.paneId ? "pane" : "oneshot", taskId: record.taskId, transcriptPath: record.transcriptPath });
+}
+
+function recordTimestamp(record: PaneTaskRecord): number {
+	const value = Date.parse(record.completedAt ?? record.createdAt ?? "");
+	return Number.isFinite(value) ? value : 0;
+}
+
+function formatTranscriptIndex(records: PaneTaskRegistry, cwd: string): string {
+	const sorted = Object.values(records).filter((record) => record.taskId && record.agent).sort((a, b) => recordTimestamp(b) - recordTimestamp(a));
+	if (sorted.length === 0) return "No subagent transcripts found for this session.";
+	const lines = ["# Subagent transcripts", "", "| Ref | Agent | Status | When | Summary |", "| --- | --- | --- | --- | --- |"];
+	for (const record of sorted.slice(0, 40)) {
+		const ref = recordTraceRef(record);
+		const when = record.completedAt ?? record.createdAt ?? "";
+		const summary = oneLinePreview(record.summary || record.task || "", 96).replace(/\|/g, "\\|");
+		lines.push(`| \`${ref}\` | ${record.agent} | ${record.status} | ${when} | ${summary} |`);
+	}
+	lines.push("", "Use `/agents trace <ref>` to view task metadata and transcript/artifact paths.");
+	return lines.join("\n");
+}
+
+function resolveTraceRecord(records: PaneTaskRegistry, query: string): PaneTaskRecord | undefined {
+	const needle = query.trim();
+	if (!needle) return undefined;
+	if (records[needle]) return records[needle];
+	const normalized = needle.toLowerCase();
+	const candidates = Object.values(records).filter((record) => {
+		const ref = recordTraceRef(record).toLowerCase();
+		return ref === normalized || ref.includes(normalized) || record.taskId.toLowerCase().includes(normalized) || record.agent.toLowerCase() === normalized;
+	});
+	return candidates.sort((a, b) => recordTimestamp(b) - recordTimestamp(a))[0];
+}
+
+async function readTextFileIfExists(filePath: string | undefined, maxBytes = 24_000): Promise<string> {
+	if (!filePath) return "";
+	try {
+		const content = await fs.promises.readFile(filePath, "utf-8");
+		return content.length > maxBytes ? `${content.slice(Math.max(0, content.length - maxBytes))}\n\n[truncated: showing last ${formatSize(maxBytes)}]` : content;
+	} catch {
+		return "";
+	}
+}
+
+async function formatTraceView(record: PaneTaskRecord, verbose = false): Promise<string> {
+	const base = formatTaskRecordResult(record, true);
+	const transcript = await readTextFileIfExists(record.transcriptPath, verbose ? 80_000 : 24_000);
+	const completion = await readTextFileIfExists(record.completionArchivePath ?? record.completionSourcePath, 12_000);
+	return [
+		`# Trace ${recordTraceRef(record)}`,
+		"",
+		base,
+		completion ? `\n## Completion JSON\n\`\`\`json\n${completion}\n\`\`\`` : "",
+		transcript ? `\n## Transcript tail\n\`\`\`jsonl\n${transcript}\n\`\`\`` : "",
+	].filter(Boolean).join("\n");
+}
+
+interface TraceViewerItem {
+	agent?: string;
+	createdAt?: string;
+	summary?: string;
+	label: string;
+	path?: string;
+	ref?: string;
+	status?: string;
+	text: string;
+	type?: "index" | "summary" | "transcript" | "completion" | "task";
+}
+
+interface TraceViewerState {
+	items: TraceViewerItem[];
+	selected: number;
+	scroll: number;
+	title: string;
+}
+
+function traceViewerLines(state: TraceViewerState, width: number, rows: number, theme: Theme): string[] {
+	const innerWidth = Math.max(1, width - 4);
+	const frameRows = Math.max(8, rows);
+	const item = state.items[state.selected] ?? state.items[0];
+	const title = `${theme.fg("customMessageLabel", theme.bold(state.title))} ${theme.fg("dim", "· tab/←→ sections · ↑↓ scroll · enter/e open · esc close")}`;
+	const tabs = renderTraceTabBar(state.items, state.selected, innerWidth, theme);
+	const meta = [
+		item?.ref ? theme.fg("accent", item.ref) : "",
+		item?.agent ? theme.fg("muted", item.agent) : "",
+		item?.status ? theme.fg(item.status === "completed" ? "success" : item.status === "failed" ? "error" : "warning", item.status) : "",
+		item?.createdAt ? theme.fg("dim", item.createdAt) : "",
+	].filter(Boolean).join(theme.fg("dim", " · "));
+	const file = item?.path ? theme.fg("dim", `file ${compactPath(item.path, { maxChars: Math.max(24, innerWidth - 8) })}`) : theme.fg("dim", "metadata view");
+	const rawContent = (item?.text || "(empty)").split(/\r?\n/);
+	const content = rawContent.map((line) => truncateToWidth(line, innerWidth, ""));
+	const fixedRowsInsideFrame = 8;
+	const bodyRows = Math.max(1, frameRows - 2 - fixedRowsInsideFrame);
+	const maxScroll = Math.max(0, content.length - bodyRows);
+	state.scroll = Math.max(0, Math.min(state.scroll, maxScroll));
+	const visible = content.slice(state.scroll, state.scroll + bodyRows);
+	const footer = theme.fg("dim", `${state.scroll + 1}-${Math.min(content.length, state.scroll + bodyRows)}/${content.length} · ${item?.path ? "enter/e opens $VISUAL/$EDITOR" : "metadata"}`);
+	const innerLines = [
+		title,
+		tabs,
+		divider(innerWidth, theme),
+		meta || file,
+		meta ? file : "",
+		divider(innerWidth, theme),
+		...visible,
+		divider(innerWidth, theme),
+		footer,
+	];
+	while (innerLines.length < frameRows - 2) innerLines.splice(Math.max(0, innerLines.length - 2), 0, "");
+	return simpleFrame(innerLines.slice(0, frameRows - 2), width, theme);
+}
+
+function renderTraceTabBar(items: TraceViewerItem[], selected: number, width: number, theme: Theme): string {
+	const partFor = (item: TraceViewerItem, index: number): string => {
+		const label = ` ${truncateToWidth(item.label, 18, "…")} `;
+		return index === selected ? activePill(theme, label) : inactivePill(theme, label);
+	};
+	const renderWindow = (start: number, end: number): string => {
+		const parts = items.slice(start, end).map((item, offset) => partFor(item, start + offset));
+		if (start > 0) parts.unshift(theme.fg("dim", "‹"));
+		if (end < items.length) parts.push(theme.fg("dim", "›"));
+		return parts.join(" ");
+	};
+	let start = Math.max(0, selected);
+	let end = Math.min(items.length, selected + 1);
+	let current = renderWindow(start, end);
+	let preferRight = true;
+	while (start > 0 || end < items.length) {
+		const addRight = end < items.length && (preferRight || start === 0);
+		const addLeft = !addRight && start > 0;
+		const nextStart = addLeft ? start - 1 : start;
+		const nextEnd = addRight ? end + 1 : end;
+		const candidate = renderWindow(nextStart, nextEnd);
+		if (visibleWidth(candidate) > width) {
+			if (addRight && start > 0) {
+				preferRight = false;
+				continue;
+			}
+			break;
+		}
+		start = nextStart;
+		end = nextEnd;
+		current = candidate;
+		preferRight = !preferRight;
+	}
+	return truncateToWidth(current, width, "");
+}
+
+function openFileInExternalEditor(filePath: string | undefined, cwd: string): string {
+	if (!filePath) return "No file path for selected view.";
+	const editor = process.env.VISUAL || process.env.EDITOR;
+	if (!editor) return "Set $VISUAL or $EDITOR to open trace files externally.";
+	const proc = spawnSync(`${editor} ${shellQuote(filePath)}`, { cwd, shell: true, stdio: "inherit" });
+	return proc.status === 0 ? `Opened ${filePath}` : `Editor exited with status ${proc.status ?? "unknown"}: ${filePath}`;
+}
+
+async function openTraceViewer(ctx: ExtensionContext, title: string, items: TraceViewerItem[]): Promise<void> {
+	if (!ctx.hasUI) {
+		ctx.ui.notify(title, "info");
+		return;
+	}
+	const state: TraceViewerState = { items: items.length ? items : [{ label: "Empty", text: "No traces found." }], selected: 0, scroll: 0, title };
+	let notice = "";
+	await ctx.ui.custom<void>((tui, theme, _kb, done) => ({
+		handleInput(data: string) {
+			if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) return done();
+			if (matchesKey(data, "up") || data === "k") { state.scroll = Math.max(0, state.scroll - 1); tui.requestRender(); return; }
+			if (matchesKey(data, "down") || data === "j") { state.scroll += 1; tui.requestRender(); return; }
+			if (matchesKey(data, "pageup") || matchesKey(data, "page_up")) { state.scroll = Math.max(0, state.scroll - 12); tui.requestRender(); return; }
+			if (matchesKey(data, "pagedown") || matchesKey(data, "page_down")) { state.scroll += 12; tui.requestRender(); return; }
+			if (matchesKey(data, "left") || data === "h") { state.selected = (state.selected + state.items.length - 1) % state.items.length; state.scroll = 0; tui.requestRender(); return; }
+			if (matchesKey(data, "right") || data === "l" || matchesKey(data, "tab")) { state.selected = (state.selected + 1) % state.items.length; state.scroll = 0; tui.requestRender(); return; }
+			if (matchesKey(data, "enter") || matchesKey(data, "return") || data === "e") { notice = openFileInExternalEditor(state.items[state.selected]?.path, ctx.cwd); tui.requestRender(); return; }
+		},
+		render(width: number): string[] {
+			const rows = Math.min(30, Math.max(12, Math.floor(tui.terminal.rows * 0.72)));
+			const lines = traceViewerLines(state, width, rows, theme);
+			if (notice) lines.splice(Math.max(1, lines.length - 2), 0, theme.fg(notice.startsWith("Opened") ? "success" : "warning", notice));
+			return lines.slice(0, rows);
+		},
+	}), { overlay: true, overlayOptions: { anchor: "center", width: TRACE_VIEWER_WIDTH, maxHeight: TRACE_VIEWER_MAX_HEIGHT } });
+}
+
+function transcriptIndexItems(records: PaneTaskRegistry, cwd: string): TraceViewerItem[] {
+	const sorted = Object.values(records).filter((record) => record.taskId && record.agent).sort((a, b) => recordTimestamp(b) - recordTimestamp(a));
+	const lines = ["Recent subagent traces", "", "Use ←/→ to select a trace tab; Enter/e opens its transcript file.", ""];
+	for (const record of sorted.slice(0, 80)) {
+		const ref = recordTraceRef(record);
+		lines.push(ref);
+		lines.push(`  ${record.agent} · ${record.status} · ${record.completedAt ?? record.createdAt ?? ""}`);
+		lines.push(`  ${oneLinePreview(record.summary || record.task || "", 120)}`);
+		lines.push("");
+	}
+	return [
+		{ label: "Index", type: "index", text: sorted.length ? lines.join("\n") : "No subagent transcripts found for this session." },
+		...sorted.slice(0, 20).map((record) => ({
+			agent: record.agent,
+			createdAt: record.completedAt ?? record.createdAt,
+			label: shortTaskRef(record.taskId),
+			path: record.transcriptPath,
+			ref: recordTraceRef(record),
+			status: record.status,
+			summary: record.summary || record.task,
+			text: [record.summary || record.task || "No summary.", "", record.transcriptPath ? `Transcript: ${record.transcriptPath}` : "Transcript unavailable."].join("\n"),
+			type: "transcript" as const,
+		})),
+	];
+}
+
+async function traceViewerItems(record: PaneTaskRecord): Promise<TraceViewerItem[]> {
+	const ref = recordTraceRef(record);
+	const metadata = [
+		"Overview",
+		"",
+		`Ref      ${ref}`,
+		`Agent    ${record.agent}`,
+		`Status   ${record.status}`,
+		record.paneId ? `Pane: ${record.paneId}` : "",
+		`Task ID  ${record.taskId}`,
+		`Created  ${record.createdAt}`,
+		record.completedAt ? `Done     ${record.completedAt}` : "",
+		"",
+		"Summary",
+		"-------",
+		record.summary || "No summary yet.",
+		"",
+		"Files changed",
+		"-------------",
+		record.filesChanged?.length ? record.filesChanged.map((file) => `- ${file}`).join("\n") : "None reported",
+		"",
+		"Validation",
+		"----------",
+		record.validation?.length ? record.validation.map((item) => `- ${item}`).join("\n") : "None reported",
+		record.notes ? `\nNotes\n-----\n${record.notes}` : "",
+	].filter(Boolean).join("\n");
+	const transcript = await readTextFileIfExists(record.transcriptPath, 80_000);
+	const completion = await readTextFileIfExists(record.completionArchivePath ?? record.completionSourcePath, 24_000);
+	const common = { agent: record.agent, createdAt: record.completedAt ?? record.createdAt, ref, status: record.status, summary: record.summary || record.task };
+	return [
+		{ ...common, label: "Summary", text: metadata, type: "summary" },
+		{ ...common, label: "Transcript", path: record.transcriptPath, text: transcript || "Transcript unavailable.", type: "transcript" },
+		{ ...common, label: "Completion", path: record.completionArchivePath ?? record.completionSourcePath, text: completion || "Completion JSON unavailable.", type: "completion" },
+		{ ...common, label: "Task", path: record.inboxFile, text: record.task || "Task unavailable.", type: "task" },
+	];
+}
+
 interface GetSubagentResultDetails {
 	agent?: string;
 	paneId?: string;
@@ -2566,6 +3011,43 @@ export default function (pi: ExtensionAPI) {
 	let childPollInFlight = false;
 	let childCurrentTaskFile: string | undefined;
 	let agentCommandCompletions: Array<{ value: string; label: string; description: string; pane: boolean }> = [];
+	let dashboardState: SubagentDashboardState = { collapsed: false, mode: "normal", visible: true, items: {} };
+	let dashboardCtx: ExtensionContext | undefined;
+
+	const syncDashboard = (ctx = dashboardCtx) => {
+		if (!ctx?.hasUI || childAgentName || !dashboardEnabled(ctx.cwd) || !dashboardState.visible) {
+			ctx?.ui.setWidget(SUBAGENT_WIDGET_KEY, undefined);
+			return;
+		}
+		dashboardCtx = ctx;
+		const hasItems = Object.keys(dashboardState.items).length > 0;
+		if (!hasItems) {
+			ctx.ui.setWidget(SUBAGENT_WIDGET_KEY, undefined);
+			return;
+		}
+		ctx.ui.setWidget(SUBAGENT_WIDGET_KEY, (_tui, theme) => ({
+			invalidate() {},
+			render(width: number): string[] {
+				return renderDashboardWidgetLines(dashboardState, theme, ctx.cwd, width);
+			},
+		}), { placement: "aboveEditor" });
+	};
+
+	const updateDashboard = (item: SubagentDashboardItem) => {
+		dashboardState.visible = true;
+		dashboardState.items[item.taskId] = item;
+		const maxKeep = Math.max(10, dashboardMaxItems(dashboardCtx?.cwd) * 3);
+		const sorted = Object.values(dashboardState.items).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+		dashboardState.items = Object.fromEntries(sorted.slice(0, maxKeep).map((entry) => [entry.taskId, entry]));
+		syncDashboard();
+	};
+
+	const patchDashboard = (taskId: string | undefined, patch: Partial<SubagentDashboardItem>) => {
+		if (!taskId) return;
+		const existing = dashboardState.items[taskId];
+		if (!existing) return;
+		updateDashboard({ ...existing, ...patch, updatedAt: new Date().toISOString() });
+	};
 
 	const refreshAgentCommandCompletions = (ctx: ExtensionContext) => {
 		try {
@@ -2584,7 +3066,7 @@ export default function (pi: ExtensionAPI) {
 		const raw = prefix.trimStart();
 		const parts = raw.split(/\s+/).filter(Boolean);
 		const first = parts[0]?.toLowerCase() ?? "";
-		if (parts.length <= 1 && !raw.endsWith(" ")) {
+		if (parts.length === 0 || (parts.length <= 1 && !raw.endsWith(" "))) {
 			const topLevel = [
 				{ value: "show ", label: "show <name>", description: "Inspect an agent" },
 				{ value: "start ", label: "start <name>", description: "Start or reuse a persistent pane" },
@@ -2592,15 +3074,25 @@ export default function (pi: ExtensionAPI) {
 				{ value: "attach ", label: "attach <name>", description: "Focus an existing agent pane" },
 				{ value: "stop ", label: "stop <name>", description: "Stop an agent pane" },
 				{ value: "status", label: "status", description: "Show persistent pane status" },
-				{ value: "collect", label: "collect", description: "Collect completed pane results" },
-				{ value: "user", label: "user", description: "Browse user-level agents" },
-				{ value: "project", label: "project", description: "Browse project agents" },
-				{ value: "both", label: "both", description: "Browse user and project agents" },
+				{ value: "transcripts", label: "transcripts", description: "List subagent transcript refs" },
+				{ value: "trace ", label: "trace <ref>", description: "View a subagent trace by ref/task id" },
+				{ value: "toggle", label: "toggle", description: "Toggle the subagent dashboard" },
 			];
 			const filtered = topLevel.filter((item) => item.value.trim().startsWith(first) || item.label.startsWith(first));
 			return filtered.length > 0 ? filtered : null;
 		}
+		if (first === "trace") {
+			const rest = parts[1]?.toLowerCase() ?? "";
+			const records = Object.values(dashboardState.items).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+			const completions = records
+				.map((item) => ({ ref: dashboardTraceRef(item), item }))
+				.filter(({ ref, item }) => !rest || ref.toLowerCase().includes(rest) || item.taskId.toLowerCase().includes(rest) || item.agent.toLowerCase().startsWith(rest))
+				.slice(0, 20)
+				.map(({ ref, item }) => ({ value: `trace ${ref}`, label: ref, description: `${item.agent} · ${item.status}${item.message ? ` · ${oneLinePreview(item.message, 60)}` : ""}` }));
+			return completions.length > 0 ? completions : null;
+		}
 		if (["show", "start", "send", "attach", "stop"].includes(first)) {
+			if (first === "show" && parts.length === 1 && raw.endsWith(" ")) return null;
 			if (parts.length > 2 || (parts.length === 2 && raw.endsWith(" "))) return null;
 			const rest = parts[1]?.toLowerCase() ?? "";
 			const needsPane = first !== "show";
@@ -2618,8 +3110,100 @@ export default function (pi: ExtensionAPI) {
 		return new Text(message.content, 0, 0);
 	});
 
+	pi.registerMessageRenderer("subagent-trace", (message, _options, _theme) => {
+		return new Markdown(message.content, 0, 0, getMarkdownTheme());
+	});
+
 	pi.registerMessageRenderer("subagent-completion", (message, options, theme) => {
+		const quiet = quietInline(dashboardCtx?.cwd) && dashboardEnabled(dashboardCtx?.cwd);
+		if (quiet && !options?.expanded) {
+			const details = message.details as PaneCompletionMessageDetails | undefined;
+			const completions = details?.completions ?? [];
+			if (completions.length === 1) {
+				const detail = completions[0]!;
+				const status = paneCompletionStatus(detail.status, theme);
+				return new Text(`${paneCompletionIcon(detail.status, theme)} ${theme.fg("toolTitle", theme.bold(`${detail.agent} completed`))} ${status}${theme.fg("dim", ` · ${shortTaskId(detail.taskId)} · dashboard`)}`, 0, 0);
+			}
+			if (completions.length > 1) return new Text(`${theme.fg("success", "✓")} ${theme.fg("toolTitle", theme.bold(`${completions.length} subagents completed`))}${theme.fg("dim", " · dashboard")}`, 0, 0);
+		}
 		return renderPaneCompletionMessage(message as { content: string; details?: unknown }, options as { expanded?: boolean } | undefined, theme);
+	});
+
+	pi.events.on("subagents:queued", (payload: unknown) => {
+		if (!payload || typeof payload !== "object") return;
+		const event = payload as Record<string, unknown>;
+		const taskId = typeof event.taskId === "string" ? event.taskId : undefined;
+		const agent = typeof event.agent === "string" ? event.agent : undefined;
+		if (!taskId || !agent) return;
+		updateDashboard({
+			agent,
+			artifacts: true,
+			kind: event.mode === "oneshot" ? "oneshot" : "pane",
+			message: typeof event.task === "string" ? event.task : undefined,
+			paneId: typeof event.paneId === "string" ? event.paneId : undefined,
+			status: "queued",
+			startedAt: typeof event.timestamp === "string" ? event.timestamp : new Date().toISOString(),
+			task: typeof event.task === "string" ? event.task : undefined,
+			taskId,
+			transcriptPath: typeof event.transcriptPath === "string" ? event.transcriptPath : undefined,
+			updatedAt: new Date().toISOString(),
+		});
+	});
+
+	pi.events.on("subagents:started", (payload: unknown) => {
+		if (!payload || typeof payload !== "object") return;
+		const event = payload as Record<string, unknown>;
+		const taskId = typeof event.taskId === "string" ? event.taskId : undefined;
+		const agent = typeof event.agent === "string" ? event.agent : undefined;
+		if (!taskId || !agent) return;
+		updateDashboard({
+			agent,
+			kind: event.mode === "pane" ? "pane" : "oneshot",
+			message: typeof event.task === "string" ? event.task : undefined,
+			paneId: typeof event.paneId === "string" ? event.paneId : undefined,
+			status: "running",
+			startedAt: typeof event.timestamp === "string" ? event.timestamp : new Date().toISOString(),
+			task: typeof event.task === "string" ? event.task : undefined,
+			taskId,
+			transcriptPath: typeof event.transcriptPath === "string" ? event.transcriptPath : undefined,
+			updatedAt: new Date().toISOString(),
+		});
+	});
+
+	const completeDashboardFromEvent = (payload: unknown, status: PaneTaskStatus) => {
+		if (!payload || typeof payload !== "object") return;
+		const event = payload as Record<string, unknown>;
+		const taskId = typeof event.taskId === "string" ? event.taskId : undefined;
+		const agent = typeof event.agent === "string" ? event.agent : undefined;
+		if (!taskId || !agent) return;
+		const existing = dashboardState.items[taskId];
+		updateDashboard({
+			agent,
+			artifacts: true,
+			bridge: existing?.bridge,
+			completedAt: typeof event.timestamp === "string" ? event.timestamp : new Date().toISOString(),
+			kind: existing?.kind ?? (event.mode === "oneshot" ? "oneshot" : "pane"),
+			message: typeof event.summary === "string" ? event.summary : existing?.message,
+			paneId: existing?.paneId ?? (typeof event.paneId === "string" ? event.paneId : undefined),
+			startedAt: existing?.startedAt,
+			status,
+			task: existing?.task ?? (typeof event.task === "string" ? event.task : undefined),
+			taskId,
+			transcriptPath: typeof event.transcriptPath === "string" ? event.transcriptPath : existing?.transcriptPath,
+			updatedAt: new Date().toISOString(),
+		});
+	};
+
+	pi.events.on("subagents:completed", (payload: unknown) => completeDashboardFromEvent(payload, "completed"));
+	pi.events.on("subagents:failed", (payload: unknown) => completeDashboardFromEvent(payload, "failed"));
+
+	pi.events.on("subagents:steered", (payload: unknown) => {
+		if (!payload || typeof payload !== "object") return;
+		const event = payload as Record<string, unknown>;
+		patchDashboard(typeof event.taskId === "string" ? event.taskId : undefined, {
+			bridge: Boolean(event.bridge),
+			paneId: typeof event.paneId === "string" ? event.paneId : undefined,
+		});
 	});
 
 	pi.registerTool({
@@ -2667,6 +3251,8 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
+		dashboardCtx = ctx;
+		dashboardState = { collapsed: dashboardDefaultCollapsed(ctx.cwd), mode: dashboardDefaultCollapsed(ctx.cwd) ? "compact" : "normal", visible: true, items: {} };
 		refreshAgentCommandCompletions(ctx);
 		if (completionPoller) clearInterval(completionPoller);
 		if (childInboxPoller) clearInterval(childInboxPoller);
@@ -2719,6 +3305,29 @@ export default function (pi: ExtensionAPI) {
 
 		ctx.ui.setStatus("subagent", undefined);
 		await migrateLegacyProjectRuntime(ctx.cwd, runtimeRoot);
+		try {
+			const records = await readTaskRegistry(runtimeRoot);
+			for (const record of Object.values(records)) {
+				if (!record.taskId || !record.agent) continue;
+				updateDashboard({
+					agent: record.agent,
+					artifacts: Boolean(record.completionArchivePath || record.outboxFile || record.transcriptPath),
+					completedAt: record.completedAt,
+					kind: record.paneId ? "pane" : "oneshot",
+					message: record.summary || record.task,
+					paneId: record.paneId,
+					startedAt: record.createdAt,
+					status: record.status === "queued" ? "queued" : record.status,
+					task: record.task,
+					taskId: record.taskId,
+					transcriptPath: record.transcriptPath,
+					updatedAt: record.completedAt ?? record.createdAt,
+				});
+			}
+		} catch {
+			// Dashboard is best-effort; registry lookup may fail before first pane task.
+		}
+		syncDashboard(ctx);
 		if (!ctx.hasUI) return;
 		const poll = () => {
 			if (completionPollInFlight) return;
@@ -2747,8 +3356,10 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_shutdown", () => {
 		if (completionPoller) clearInterval(completionPoller);
 		if (childInboxPoller) clearInterval(childInboxPoller);
+		dashboardCtx?.ui.setWidget(SUBAGENT_WIDGET_KEY, undefined);
 		completionPoller = undefined;
 		childInboxPoller = undefined;
+		dashboardCtx = undefined;
 	});
 
 	pi.registerCommand("agents", {
@@ -2767,6 +3378,9 @@ export default function (pi: ExtensionAPI) {
 			const runtimeRoot = sessionRuntimeDir(parentSessionId);
 			const discovery = discoverAgents(ctx.cwd, scopes.has(parts.at(-1) as AgentScope) ? (parts.at(-1) as AgentScope) : scope);
 			const findAgent = (name: string | undefined) => discovery.agents.find((candidate) => candidate.name === name);
+			const sendMarkdown = (markdown: string) => {
+				pi.sendMessage({ customType: "subagent-trace", content: markdown, display: true });
+			};
 
 			try {
 				if (command === "start") {
@@ -2822,6 +3436,30 @@ export default function (pi: ExtensionAPI) {
 						}),
 					);
 					content = [`# Persistent subagent panes`, "", lines.join("\n") || "No persistent panes registered."].join("\n");
+				} else if (command === "transcripts") {
+					const records = await readTaskRegistry(runtimeRoot);
+					if (ctx.hasUI) {
+						await openTraceViewer(ctx as ExtensionContext, "Subagent transcripts", transcriptIndexItems(records, ctx.cwd));
+						return;
+					}
+					sendMarkdown(formatTranscriptIndex(records, ctx.cwd));
+					return;
+				} else if (command === "trace") {
+					const ref = parts.slice(1).join(" ").trim();
+					if (!ref) throw new Error("Usage: /agents trace <ref>");
+					const records = await readTaskRegistry(runtimeRoot);
+					const record = resolveTraceRecord(records, ref);
+					if (!record) throw new Error(`No subagent trace matched: ${ref}`);
+					if (ctx.hasUI) {
+						await openTraceViewer(ctx as ExtensionContext, `Trace ${recordTraceRef(record)}`, await traceViewerItems(record));
+						return;
+					}
+					sendMarkdown(await formatTraceView(record, parts.includes("--verbose")));
+					return;
+				} else if (command === "toggle") {
+					dashboardState.visible = !dashboardState.visible;
+					syncDashboard(ctx as ExtensionContext);
+					content = `Subagent dashboard ${dashboardState.visible ? `shown (${dashboardState.mode})` : "hidden"}.`;
 				} else {
 					let showName: string | undefined;
 					if (command === "show") {
@@ -2875,7 +3513,7 @@ export default function (pi: ExtensionAPI) {
 								})
 								.join("\n"),
 							"",
-							"Commands: `/agents show <name>`, `/agents start <name>`, `/agents send <name> <task>`, `/agents attach <name>`, `/agents stop <name>`, `/agents status`, `/agents collect`.",
+							"Commands: `/agents show <name>`, `/agents start <name>`, `/agents send <name> <task>`, `/agents attach <name>`, `/agents stop <name>`, `/agents status`, `/agents transcripts`, `/agents trace <ref>`, `/agents toggle`.",
 						].join("\n");
 					}
 				}
@@ -2886,6 +3524,26 @@ export default function (pi: ExtensionAPI) {
 			pi.sendMessage({ customType: "subagent-agents", content, display: true });
 		},
 	});
+
+	const toggleDashboardMode = async (ctx: ExtensionContext) => {
+		dashboardCtx = ctx;
+		if (!dashboardState.visible) {
+			dashboardState.visible = true;
+			dashboardState.mode = "compact";
+		} else if (dashboardState.mode === "compact") {
+			dashboardState.mode = "normal";
+		} else if (dashboardState.mode === "normal") {
+			dashboardState.mode = "expanded";
+		} else {
+			dashboardState.visible = false;
+		}
+		dashboardState.collapsed = false;
+		syncDashboard(ctx);
+	};
+	const shortcut = dashboardShortcut();
+	if (shortcut !== "none") {
+		pi.registerShortcut(shortcut, { description: "Cycle subagent dashboard display", handler: async (ctx) => toggleDashboardMode(ctx as ExtensionContext) });
+	}
 
 	pi.registerTool({
 		renderShell: "self",
@@ -2917,6 +3575,20 @@ export default function (pi: ExtensionAPI) {
 				const selector = params.taskId ? `taskId ${params.taskId}` : `agent ${params.agent}`;
 				return { content: [{ type: "text", text: `No persistent subagent task record found for ${selector}.` }], details: { agent: params.agent, taskId: params.taskId } satisfies GetSubagentResultDetails, isError: true };
 			}
+			updateDashboard({
+				agent: record.agent,
+				artifacts: Boolean(record.completionArchivePath || record.outboxFile || record.transcriptPath),
+				completedAt: record.completedAt,
+				kind: record.paneId ? "pane" : "oneshot",
+				message: record.summary || record.task,
+				paneId: record.paneId,
+				startedAt: record.createdAt,
+				status: record.status,
+				task: record.task,
+				taskId: record.taskId,
+				transcriptPath: record.transcriptPath,
+				updatedAt: new Date().toISOString(),
+			});
 			return {
 				content: [{ type: "text", text: formatTaskRecordResult(record, params.verbose ?? false) }],
 				details: { agent: record.agent, paneId: record.paneId, summary: record.summary, status: record.status, taskId: record.taskId, notes: record.notes } satisfies GetSubagentResultDetails,
@@ -2936,6 +3608,9 @@ export default function (pi: ExtensionAPI) {
 			if (expanded && raw.trim()) return new Markdown(raw, 0, 0, getMarkdownTheme());
 			const target = details?.agent ? details.agent : "subagent";
 			const suffix = [status, details?.paneId ? theme.fg("dim", `pane ${details.paneId}`) : "", details?.taskId ? theme.fg("dim", shortTaskId(details.taskId)) : ""].filter(Boolean).join(" · ");
+			if (quietInline(context?.cwd) && dashboardEnabled(context?.cwd)) {
+				return new Text(`${theme.fg("success", "✓")} ${theme.fg("toolTitle", theme.bold(`result ${target}`))}${suffix ? ` ${theme.fg("dim", "·")} ${suffix}` : ""}${theme.fg("dim", " · dashboard updated")}`, 0, 0);
+			}
 			const lines = [`${theme.fg("success", "✓")} ${theme.fg("toolTitle", theme.bold(target))}${suffix ? ` ${theme.fg("dim", "·")} ${suffix}` : ""}`];
 			if (details?.summary) lines.push(`  ${theme.fg("toolOutput", oneLinePreview(details.summary, 120))}`);
 			if (details?.notes) {
@@ -2963,6 +3638,22 @@ export default function (pi: ExtensionAPI) {
 				agentName = agentName ?? record?.agent;
 			}
 			if (!agentName) return { content: [{ type: "text", text: "Provide either agent or taskId." }], isError: true };
+			if (params.taskId && record) {
+				updateDashboard({
+					agent: record.agent,
+					artifacts: Boolean(record.completionArchivePath || record.outboxFile || record.transcriptPath),
+					completedAt: record.completedAt,
+					kind: record.paneId ? "pane" : "oneshot",
+					message: record.summary || record.task,
+					paneId: record.paneId,
+					startedAt: record.createdAt,
+					status: record.status,
+					task: record.task,
+					taskId: record.taskId,
+					transcriptPath: record.transcriptPath,
+					updatedAt: new Date().toISOString(),
+				});
+			}
 
 			const registry = await readPaneRegistry(runtimeRoot);
 			const entry = registry[agentName];
@@ -2993,6 +3684,7 @@ export default function (pi: ExtensionAPI) {
 				args.push(formatSteeringForChild(agentName, params.message, true));
 				const result = await execCapture(bridgeBin, args, { cwd: entry.cwd });
 				if (result.code === 0) {
+					patchDashboard(params.taskId ?? record?.taskId, { bridge: true, paneId: entry.paneId });
 					emitSubagentEvent(pi, "subagents:steered", {
 						mode: "pane",
 						agent: agentName,
@@ -3012,6 +3704,7 @@ export default function (pi: ExtensionAPI) {
 				}
 				const fallbackFile = await queueSteeringFallback(runtimeRoot, agentName, params.message);
 				const details = { ...baseDetails, bridge: false, fallbackFile } satisfies SteerSubagentDetails;
+				patchDashboard(params.taskId ?? record?.taskId, { bridge: false, paneId: entry.paneId });
 				emitSubagentEvent(pi, "subagents:steered", {
 					mode: "pane",
 					agent: agentName,
@@ -3030,6 +3723,7 @@ export default function (pi: ExtensionAPI) {
 
 			const fallbackFile = await queueSteeringFallback(runtimeRoot, agentName, params.message);
 			const details = { ...baseDetails, bridge: false, fallbackFile } satisfies SteerSubagentDetails;
+			patchDashboard(params.taskId ?? record?.taskId, { bridge: false, paneId: entry.paneId });
 			emitSubagentEvent(pi, "subagents:steered", {
 				mode: "pane",
 				agent: agentName,
@@ -3063,7 +3757,8 @@ export default function (pi: ExtensionAPI) {
 			if (!details) return new Text(raw, 0, 0);
 			if (expanded) return new Text(raw, 0, 0);
 			const status = details.bridge ? theme.fg("success", "exact child bridge") : theme.fg("warning", "inbox fallback");
-			return new Text(`${theme.fg(details.bridge ? "success" : "warning", details.bridge ? "✓" : "◐")} ${theme.fg("toolTitle", theme.bold(`steered ${details.agent}`))} via ${status}${theme.fg("dim", ` · pane ${details.paneId}`)}`, 0, 0);
+			const dashboard = quietInline(context?.cwd) && dashboardEnabled(context?.cwd) ? theme.fg("dim", " · dashboard updated") : "";
+			return new Text(`${theme.fg(details.bridge ? "success" : "warning", details.bridge ? "✓" : "◐")} ${theme.fg("toolTitle", theme.bold(`steered ${details.agent}`))} via ${status}${theme.fg("dim", ` · pane ${details.paneId}`)}${dashboard}`, 0, 0);
 		},
 	});
 
@@ -3226,6 +3921,18 @@ export default function (pi: ExtensionAPI) {
 								makeDetails("chain"),
 							);
 					results.push(result);
+					if (!stepAgent?.pane) {
+						updateDashboard({
+							agent: result.agent,
+							kind: "oneshot",
+							message: oneLinePreview(getFinalOutput(result.messages), 120) || result.task,
+							status: result.exitCode === 0 ? "completed" : "failed",
+							task: result.task,
+							taskId: result.taskId ?? `${result.agent}-step-${i + 1}`,
+							transcriptPath: result.transcriptPath,
+							updatedAt: new Date().toISOString(),
+						});
+					}
 
 					const isError =
 						result.exitCode !== 0 || result.stopReason === "error" || result.stopReason === "aborted";
@@ -3324,6 +4031,18 @@ export default function (pi: ExtensionAPI) {
 
 				const maxConcurrency = Math.max(1, Math.floor(settingNumber("maxConcurrency", MAX_CONCURRENCY, ctx.cwd)));
 				const results = await mapWithConcurrencyLimit(params.tasks, maxConcurrency, async (t: { agent: string; task: string; cwd?: string }, index) => {
+					const updateOneshotDashboard = (item: SingleResult) => {
+						updateDashboard({
+							agent: item.agent,
+							kind: "oneshot",
+							message: oneLinePreview(getFinalOutput(item.messages), 120) || item.task,
+							status: item.exitCode === -1 ? "running" : item.exitCode === 0 ? "completed" : "failed",
+							task: item.task,
+							taskId: item.taskId ?? `${item.agent}-${index}`,
+							transcriptPath: item.transcriptPath,
+							updatedAt: new Date().toISOString(),
+						});
+					};
 					const taskAgent = agents.find((agent) => agent.name === t.agent);
 					const result = taskAgent?.pane
 						? await runPersistentPaneAgent(
@@ -3355,12 +4074,14 @@ export default function (pi: ExtensionAPI) {
 								(partial) => {
 									if (partial.details?.results[0]) {
 										allResults[index] = partial.details.results[0];
+										updateOneshotDashboard(partial.details.results[0]);
 										emitParallelUpdate();
 									}
 								},
 								makeDetails("parallel"),
 							);
 					allResults[index] = result;
+					if (!taskAgent?.pane) updateOneshotDashboard(result);
 					emitParallelUpdate();
 					return result;
 				});
@@ -3426,6 +4147,18 @@ export default function (pi: ExtensionAPI) {
 							onUpdate,
 							makeDetails("single"),
 						);
+				if (!agent?.pane) {
+					updateDashboard({
+						agent: result.agent,
+						kind: "oneshot",
+						message: oneLinePreview(getFinalOutput(result.messages), 120) || result.task,
+						status: result.exitCode === 0 ? "completed" : "failed",
+						task: result.task,
+						taskId: result.taskId ?? result.agent,
+						transcriptPath: result.transcriptPath,
+						updatedAt: new Date().toISOString(),
+					});
+				}
 				const isError = result.exitCode !== 0 || result.stopReason === "error" || result.stopReason === "aborted";
 				if (isError) {
 					const errorMsg =
@@ -3522,7 +4255,8 @@ export default function (pi: ExtensionAPI) {
 			const transcriptLine = (r: SingleResult) => (r.transcriptPath ? theme.fg("dim", `Transcript: ${compactPath(r.transcriptPath)}`) : "");
 			const queuedPaneLine = (r: SingleResult) => {
 				if (!r.taskId || !r.paneId) return "";
-				return `${theme.fg("success", "✓")} ${theme.fg("toolTitle", theme.bold(`queued ${r.agent}`))}${theme.fg("dim", ` → pane ${r.paneId} · ${shortTaskId(r.taskId)} · Ctrl+O`)}`;
+				const suffix = quietInline(cwd) && dashboardEnabled(cwd) ? " · dashboard" : " · Ctrl+O";
+				return `${theme.fg("success", "✓")} ${theme.fg("toolTitle", theme.bold(`queued ${r.agent}`))}${theme.fg("dim", ` → pane ${r.paneId} · ${shortTaskId(r.taskId)}${suffix}`)}`;
 			};
 			const finalOutputPreview = (r: SingleResult, maxChars = 96) => {
 				const finalOutput = getFinalOutput(r.messages).trim();
@@ -3566,6 +4300,7 @@ export default function (pi: ExtensionAPI) {
 				const icon = isError ? theme.fg("error", "✗") : theme.fg("success", "✓");
 				const displayItems = getDisplayItems(r.messages);
 				const finalOutput = getFinalOutput(r.messages);
+				const queued = queuedPaneLine(r);
 
 				if (expanded) {
 					const container = new Container();
@@ -3604,11 +4339,10 @@ export default function (pi: ExtensionAPI) {
 					return container;
 				}
 
-				const queued = queuedPaneLine(r);
 				let text = queued || `${icon} ${theme.fg("toolTitle", theme.bold(r.agent))}${theme.fg("muted", ` (${r.agentSource})`)}`;
 				if (isError && r.stopReason) text += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
 				text += truncationBadge(r);
-				if (queued) text += `\n${subagentBranch(theme, "└", cwd)}${theme.fg("dim", "artifacts available in expanded view")}`;
+				if (queued && !(quietInline(cwd) && dashboardEnabled(cwd))) text += `\n${subagentBranch(theme, "└", cwd)}${theme.fg("dim", "artifacts available in expanded view")}`;
 				else if (isError && r.errorMessage) text += `\n${theme.fg("error", `Error: ${r.errorMessage}`)}`;
 				else if (displayItems.length === 0) text += `\n${theme.fg("muted", "(no output)")}`;
 				else {

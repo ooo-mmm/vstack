@@ -1,5 +1,6 @@
 import { copyFile, mkdir, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { dirname, extname, isAbsolute, join, resolve } from "node:path";
 import type { CodexMinimalToolsSettings } from "../settings.js";
 
@@ -64,11 +65,11 @@ export async function saveBase64Image(options: {
 	await mkdir(dir, { recursive: true });
 	const safeCall = (options.callId || "image").replace(/[^a-z0-9_.-]+/gi, "-").slice(0, 60);
 	const safeResponse = (options.responseId || "response").replace(/[^a-z0-9_.-]+/gi, "-").slice(0, 60);
-	const filePath = join(dir, `${new Date().toISOString().replace(/[:.]/g, "-")}-${safeCall}-${safeResponse}.${ext}`);
+	const unique = randomUUID().slice(0, 8);
+	const filePath = join(dir, `${new Date().toISOString().replace(/[:.]/g, "-")}-${unique}-${safeCall}-${safeResponse}.${ext}`);
 	const data = Buffer.from(options.base64, "base64");
 	await writeFile(filePath, data, { mode: 0o600 });
 	const latestPath = join(dir, `latest.${ext}`);
 	await copyFile(filePath, latestPath);
-	if (ext === "png") await copyFile(filePath, join(dir, "latest.png"));
 	return { bytes: data.byteLength, format: ext, latestPath, mimeType, path: filePath };
 }

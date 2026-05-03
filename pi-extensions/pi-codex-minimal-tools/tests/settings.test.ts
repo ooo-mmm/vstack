@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { DEFAULT_SETTINGS, loadSettings } from "../src/settings.js";
+import { DEFAULT_SETTINGS, loadSettings, settingsDiagnostics } from "../src/settings.js";
 
 function tempDir(): string {
 	return mkdtempSync(join(tmpdir(), "pi-codex-minimal-tools-"));
@@ -14,6 +14,25 @@ test("package settings defaults match runtime defaults", () => {
 	const settings = manifest.vstack.extensionManager.settings as Array<{ key: keyof typeof DEFAULT_SETTINGS; default: unknown }>;
 	const manifestDefaults = Object.fromEntries(settings.map((item) => [item.key, item.default]));
 	assert.deepEqual(manifestDefaults, DEFAULT_SETTINGS);
+});
+
+test("settingsDiagnostics reports malformed JSON settings", () => {
+	const root = tempDir();
+	const user = join(root, "agent");
+	const project = join(root, "project");
+	mkdirSync(user, { recursive: true });
+	mkdirSync(join(project, ".pi"), { recursive: true });
+	writeFileSync(join(user, "settings.json"), "{");
+	const previous = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = user;
+	try {
+		const diagnostics = settingsDiagnostics(project);
+		assert.equal(diagnostics.length, 1);
+		assert.match(diagnostics[0]!, /settings\.json/);
+	} finally {
+		if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previous;
+	}
 });
 
 test("loadSettings merges user settings then project settings", () => {

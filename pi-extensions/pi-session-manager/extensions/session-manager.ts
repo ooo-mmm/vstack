@@ -10,7 +10,7 @@ import { Input, matchesKey, truncateToWidth, visibleWidth, type Focusable } from
 const INSTALL_SYMBOL = Symbol.for("vstack.pi-session-manager.installed");
 const VSTACK_MODAL_LOCK_SYMBOL = Symbol.for("vstack.pi.modal-lock");
 const PACKAGE_ID = "pi-session-manager";
-const STATUS_KEY = "session-manager";
+const LEGACY_STATUS_KEY = "session-manager";
 const DEFAULT_SHORTCUT = "ctrl+shift+r";
 const DEFAULT_WIDTH = 112;
 const DEFAULT_ROWS = 12;
@@ -498,14 +498,9 @@ async function loadSessionsForScope(cwd: string, scope: Scope, onProgress?: (loa
 	return scope === "all" ? SessionManager.listAll(onProgress) : SessionManager.list(cwd, undefined, onProgress);
 }
 
-function updateSessionStatus(ctx: ExtensionContext): void {
+function clearLegacySessionStatus(ctx: ExtensionContext): void {
 	if (!ctx.hasUI) return;
-	if (!settingBoolean("showStatus", true, ctx.cwd)) {
-		ctx.ui.setStatus(STATUS_KEY, undefined);
-		return;
-	}
-	const name = oneLine(ctx.sessionManager.getSessionName());
-	ctx.ui.setStatus(STATUS_KEY, name ? ctx.ui.theme.fg("accent", `📁 ${name}`) : undefined);
+	ctx.ui.setStatus(LEGACY_STATUS_KEY, undefined);
 }
 
 class SessionManagerOverlay implements Focusable {
@@ -673,7 +668,7 @@ class SessionManagerOverlay implements Focusable {
 		try {
 			if (this.isCurrent(target)) {
 				this.pi.setSessionName(next);
-				updateSessionStatus(this.ctx);
+				clearLegacySessionStatus(this.ctx);
 			} else {
 				renameSession(target.path, next);
 			}
@@ -1131,7 +1126,7 @@ async function handleSessionsCommand(args: string, ctx: ExtensionCommandContext,
 	const targetTitle = action.title || basename(action.path);
 	const result = await ctx.switchSession(action.path, {
 		withSession: async (replacementCtx) => {
-			updateSessionStatus(replacementCtx);
+			clearLegacySessionStatus(replacementCtx);
 			replacementCtx.ui.notify(`Resumed ${targetTitle}`, "info");
 		},
 	});
@@ -1147,7 +1142,7 @@ export default function sessionManagerExtension(pi: ExtensionAPI): void {
 
 	pi.on("session_start", async (_event, ctx) => {
 		if (!settingBoolean("enabled", true, ctx.cwd)) return;
-		updateSessionStatus(ctx);
+		clearLegacySessionStatus(ctx);
 	});
 
 	pi.registerCommand("sessions", {

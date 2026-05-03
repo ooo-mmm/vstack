@@ -10,6 +10,7 @@ Compact renderers for Pi tools, plus an optional `tool_batch` composite tool.
 - Registers `tool_batch` so multiple independent read/search/list/diagnostic bash calls can render as one combined result.
 - Leaves `edit` and `write` on Pi's built-in renderers by default so standard diff/edit UI is preserved.
 - Compacts user-message cards by default (`compactUserMessages=true`).
+- Renders compaction summaries as compact tool-style rows by default (`compactCompactionMessages=true`).
 - Keeps Pi's normal expand/collapse keybinding (`Ctrl+O`).
 
 ## `tool_batch`

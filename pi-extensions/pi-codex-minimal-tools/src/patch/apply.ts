@@ -1,4 +1,5 @@
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { actionSummary, parseApplyPatch, type ParsedPatch, type PatchAction, type PatchHunk } from "./parser.js";
 
@@ -55,6 +56,31 @@ function addText(action: PatchAction): string {
 	return action.hunks.flatMap((hunk) => hunk.lines.filter((line) => line.startsWith("+")).map(stripMarker)).join("\n");
 }
 
+interface FileSnapshot {
+	absolutePath: string;
+	existed: boolean;
+	data?: Buffer;
+}
+
+async function snapshotPath(absolutePath: string): Promise<FileSnapshot> {
+	try {
+		return { absolutePath, existed: true, data: await readFile(absolutePath) };
+	} catch {
+		return { absolutePath, existed: false };
+	}
+}
+
+async function restoreSnapshots(snapshots: FileSnapshot[]): Promise<void> {
+	for (const snapshot of [...snapshots].reverse()) {
+		if (snapshot.existed) {
+			await mkdir(dirname(snapshot.absolutePath), { recursive: true });
+			await writeFile(snapshot.absolutePath, snapshot.data ?? Buffer.alloc(0));
+		} else if (existsSync(snapshot.absolutePath)) {
+			await rm(snapshot.absolutePath, { force: true, recursive: true });
+		}
+	}
+}
+
 async function readUtf8(path: string): Promise<string> {
 	try {
 		return await readFile(path, "utf8");
@@ -63,14 +89,24 @@ async function readUtf8(path: string): Promise<string> {
 	}
 }
 
+function replaceUnique(content: string, oldText: string, newText: string, path: string): string | undefined {
+	const first = content.indexOf(oldText);
+	if (first < 0) return undefined;
+	if (content.indexOf(oldText, first + oldText.length) >= 0) throw new Error(`Patch context is ambiguous in ${path}`);
+	return `${content.slice(0, first)}${newText}${content.slice(first + oldText.length)}`;
+}
+
 function replaceOnce(content: string, oldText: string, newText: string, path: string): string {
 	if (oldText.length === 0) return `${content}${newText}`;
-	const index = content.indexOf(oldText);
-	if (index >= 0) return `${content.slice(0, index)}${newText}${content.slice(index + oldText.length)}`;
-	if (!oldText.endsWith("\n")) {
-		const withNewline = `${oldText}\n`;
-		const newlineIndex = content.indexOf(withNewline);
-		if (newlineIndex >= 0) return `${content.slice(0, newlineIndex)}${newText}${content.slice(newlineIndex + withNewline.length)}`;
+	const candidates: Array<[string, string]> = [[oldText, newText]];
+	if (!oldText.endsWith("\n")) candidates.push([`${oldText}\n`, newText]);
+	const crlfOld = oldText.replace(/\n/g, "\r\n");
+	const crlfNew = newText.replace(/\n/g, "\r\n");
+	candidates.push([crlfOld, crlfNew]);
+	if (!crlfOld.endsWith("\r\n")) candidates.push([`${crlfOld}\r\n`, crlfNew]);
+	for (const [candidateOld, candidateNew] of candidates) {
+		const next = replaceUnique(content, candidateOld, candidateNew, path);
+		if (next !== undefined) return next;
 	}
 	throw new Error(`Patch context not found in ${path}`);
 }
@@ -105,8 +141,16 @@ async function applyDelete(action: PatchAction, options: ApplyPatchOptions): Pro
 
 export async function applyParsedPatch(parsed: ParsedPatch, options: ApplyPatchOptions): Promise<ApplyPatchResult> {
 	const files: AppliedPatchFile[] = [];
+	const snapshots = new Map<string, FileSnapshot>();
+	const snapshotAction = async (action: PatchAction) => {
+		for (const pathValue of [action.path, action.moveTo].filter((value): value is string => Boolean(value))) {
+			const absolutePath = resolvePatchPath(pathValue, options);
+			if (!snapshots.has(absolutePath)) snapshots.set(absolutePath, await snapshotPath(absolutePath));
+		}
+	};
 	try {
 		for (const action of parsed.actions) {
+			await snapshotAction(action);
 			if (action.kind === "add") files.push(await applyAdd(action, options));
 			else if (action.kind === "update") files.push(await applyUpdate(action, options));
 			else files.push(await applyDelete(action, options));
@@ -114,7 +158,8 @@ export async function applyParsedPatch(parsed: ParsedPatch, options: ApplyPatchO
 	} catch (error) {
 		const applied = files.map((file) => `${file.kind} ${file.path}`).join(", ") || "none";
 		const message = error instanceof Error ? error.message : String(error);
-		throw new Error(`${message}\nPartial apply status: completed actions before failure: ${applied}. Review the working tree before retrying.`);
+		await restoreSnapshots([...snapshots.values()]);
+		throw new Error(`${message}\nPartial apply status: completed actions before failure: ${applied}. Rolled back touched files; review the working tree before retrying.`);
 	}
 	return {
 		files,

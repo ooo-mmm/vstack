@@ -25,6 +25,9 @@ test("capability gating follows provider and image support", () => {
 	assert.equal(openaiCaps.web_search.enabled, false);
 	assert.equal(openaiCaps.view_image.enabled, true);
 	assert.equal(openaiCaps.apply_patch.enabled, true);
+
+	const fakeOpenAi = computeToolCapabilities({ provider: "notopenai", id: "claude", input: ["text"] }, DEFAULT_SETTINGS);
+	assert.equal(fakeOpenAi.apply_patch.enabled, false);
 });
 
 test("active tool sync preserves native tools and only manages package tools", () => {

@@ -33,7 +33,8 @@ export function isOpenAiCodexModel(model: ModelLike | undefined): boolean {
 export function isOpenAiLikeModel(model: ModelLike | undefined): boolean {
 	const provider = (model?.provider ?? "").toLowerCase();
 	const id = (model?.id ?? model?.name ?? "").toLowerCase();
-	return provider.includes("openai") || provider.includes("codex") || id.includes("gpt") || id.includes("codex");
+	const openAiProvider = provider === "openai" || provider === "openai-codex" || provider === "opencode" || provider.startsWith("openai-") || provider.endsWith("-openai") || provider.endsWith("-codex");
+	return openAiProvider || /^gpt[-_\d]/.test(id) || /^o\d/.test(id) || id.includes("codex");
 }
 
 export function supportsImageInput(model: ModelLike | undefined): boolean {

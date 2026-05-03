@@ -8,6 +8,7 @@ Compact Claude-style status line and single-line prompt for interactive Pi.
 
 - Replaces the default footer/editor chrome with a status line above the prompt.
 - Shows project/repo name, branch/worktree badge, model, thinking level, context-window size, and remaining context percent.
+- Shows the named session as a themed header badge, or as a padded `π session name` tmux pane border title when running inside tmux. tmux padding uses non-breaking spaces because tmux trims plain edge spaces.
 - Uses a compact prompt prefixed with `π` and wraps long input cleanly.
 - Reuses `pi-qol` image-chip behavior when rendering `[Image #N]` placeholders.
 - Keeps autocomplete visible under the prompt.

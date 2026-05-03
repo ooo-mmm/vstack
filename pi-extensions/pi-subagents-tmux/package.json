@@ -59,6 +59,52 @@
           "apply": "live"
         },
         {
+          "key": "dashboard",
+          "label": "Show subagent dashboard",
+          "description": "Render a persistent subagent activity card above the editor with active/completed agents, pane ids, bridge state, summaries, and artifact hints.",
+          "type": "boolean",
+          "default": true,
+          "category": "Rendering",
+          "apply": "live"
+        },
+        {
+          "key": "quietInlineWhenDashboard",
+          "label": "Quiet inline output with dashboard",
+          "description": "When the dashboard is enabled, keep chat/tool transcript rows to short event crumbs and move details into the persistent dashboard/Ctrl+O views.",
+          "type": "boolean",
+          "default": true,
+          "category": "Rendering",
+          "apply": "live"
+        },
+        {
+          "key": "dashboardMaxItems",
+          "label": "Dashboard max items",
+          "description": "Maximum subagent rows shown in the persistent dashboard.",
+          "type": "number",
+          "default": 6,
+          "category": "Rendering",
+          "apply": "live"
+        },
+        {
+          "key": "dashboardCollapsed",
+          "label": "Dashboard collapsed by default",
+          "description": "Show fewer dashboard rows and hide summaries by default.",
+          "type": "boolean",
+          "default": false,
+          "category": "Rendering",
+          "apply": "live"
+        },
+        {
+          "key": "dashboardShortcut",
+          "label": "Dashboard display shortcut",
+          "description": "Keyboard shortcut that cycles the subagent dashboard through hidden → compact → normal → expanded → hidden. Use none to disable.",
+          "type": "string",
+          "default": "alt+a",
+          "category": "Keyboard",
+          "apply": "reload",
+          "requiresReload": true
+        },
+        {
           "key": "treeStyle",
           "label": "Tree connector style",
           "description": "Connector glyphs for subagent result rows. Unicode is prettier; ASCII uses |--/`-- for maximum terminal compatibility.",

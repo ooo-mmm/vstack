@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -28,4 +28,20 @@ test("view_image rejects directories and non-images", async () => {
 	writeFileSync(join(cwd, "notes.txt"), "hello");
 	await assert.rejects(() => validateImagePath({ path: "dir" }, cwd), /directory/);
 	await assert.rejects(() => validateImagePath({ path: "notes.txt" }, cwd), /Unsupported image file type/);
+});
+
+test("view_image rejects paths outside cwd", async () => {
+	const cwd = tempDir();
+	const outside = tempDir();
+	writeFileSync(join(outside, "secret.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+	await assert.rejects(() => validateImagePath({ path: "../secret.png" }, cwd), /escapes the workspace/);
+	await assert.rejects(() => validateImagePath({ path: join(outside, "secret.png") }, cwd), /escapes the workspace/);
+});
+
+test("view_image rejects symlinks that resolve outside cwd", async () => {
+	const cwd = tempDir();
+	const outside = tempDir();
+	writeFileSync(join(outside, "secret.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+	symlinkSync(join(outside, "secret.png"), join(cwd, "linked.png"));
+	await assert.rejects(() => validateImagePath({ path: "linked.png" }, cwd), /escapes the workspace/);
 });

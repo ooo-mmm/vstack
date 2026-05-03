@@ -22,7 +22,7 @@
         {
           "key": "enabled",
           "label": "Enable session manager",
-          "description": "Register the /sessions overlay, status badge, and optional shortcut. Disable and reload to leave Pi's built-in /resume unchanged.",
+          "description": "Register the /sessions overlay and optional shortcut. Disable and reload to leave Pi's built-in /resume unchanged.",
           "type": "boolean",
           "default": true,
           "category": "General",
@@ -81,15 +81,6 @@
           "description": "Preferred session manager overlay width in terminal columns.",
           "type": "number",
           "default": 112,
-          "category": "UI",
-          "apply": "live"
-        },
-        {
-          "key": "showStatus",
-          "label": "Show session status badge",
-          "description": "Show the active session name in Pi's footer/status area when the session has a friendly name.",
-          "type": "boolean",
-          "default": true,
           "category": "UI",
           "apply": "live"
         },

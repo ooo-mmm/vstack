@@ -7,6 +7,7 @@
 import { CustomEditor, type ExtensionAPI, type ExtensionContext, type KeybindingsManager, type Theme } from "@mariozechner/pi-coding-agent";
 import type { AutocompleteItem, AutocompleteSuggestions, EditorTheme, TUI } from "@mariozechner/pi-tui";
 import { matchesKey, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
+import { execFile } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -17,6 +18,12 @@ const IMAGE_PATH_PATTERN = /(^|[\s(\[{<"'`])(@?(?:~|\.\.?|\/)[^\s)\]}>"'`]+?\.(?
 const IMAGE_ALIAS_SYMBOL = Symbol.for("vstack.pi-qol.image-path-aliases");
 const INSTALL_SYMBOL = Symbol.for("vstack.pi-statusline.installed");
 const QOL_STATUS_KEY = "qol-attachments";
+const SESSION_MANAGER_STATUS_KEY = "session-manager";
+const SESSION_TITLE_SYNC_INTERVAL_MS = 1000;
+// tmux trims plain leading/trailing spaces from pane-border-format output, so
+// use NBSP padding. Terminals render it as a space, but tmux keeps it visible.
+const TMUX_SESSION_TITLE_PAD = "\u00a0";
+const TMUX_SESSION_TITLE_BORDER_FORMAT = `${TMUX_SESSION_TITLE_PAD}#{pane_title}${TMUX_SESSION_TITLE_PAD}`;
 
 interface GitState {
 	projectName: string;
@@ -432,12 +439,60 @@ async function refreshGitState(pi: ExtensionAPI, ctx: ExtensionContext): Promise
 	};
 }
 
+function sessionNameHeader(width: number, pi: ExtensionAPI, theme: Pick<Theme, "fg" | "bg">): string[] {
+	const name = normalizedSessionName(pi);
+	if (!name || width < 4) return [];
+
+	const prefixPlain = "Session ";
+	const prefix = theme.fg("muted", prefixPlain);
+	const innerWidth = Math.max(1, width - visibleWidth(prefixPlain) - 2);
+	const inner = truncateToWidth(name, innerWidth, "…");
+	const plain = ` ${inner} `;
+	const badge = theme.bg("selectedBg", theme.fg("text", plain));
+	return [truncateToWidth(`${prefix}${badge}`, width, "")];
+}
+
+function normalizedSessionName(pi: ExtensionAPI): string | undefined {
+	const name = pi.getSessionName();
+	if (!name) return undefined;
+	const normalized = stripAnsi(name).replace(/[\x00-\x1f\x7f]/g, " ").replace(/\s+/g, " ").trim();
+	return normalized || undefined;
+}
+
+function formatTmuxSessionTitle(sessionName: string): string {
+	return `π ${sessionName}`;
+}
+
+function tmuxPaneTarget(): string | undefined {
+	return process.env.TMUX && process.env.TMUX_PANE ? process.env.TMUX_PANE : undefined;
+}
+
+function readTmuxPaneTitle(target: string, callback: (title: string | undefined) => void): void {
+	execFile("tmux", ["display-message", "-p", "-t", target, "#{pane_title}"], { timeout: 1000 }, (error, stdout) => {
+		callback(error ? undefined : stdout.replace(/\r?\n$/, ""));
+	});
+}
+
+function readTmuxWindowOption(target: string, option: string, callback: (value: string | undefined) => void): void {
+	execFile("tmux", ["show-options", "-wqv", "-t", target, option], { timeout: 1000 }, (error, stdout) => {
+		callback(error ? undefined : stdout.replace(/\r?\n$/, ""));
+	});
+}
+
+function setTmuxPaneTitle(target: string, title: string): void {
+	execFile("tmux", ["select-pane", "-t", target, "-T", title], { timeout: 1000 }, () => undefined);
+}
+
+function setTmuxWindowOption(target: string, option: string, value: string): void {
+	execFile("tmux", ["set-option", "-wq", "-t", target, option, value], { timeout: 1000 }, () => undefined);
+}
+
 function renderStatusLine(
 	width: number,
 	ctx: ExtensionContext,
 	git: GitState,
 	pi: ExtensionAPI,
-	theme: { fg: (color: string, text: string) => string },
+	theme: Pick<Theme, "fg">,
 ): string {
 	const { label: contextLabel, percent } = contextInfo(ctx);
 	const leftPlain = `${git.projectName}${gitBadge(git, settingBoolean("showDirtyMarker", true, ctx.cwd))} ${formatModel(ctx, pi)} (${contextLabel})`;
@@ -545,6 +600,15 @@ export default function statusline(pi: ExtensionAPI) {
 	let activeTui: TUI | undefined;
 	let gitState: GitState | undefined;
 	let refreshInFlight: Promise<void> | undefined;
+	let sessionTitleTimer: ReturnType<typeof setInterval> | undefined;
+	let tmuxPaneTitleTarget: string | undefined;
+	let tmuxOriginalPaneTitle: string | undefined;
+	let tmuxOriginalPaneBorderStatus: string | undefined;
+	let tmuxOriginalPaneBorderFormat: string | undefined;
+	let tmuxChangedPaneBorderStatus = false;
+	let tmuxChangedPaneBorderFormat = false;
+	let tmuxLastPaneTitle: string | undefined;
+	let lastSessionTitle: string | undefined;
 
 	const requestRender = () => activeTui?.requestRender();
 
@@ -561,11 +625,80 @@ export default function statusline(pi: ExtensionAPI) {
 		return refreshInFlight;
 	};
 
+	const syncSessionTitle = (ctx: ExtensionContext) => {
+		const sessionTitle = normalizedSessionName(pi);
+		if (sessionTitle !== lastSessionTitle) {
+			lastSessionTitle = sessionTitle;
+			requestRender();
+		}
+
+		// Session-name UI is owned by pi-statusline. Clear the legacy status key
+		// formerly used by pi-session-manager so stale footer badges disappear.
+		ctx.ui.setStatus(SESSION_MANAGER_STATUS_KEY, undefined);
+
+		const target = tmuxPaneTitleTarget;
+		if (!target) return;
+		const nextTitle = sessionTitle ? formatTmuxSessionTitle(sessionTitle) : tmuxOriginalPaneTitle;
+		if (nextTitle === undefined || nextTitle === tmuxLastPaneTitle) return;
+		tmuxLastPaneTitle = nextTitle;
+		setTmuxPaneTitle(target, nextTitle);
+	};
+
+	const installSessionTitle = (ctx: ExtensionContext) => {
+		if (!settingBoolean("showSessionNameTitle", true, ctx.cwd)) return;
+
+		const tmuxTarget = tmuxPaneTarget();
+		if (tmuxTarget) {
+			tmuxPaneTitleTarget = tmuxTarget;
+			readTmuxPaneTitle(tmuxTarget, (title) => {
+				if (tmuxPaneTitleTarget !== tmuxTarget) return;
+				tmuxOriginalPaneTitle = title;
+				syncSessionTitle(ctx);
+			});
+			readTmuxWindowOption(tmuxTarget, "pane-border-status", (value) => {
+				if (tmuxPaneTitleTarget !== tmuxTarget) return;
+				tmuxOriginalPaneBorderStatus = value;
+				if (!value || value === "off") {
+					tmuxChangedPaneBorderStatus = true;
+					setTmuxWindowOption(tmuxTarget, "pane-border-status", "top");
+				}
+			});
+			readTmuxWindowOption(tmuxTarget, "pane-border-format", (value) => {
+				if (tmuxPaneTitleTarget !== tmuxTarget) return;
+				tmuxOriginalPaneBorderFormat = value;
+				if (value !== TMUX_SESSION_TITLE_BORDER_FORMAT) {
+					tmuxChangedPaneBorderFormat = true;
+					setTmuxWindowOption(tmuxTarget, "pane-border-format", TMUX_SESSION_TITLE_BORDER_FORMAT);
+				}
+			});
+			return;
+		}
+
+		ctx.ui.setHeader((tui, theme) => {
+			activeTui = tui;
+			return {
+				invalidate() {},
+				render(width: number): string[] {
+					return sessionNameHeader(width, pi, theme);
+				},
+			};
+		});
+	};
+
+	const installSessionTitleSync = (ctx: ExtensionContext) => {
+		syncSessionTitle(ctx);
+		sessionTitleTimer = setInterval(() => syncSessionTitle(ctx), SESSION_TITLE_SYNC_INTERVAL_MS);
+		sessionTitleTimer.unref?.();
+	};
+
 	pi.on("session_start", (_event, ctx) => {
 		if (!ctx.hasUI || !settingBoolean("enabled", true, ctx.cwd)) return;
 		installAutocompleteHintStyling(ctx);
 		gitState = makeFallbackGitState(ctx.cwd);
 		void refresh(ctx);
+
+		installSessionTitle(ctx);
+		installSessionTitleSync(ctx);
 
 		if (settingBoolean("compactPrompt", true, ctx.cwd)) {
 			ctx.ui.setEditorComponent((tui, theme, keybindings) => {
@@ -643,8 +776,23 @@ export default function statusline(pi: ExtensionAPI) {
 		requestRender();
 	});
 	pi.on("session_shutdown", (_event, ctx) => {
+		if (sessionTitleTimer) clearInterval(sessionTitleTimer);
+		sessionTitleTimer = undefined;
+		if (tmuxPaneTitleTarget && tmuxOriginalPaneTitle !== undefined) setTmuxPaneTitle(tmuxPaneTitleTarget, tmuxOriginalPaneTitle);
+		if (tmuxPaneTitleTarget && tmuxChangedPaneBorderStatus && tmuxOriginalPaneBorderStatus !== undefined) setTmuxWindowOption(tmuxPaneTitleTarget, "pane-border-status", tmuxOriginalPaneBorderStatus);
+		if (tmuxPaneTitleTarget && tmuxChangedPaneBorderFormat && tmuxOriginalPaneBorderFormat !== undefined) setTmuxWindowOption(tmuxPaneTitleTarget, "pane-border-format", tmuxOriginalPaneBorderFormat);
+		tmuxPaneTitleTarget = undefined;
+		tmuxOriginalPaneTitle = undefined;
+		tmuxOriginalPaneBorderStatus = undefined;
+		tmuxOriginalPaneBorderFormat = undefined;
+		tmuxChangedPaneBorderStatus = false;
+		tmuxChangedPaneBorderFormat = false;
+		tmuxLastPaneTitle = undefined;
+		lastSessionTitle = undefined;
 		ctx.ui.setStatus(QOL_STATUS_KEY, undefined);
+		ctx.ui.setStatus(SESSION_MANAGER_STATUS_KEY, undefined);
 		ctx.ui.setWidget("statusline", undefined);
+		ctx.ui.setHeader(undefined);
 		ctx.ui.setEditorComponent(undefined);
 		ctx.ui.setFooter(undefined);
 		activeTui = undefined;

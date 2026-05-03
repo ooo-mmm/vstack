@@ -13,7 +13,6 @@ Polished session manager overlay for Pi. It complements Pi's built-in `/resume` 
 - Rename sessions using Pi session-info entries; current-session renames go through `pi.setSessionName()`.
 - Delete with confirmation, current-session protection, and optional `trash` CLI fallback.
 - Clean one-line rendering for names, prompts, and paths.
-- Footer/status badge for named current sessions.
 
 No SQLite, FTS, or native runtime dependencies are used; Pi's `SessionManager.list()` / `listAll()` APIs provide the index data.
 
@@ -51,13 +50,12 @@ Settings are exposed through `pi-extension-manager` under `vstack.extensionManag
 
 | Key | Default | Notes |
 | --- | --- | --- |
-| `enabled` | `true` | Registers commands, status badge, and shortcut after reload. |
+| `enabled` | `true` | Registers commands and shortcut after reload. |
 | `shortcutKey` | `ctrl+shift+r` | Opens `/sessions` when Pi is idle; set to `none` to disable. |
 | `defaultScope` | `current` | `current` or `all`. |
 | `defaultSort` | `threaded` | `threaded`, `recent`, or `relevance`. |
 | `visibleRows` | `12` | List rows before scrolling. |
 | `overlayWidth` | `112` | Preferred overlay width in terminal columns. |
-| `showStatus` | `true` | Footer/status badge for named current sessions. |
 | `deleteUsesTrash` | `true` | Try `trash` before `unlink` when deleting. |
 
 ## Notes

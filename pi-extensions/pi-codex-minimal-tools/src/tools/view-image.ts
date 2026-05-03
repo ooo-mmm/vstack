@@ -1,5 +1,5 @@
-import { stat, readFile } from "node:fs/promises";
-import { extname, resolve } from "node:path";
+import { stat, readFile, realpath } from "node:fs/promises";
+import { extname, isAbsolute, relative, resolve } from "node:path";
 
 export type ImageDetail = "auto" | "low" | "high" | "original";
 
@@ -28,11 +28,20 @@ const IMAGE_MIME_BY_EXT: Record<string, string> = {
 	".svg": "image/svg+xml",
 };
 
+function assertWithinCwd(absolutePath: string, cwd: string, displayPath: string): void {
+	const cwdAbsolute = resolve(cwd);
+	const rel = relative(cwdAbsolute, absolutePath);
+	if (rel === "" || (!rel.startsWith("..") && !isAbsolute(rel))) return;
+	throw new Error(`view_image path escapes the workspace: ${displayPath}`);
+}
+
 export function normalizeImagePath(pathValue: string, cwd: string): { absolutePath: string; displayPath: string } {
 	let cleaned = pathValue.trim();
 	if ((cleaned.startsWith('"') && cleaned.endsWith('"')) || (cleaned.startsWith("'") && cleaned.endsWith("'"))) cleaned = cleaned.slice(1, -1);
 	if (cleaned.startsWith("@")) cleaned = cleaned.slice(1);
-	return { absolutePath: resolve(cwd, cleaned), displayPath: cleaned };
+	const absolutePath = resolve(cwd, cleaned);
+	assertWithinCwd(absolutePath, cwd, cleaned);
+	return { absolutePath, displayPath: cleaned };
 }
 
 export function mimeTypeForImagePath(path: string): string | undefined {
@@ -52,6 +61,12 @@ export async function validateImagePath(input: ViewImageInput, cwd: string): Pro
 	}
 	if (fileStat.isDirectory()) throw new Error(`view_image expected a file but got a directory: ${normalized.displayPath}`);
 	if (!fileStat.isFile()) throw new Error(`view_image expected a regular image file: ${normalized.displayPath}`);
+	try {
+		assertWithinCwd(await realpath(normalized.absolutePath), await realpath(cwd), normalized.displayPath);
+	} catch (error) {
+		if (error instanceof Error && error.message.includes("escapes the workspace")) throw error;
+		throw new Error(`Unable to validate image path: ${normalized.displayPath}`);
+	}
 	const mimeType = mimeTypeForImagePath(normalized.absolutePath);
 	if (!mimeType) throw new Error(`Unsupported image file type for view_image: ${normalized.displayPath}`);
 	return { ...normalized, detail, mimeType, sizeBytes: fileStat.size };

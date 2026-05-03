@@ -103,6 +103,15 @@
           "apply": "live"
         },
         {
+          "key": "webSearchExternalAccess",
+          "label": "Allow external web access",
+          "description": "Set external_web_access on native OpenAI web_search tools.",
+          "type": "boolean",
+          "default": true,
+          "category": "Web",
+          "apply": "live"
+        },
+        {
           "key": "showWebSearchSessionNotice",
           "label": "Show web search session notice",
           "description": "Show a one-time notice when native web search is enabled. Off by default to avoid startup noise.",

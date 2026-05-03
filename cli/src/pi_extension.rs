@@ -459,10 +459,33 @@ fn write_settings(path: &Path, value: &serde_json::Value) -> Result<()> {
     Ok(())
 }
 
+const COPY_DIR_SKIP_NAMES: &[&str] = &[
+    "node_modules",
+    ".git",
+    ".turbo",
+    ".next",
+    ".cache",
+    "dist",
+    "build",
+    "out",
+    "coverage",
+    ".pi",
+];
+
+fn should_skip_copy_entry(name: &str) -> bool {
+    COPY_DIR_SKIP_NAMES.contains(&name)
+}
+
 fn copy_dir(src: &Path, dst: &Path) -> Result<()> {
     std::fs::create_dir_all(dst)?;
-    for entry in walkdir::WalkDir::new(src).min_depth(1) {
-        let entry = entry?;
+    let mut walker = walkdir::WalkDir::new(src).min_depth(1).into_iter();
+    while let Some(next) = walker.next() {
+        let entry = next?;
+        let name = entry.file_name().to_string_lossy().to_string();
+        if entry.file_type().is_dir() && should_skip_copy_entry(&name) {
+            walker.skip_current_dir();
+            continue;
+        }
         let rel = entry.path().strip_prefix(src)?;
         let target = dst.join(rel);
         if entry.file_type().is_dir() {

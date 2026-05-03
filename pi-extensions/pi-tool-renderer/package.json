@@ -108,6 +108,16 @@
           "apply": "live"
         },
         {
+          "key": "compactCompactionMessages",
+          "label": "Compact compaction summaries",
+          "description": "Render compaction summary rows with the same compact bullet/chrome style as tool output instead of Pi's padded message box.",
+          "type": "boolean",
+          "default": true,
+          "category": "Messages",
+          "apply": "reload",
+          "requiresReload": true
+        },
+        {
           "key": "userMessageBackground",
           "label": "User message background",
           "description": "Theme background token used for compact user message cards.",

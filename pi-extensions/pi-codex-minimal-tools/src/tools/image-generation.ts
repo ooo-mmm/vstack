@@ -21,14 +21,14 @@ export const imageGenerationToolSchema = {
 	},
 };
 
-async function urlToBase64(url: string): Promise<string> {
-	const response = await fetch(url);
+async function urlToBase64(url: string, signal?: AbortSignal): Promise<string> {
+	const response = await fetch(url, { signal });
 	if (!response.ok) throw new Error(`Failed to download generated image: ${response.status} ${await response.text()}`);
 	const buffer = Buffer.from(await response.arrayBuffer());
 	return buffer.toString("base64");
 }
 
-export async function directImageGeneration(input: ImageGenerationInput, cwd: string, settings: CodexMinimalToolsSettings) {
+export async function directImageGeneration(input: ImageGenerationInput, cwd: string, settings: CodexMinimalToolsSettings, signal?: AbortSignal) {
 	if (!settings.directImageApiFallback) throw new Error("Direct Images API fallback is disabled. Use native openai-codex handling or enable directImageApiFallback.");
 	const apiKey = process.env.OPENAI_API_KEY;
 	if (!apiKey) throw new Error("OPENAI_API_KEY is required for direct image_generation fallback.");
@@ -36,7 +36,6 @@ export async function directImageGeneration(input: ImageGenerationInput, cwd: st
 	const body: Record<string, unknown> = {
 		model: settings.imageModel,
 		prompt: input.prompt,
-		response_format: "b64_json",
 	};
 	if (input.size && input.size !== "auto") body.size = input.size;
 	if (input.quality && input.quality !== "auto") body.quality = input.quality;
@@ -46,11 +45,12 @@ export async function directImageGeneration(input: ImageGenerationInput, cwd: st
 		method: "POST",
 		headers: { Authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
 		body: JSON.stringify(body),
+		signal,
 	});
 	if (!response.ok) throw new Error(`OpenAI Images API failed: ${response.status} ${await response.text()}`);
 	const json = await response.json() as { data?: Array<{ b64_json?: string; url?: string; revised_prompt?: string }> };
 	const first = json.data?.[0];
-	const base64 = first?.b64_json ?? (first?.url ? await urlToBase64(first.url) : undefined);
+	const base64 = first?.b64_json ?? (first?.url ? await urlToBase64(first.url, signal) : undefined);
 	if (!base64) throw new Error("OpenAI Images API returned no image data.");
 	const saved = await saveBase64Image({ base64, callId: "direct", cwd, format: input.output_format, responseId: settings.imageModel, settings });
 	return {
@@ -66,10 +66,10 @@ export function createImageGenerationToolDefinition(options: { loadSettings?: (c
 		description: "Generate images with OpenAI native image_generation on supported openai-codex models. If native handling is unavailable, direct fallback can be enabled with directImageApiFallback and OPENAI_API_KEY.",
 		promptSnippet: "Generate images with OpenAI native image_generation when available.",
 		parameters: imageGenerationToolSchema,
-		async execute(_toolCallId: string, params: ImageGenerationInput, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: { cwd: string }) {
+		async execute(_toolCallId: string, params: ImageGenerationInput, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: { cwd: string }) {
 			const cwd = ctx?.cwd ?? process.cwd();
 			const settings = options.loadSettings?.(cwd);
-			if (settings?.directImageApiFallback) return directImageGeneration(params, cwd, settings);
+			if (settings?.directImageApiFallback) return directImageGeneration(params, cwd, settings, signal);
 			return {
 				content: [{ type: "text", text: "image_generation is native-provider-first. If this function tool executes directly, enable directImageApiFallback with OPENAI_API_KEY or use an openai-codex model with native provider handling." }],
 				details: { phase: "native-provider", nativeTool: "image_generation" },

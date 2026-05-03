@@ -1,5 +1,5 @@
-import { getLanguageFromPath, highlightCode, ToolExecutionComponent, type ExtensionAPI, type ExtensionContext } from "@mariozechner/pi-coding-agent";
-import { Container, Text, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
+import { CompactionSummaryMessageComponent, getLanguageFromPath, getMarkdownTheme, highlightCode, ToolExecutionComponent, type ExtensionAPI, type ExtensionContext } from "@mariozechner/pi-coding-agent";
+import { Container, Markdown, Text, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
@@ -9,6 +9,7 @@ const USER_MESSAGE_PATCH_SYMBOL = Symbol.for("vstack.pi-tool-renderer.user-messa
 const USER_MESSAGE_BOX_STATE_SYMBOL = Symbol.for("vstack.pi-tool-renderer.user-message-box-state");
 const TOOL_EXECUTION_RENDERER_PATCH_SYMBOL = Symbol.for("vstack.pi-tool-renderer.tool-execution-renderer-patch.v2");
 const TOOL_CHROME_PATCH_SYMBOL = Symbol.for("vstack.pi-tool-renderer.tool-chrome-patch");
+const COMPACTION_SUMMARY_RENDERER_PATCH_SYMBOL = Symbol.for("vstack.pi-tool-renderer.compaction-summary-renderer-patch");
 
 const USER_MESSAGE_BG_TOKENS = new Set(["selectedBg", "userMessageBg", "customMessageBg", "toolPendingBg", "toolSuccessBg", "toolErrorBg"]);
 
@@ -138,6 +139,18 @@ function makeEmpty() {
 	};
 }
 
+const FALLBACK_THEME = {
+	bg(_token: string, text: string) {
+		return text;
+	},
+	bold(text: string) {
+		return `\x1b[1m${text}\x1b[22m`;
+	},
+	fg(_token: string, text: string) {
+		return text;
+	},
+};
+
 function componentHasVisibleLines(component: unknown): boolean {
 	try {
 		const render = (component as any)?.render;
@@ -199,6 +212,65 @@ function installUserMessageRenderer(pi: ExtensionAPI, UserMessageComponent: any)
 		if (prototype[USER_MESSAGE_PATCH_SYMBOL] === state) {
 			prototype.render = state!.originalRender as unknown;
 			delete prototype[USER_MESSAGE_PATCH_SYMBOL];
+		}
+		state!.activeCtx = undefined;
+	});
+}
+
+interface CompactionSummaryPatchState {
+	activeCtx?: ExtensionContext;
+	originalUpdateDisplay: () => void;
+}
+
+function installCompactionSummaryRenderer(pi: ExtensionAPI, Component: any): void {
+	const prototype = Component?.prototype as Record<PropertyKey, unknown> | undefined;
+	if (!prototype || typeof prototype.updateDisplay !== "function") return;
+
+	let state = prototype[COMPACTION_SUMMARY_RENDERER_PATCH_SYMBOL] as CompactionSummaryPatchState | undefined;
+	if (!state) {
+		state = {
+			originalUpdateDisplay: prototype.updateDisplay as () => void,
+		};
+		prototype[COMPACTION_SUMMARY_RENDERER_PATCH_SYMBOL] = state;
+		prototype.updateDisplay = function compactCompactionSummaryDisplay(this: any): void {
+			const ctx = state?.activeCtx;
+			const cwd = ctx?.cwd ?? process.cwd();
+			if (!settingBoolean("compactCompactionMessages", true, cwd)) {
+				state!.originalUpdateDisplay.call(this);
+				return;
+			}
+
+			const theme = ctx?.ui?.theme ?? FALLBACK_THEME;
+			const message = this?.message ?? {};
+			const tokensBefore = Number.isFinite(Number(message.tokensBefore)) ? Number(message.tokensBefore) : 0;
+			const tokenStr = tokensBefore.toLocaleString();
+			const expanded = Boolean(this?.expanded);
+			const summary = typeof message.summary === "string" && message.summary.trim() ? message.summary.trim() : "No summary was recorded.";
+
+			this.paddingX = 0;
+			this.paddingY = 0;
+			this.setBgFn?.(undefined);
+			this.clear?.();
+
+			const hint = expanded ? "" : theme.fg("dim", " · Ctrl+O to expand");
+			this.addChild?.(new Text(`${stackPrefix(theme)}${toolLabel(theme, "Compacted ")}${theme.fg("success", `${tokenStr} tokens`)}${hint}`, 0, 0));
+
+			if (expanded) {
+				this.addChild?.(new Text(`${treeConnector(theme, "└", cwd)}${theme.fg("muted", "Summary")}`, 0, 0));
+				this.addChild?.(new Markdown(summary, 0, 0, this?.markdownTheme ?? getMarkdownTheme(), {
+					color: (text: string) => theme.fg("customMessageText", text),
+				}));
+			}
+		};
+	}
+
+	pi.on("session_start", (_event: any, ctx: ExtensionContext) => {
+		state!.activeCtx = ctx;
+	});
+	pi.on("session_shutdown", () => {
+		if (prototype[COMPACTION_SUMMARY_RENDERER_PATCH_SYMBOL] === state) {
+			prototype.updateDisplay = state!.originalUpdateDisplay as unknown;
+			delete prototype[COMPACTION_SUMMARY_RENDERER_PATCH_SYMBOL];
 		}
 		state!.activeCtx = undefined;
 	});
@@ -397,7 +469,7 @@ function highlightDiffContent(content: string, path: string | undefined, theme: 
 	const language = languageForPath(path);
 	if (!language) return display;
 	try {
-		const highlighted = highlightCode(display, language as never, theme);
+		const highlighted = highlightCode(display, language);
 		const lines = Array.isArray(highlighted) ? highlighted : String(highlighted).replace(/\r\n/g, "\n").split("\n");
 		return lines[0] ?? display;
 	} catch {
@@ -1089,6 +1161,20 @@ interface UnifiedDiffFile {
 	path: string;
 }
 
+interface UnifiedDiffBuilder {
+	additions: number;
+	chars: number;
+	hunkCount: number;
+	lines: StructuredDiffLine[];
+	newHunkEnd: number | null;
+	newPath?: string;
+	oldHunkEnd: number | null;
+	oldPath?: string;
+	path: string;
+	removals: number;
+	sawHunk: boolean;
+}
+
 function splitGitHeaderPaths(rest: string): string[] {
 	const paths: string[] = [];
 	const tokenRe = /"((?:\\.|[^"])*)"|(\S+)/g;
@@ -1140,19 +1226,7 @@ function parseHunkHeader(line: string): { newCount: number; newStart: number; ol
 function parseUnifiedDiffOutput(output: string): UnifiedDiffFile[] | null {
 	const lines = stripAnsi(output).replace(/\r\n/g, "\n").split("\n");
 	const files: UnifiedDiffFile[] = [];
-	let current: {
-		additions: number;
-		chars: number;
-		hunkCount: number;
-		lines: StructuredDiffLine[];
-		newHunkEnd: number | null;
-		newPath?: string;
-		oldHunkEnd: number | null;
-		oldPath?: string;
-		path: string;
-		removals: number;
-		sawHunk: boolean;
-	} | null = null;
+	let current = null as UnifiedDiffBuilder | null;
 
 	function start(path = "diff") {
 		finish();
@@ -2504,6 +2578,7 @@ export default async function toolRenderer(pi: ExtensionAPI): Promise<void> {
 	installToolChromePatch();
 	registerToolChromeEvents(pi);
 	installWorkingIndicator(pi);
+	installCompactionSummaryRenderer(pi, CompactionSummaryMessageComponent);
 
 	const agent = await import("@mariozechner/pi-coding-agent");
 	installUserMessageRenderer(pi, agent.UserMessageComponent);
