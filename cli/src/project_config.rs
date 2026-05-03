@@ -199,7 +199,17 @@ fn upsert_agent_value_in_section(
     agent_name: &str,
     text: &str,
 ) -> String {
-    let escaped = text.replace('\\', "\\\\").replace('"', "\\\"");
+    // Escape ALL chars that would produce invalid TOML inside a single
+    // double-quoted string. Notably `\n` MUST be escaped — otherwise a
+    // multi-line value silently produces a malformed file that subsequent
+    // parses treat as empty, causing this function to be re-invoked and
+    // append fresh duplicates of the body lines on every install.
+    let escaped = text
+        .replace('\\', "\\\\")
+        .replace('\r', "\\r")
+        .replace('\n', "\\n")
+        .replace('\t', "\\t")
+        .replace('"', "\\\"");
     let new_line = format!("{} = \"{}\"", agent_name, escaped);
     let key_prefix = format!("{} =", agent_name);
     let key_prefix_tight = format!("{}=", agent_name);
@@ -1084,6 +1094,38 @@ generalist = \"\"\n";
         assert!(
             out.contains("[agent-additional-instructions]\nrust = \"DO NOT TOUCH\""),
             "additional-instructions section corrupted: {out}"
+        );
+    }
+
+    #[test]
+    fn upsert_agent_value_escapes_newlines() {
+        // Regression: a multi-line value used to be written with literal
+        // newlines inside a single double-quoted string, producing invalid
+        // TOML. On the next run the parser would fail, ProjectConfig::load
+        // would return default, save_extracted would think the value was
+        // missing, and upsert would write again — leaving the previous
+        // body lines as orphans and compounding the corruption every run.
+        let toml = "[agent-launch-instructions]\nrust = \"\"\n";
+        let multiline = "first line\nsecond line\nthird line";
+        let out =
+            upsert_agent_value_in_section(toml, "[agent-launch-instructions]", "rust", multiline);
+
+        // Result must parse as valid TOML
+        let parsed: toml::Value = toml::from_str(&out)
+            .unwrap_or_else(|e| panic!("upsert produced invalid TOML: {e}\n---\n{out}"));
+
+        // The value round-trips correctly
+        let value = parsed
+            .get("agent-launch-instructions")
+            .and_then(|t| t.get("rust"))
+            .and_then(|v| v.as_str())
+            .expect("missing rust value");
+        assert_eq!(value, multiline);
+
+        // No literal newlines inside the value's line in the source
+        assert!(
+            out.contains(r#"rust = "first line\nsecond line\nthird line""#),
+            "expected escaped \\n sequence, got: {out}"
         );
     }
 

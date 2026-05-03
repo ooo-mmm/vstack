@@ -178,7 +178,10 @@ pub fn refresh_items_in_scope(
                     .agents_dir(global)
                     .join(harness.agent_filename(&agent.name));
                 let file_extras = crate::resolve::read_existing_extras(&existing_path, harness);
-                project_config.save_extracted(project_root, &agent.name, &file_extras);
+                // Project-level vstack.toml is only meaningful in project scope.
+                if !global {
+                    project_config.save_extracted(project_root, &agent.name, &file_extras);
+                }
             }
         }
 

@@ -332,11 +332,19 @@ pub fn run(
     let source_dir = resolved_source.dir.clone();
     let mapping = crate::mapping::MappingConfig::load(&source_dir);
 
+    // Whether we should write/update the project-level vstack.toml.
+    // Suppress when:
+    //   - --global install (project files are not the install target)
+    //   - the "project root" we'd write to IS the vstack source repo
+    //     itself (writing project-customization sections there would
+    //     clobber the upstream source mapping config)
+    let writes_project_config = !global && config::project_root() != source_dir;
+
     // Ensure project-level vstack.toml exists for customization.
     // Merge already-installed items with newly selected ones so the
     // config template and skills reference block reflect the FULL set,
     // not just what was picked in this session.
-    if !global {
+    if writes_project_config {
         let lock = config::LockFile::load(&config::lock_file_path(false)).unwrap_or_default();
         let mut agent_names: Vec<String> = lock
             .entries
@@ -480,7 +488,9 @@ pub fn run(
                 .agents_dir(global)
                 .join(harness.agent_filename(&a.name));
             let file_extras = crate::resolve::read_existing_extras(&existing_path, *harness);
-            project_config.save_extracted(&config::project_root(), &a.name, &file_extras);
+            if writes_project_config {
+                project_config.save_extracted(&config::project_root(), &a.name, &file_extras);
+            }
 
             let extras = crate::resolve::build_agent_extras(
                 &project_config,
@@ -556,7 +566,7 @@ pub fn run(
     // Must happen BEFORE lock timestamps are captured so that the
     // vstack.toml mtime doesn't post-date installed_at (which would
     // make every item appear outdated on next launch).
-    if !global {
+    if writes_project_config {
         crate::project_config::write_agent_skills(&config::project_root(), &agent_skill_map);
         crate::project_config::write_agent_skills_optional(
             &config::project_root(),
@@ -846,6 +856,7 @@ fn reconcile_agents(
     let lock = config::LockFile::load(&lock_path)?;
     let mapping = crate::mapping::MappingConfig::load(source_dir);
     let mut project_config = crate::project_config::ProjectConfig::load(&config::project_root());
+    let writes_project_config = !global && config::project_root() != source_dir;
 
     // Collect all installed skill names
     let installed_skills: Vec<String> = lock
@@ -911,11 +922,13 @@ fn reconcile_agents(
                         .agents_dir(global)
                         .join(harness.agent_filename(&agent.name));
                     let file_extras = crate::resolve::read_existing_extras(&existing_path, harness);
-                    project_config.save_extracted(
-                        &config::project_root(),
-                        &agent.name,
-                        &file_extras,
-                    );
+                    if writes_project_config {
+                        project_config.save_extracted(
+                            &config::project_root(),
+                            &agent.name,
+                            &file_extras,
+                        );
+                    }
                 }
             }
         }
