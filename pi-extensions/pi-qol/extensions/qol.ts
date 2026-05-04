@@ -2351,11 +2351,16 @@ function formatSessionSearchDate(date: Date): string {
 
 const ANSI_ESCAPE_RE = /\x1b\[[0-?]*[ -/]*[@-~]/g;
 const ANSI_GREEN_FG = "\x1b[32m";
+const ANSI_RED_FG = "\x1b[31m";
 const ANSI_YELLOW_FG = "\x1b[33m";
 const ANSI_FG_RESET = "\x1b[39m";
 
 function ansiGreen(text: string): string {
 	return `${ANSI_GREEN_FG}${text}${ANSI_FG_RESET}`;
+}
+
+function ansiRed(text: string): string {
+	return `${ANSI_RED_FG}${text}${ANSI_FG_RESET}`;
 }
 
 function ansiYellow(text: string): string {
@@ -2923,7 +2928,7 @@ function styleSessionSnippet(snippet: string, query: string, theme: Theme): stri
 			const value = token.value.trim();
 			if (!value || value.length > 80) continue;
 			try {
-				styled = styled.replace(new RegExp(escapeForRegex(value), "gi"), (match) => theme.bold(theme.fg("warning", match)));
+				styled = styled.replace(new RegExp(escapeForRegex(value), "gi"), (match) => ansiRed(match));
 			} catch {
 				// Ignore highlighting failures; search result remains readable.
 			}
@@ -2949,6 +2954,10 @@ function boxParts(width: number, theme: Theme) {
 		const body = fixed(content);
 		return `${border("┃")}${" ".repeat(paddingX)}${selected ? theme.bg("selectedBg", body) : body}${" ".repeat(paddingX)}${border("┃")}`;
 	};
+	const filledRow = (content = "", bg: "selectedBg" | "toolPendingBg" = "toolPendingBg") => {
+		const body = fixed(content);
+		return `${border("┃")}${" ".repeat(paddingX)}${theme.bg(bg, body)}${" ".repeat(paddingX)}${border("┃")}`;
+	};
 	const selectedRow = (content = "") => row(content, true);
 	const empty = () => `${border("┃")}${" ".repeat(frameInner)}${border("┃")}`;
 	const divider = () => row(theme.fg("muted", "━".repeat(inner)));
@@ -2962,7 +2971,7 @@ function boxParts(width: number, theme: Theme) {
 		return `${border("┏")}${ansiGreen(titlePlain)}${border("━".repeat(fill))}${rightText}${border("┓")}`;
 	};
 	const bottom = () => border(`┗${"━".repeat(frameInner)}┛`);
-	return { bottom, divider, empty, inner, row, selectedRow, top };
+	return { bottom, divider, empty, filledRow, inner, row, selectedRow, top };
 }
 
 function isPrintableInput(data: string): boolean {
@@ -3248,7 +3257,7 @@ class QolSessionSearchComponent {
 	}
 
 	private renderSearch(width: number): string[] {
-		const { bottom, divider, empty, inner, row, selectedRow, top } = boxParts(width, this.theme);
+		const { bottom, divider, empty, filledRow, inner, row, selectedRow, top } = boxParts(width, this.theme);
 		const state = this.searchState;
 		const lines: string[] = [top("Session Search", `${state.results.length}/${state.total} shown`), empty()];
 		const accent = (s: string) => this.theme.fg("accent", s);
@@ -3263,8 +3272,8 @@ class QolSessionSearchComponent {
 		const cursor = accent("│");
 		const queryDisplay = state.query
 			? `${state.query.slice(0, state.cursor)}${cursor}${state.query.slice(state.cursor)}`
-			: `${cursor}${muted("type to search sessions...")}`;
-		lines.push(row(`${this.theme.bold("Search")} ${queryDisplay}`));
+			: `${cursor}${muted("Type to search sessions...")}`;
+		lines.push(filledRow(` ${queryDisplay}`));
 		lines.push(row(dim(`${state.total} sessions · re:<pattern> regex · "phrase" exact`)));
 		lines.push(empty(), divider(), empty());
 		if (state.results.length === 0) {
@@ -3274,29 +3283,28 @@ class QolSessionSearchComponent {
 			const start = Math.max(0, Math.min(state.selected - Math.floor(maxVisible / 2), state.results.length - maxVisible));
 			const end = Math.min(start + maxVisible, state.results.length);
 			const rowBudget = Math.max(10, inner);
+			const itemPad = " ";
 			for (let i = start; i < end; i++) {
 				const result = state.results[i]!;
 				const selected = i === state.selected;
-				const prefix = selected ? accent("▸") : dim("·");
 				const title = sessionResumeTitle(result);
-				const right = dim(`${promptCountLabel(sessionUserPromptCount(result))} · ${formatSessionSearchDate(result.modified)}`);
-				const prefixText = `${prefix} `;
-				const titleBudget = Math.max(12, rowBudget - visibleWidth(prefixText) - visibleWidth(right) - 1);
+				const rightPlain = `${promptCountLabel(sessionUserPromptCount(result))} · ${formatSessionSearchDate(result.modified)}`;
+				const right = selected ? this.theme.fg("text", rightPlain) : dim(rightPlain);
+				const titleBudget = Math.max(12, rowBudget - visibleWidth(right) - 1);
 				const titleText = truncateToWidth(title, titleBudget, "…");
-				const left = `${prefixText}${selected ? this.theme.bold(accent(titleText)) : this.theme.bold(titleText)}`;
+				const left = `${itemPad}${selected ? this.theme.bold(accent(titleText)) : this.theme.bold(titleText)}`;
 				const titleRow = pair(left, right);
 				lines.push(selected ? selectedRow(titleRow) : row(titleRow));
 
 				const folder = shortPathForUi(result.cwd || dirname(result.path));
 				const project = sessionDisplayName(result);
-				const detailIndent = " ".repeat(visibleWidth(prefixText));
-				lines.push(row(`${detailIndent}${muted(truncateToWidth(`${project} · ${folder}`, inner - visibleWidth(detailIndent), "…"))}`));
+				lines.push(row(`${itemPad}${muted(truncateToWidth(`${project} · ${folder}`, inner - visibleWidth(itemPad), "…"))}`));
 
 				const snippet = state.query.trim() ? (result.snippets[0] || lastUserMessageSnippet(result)) : lastUserMessageSnippet(result);
 				const label = state.query.trim() ? "match" : "last";
-				const snippetPrefix = `${detailIndent}${dim(`${label}:`)} `;
+				const snippetPrefix = `${itemPad}${dim(`${label}:`)} `;
 				lines.push(row(`${snippetPrefix}${truncateToWidth(styleSessionSnippet(snippet, state.query, this.theme), inner - visibleWidth(snippetPrefix), "…")}`));
-				if (i < end - 1) lines.push(row(dim("─".repeat(Math.max(8, inner)))));
+				if (i < end - 1) lines.push(row(`${itemPad}${dim("─".repeat(Math.max(8, inner - visibleWidth(itemPad))))}`));
 			}
 			if (state.results.length > maxVisible) lines.push(empty(), row(dim(`${state.selected + 1}/${state.results.length} ${state.query.trim() ? "matches" : "recent sessions"}`)));
 		}
@@ -3313,14 +3321,18 @@ class QolSessionSearchComponent {
 		const muted = (s: string) => this.theme.fg("muted", s);
 		const result = state.result;
 		const lines: string[] = [top("Your Prompts", `${state.selected + 1}/${state.messages.length}`), empty()];
-		const headerBudget = Math.max(10, inner);
+		const pair = (left: string, right: string) => {
+			const leftWidth = Math.max(1, inner - visibleWidth(right) - 1);
+			const clippedLeft = truncateToWidth(left, leftWidth, "…");
+			const gap = Math.max(1, inner - visibleWidth(clippedLeft) - visibleWidth(right));
+			return `${clippedLeft}${" ".repeat(gap)}${right}`;
+		};
+		const itemPad = " ";
 		const right = dim(`${promptCountLabel(state.messages.length)} · ${formatSessionSearchDate(result.modified)}`);
-		const title = truncateToWidth(sessionResumeTitle(result), Math.max(12, headerBudget - visibleWidth(right) - 3), "…");
-		const left = `  ${this.theme.bold(accent(title))}`;
-		const gap = Math.max(1, headerBudget - visibleWidth(left) - visibleWidth(right));
-		lines.push(row(`${left}${" ".repeat(gap)}${right}`));
-		lines.push(row(`  ${muted(truncateToWidth(shortPathForUi(result.cwd || result.path), inner - 4, "…"))}`));
-		lines.push(row(dim(`  ${state.messages.length} user prompt${state.messages.length === 1 ? "" : "s"} · choose one for actions/focus`)));
+		const title = truncateToWidth(sessionResumeTitle(result), Math.max(12, inner - visibleWidth(right) - visibleWidth(itemPad) - 1), "…");
+		lines.push(row(pair(`${itemPad}${this.theme.bold(accent(title))}`, right)));
+		lines.push(row(`${itemPad}${muted(truncateToWidth(shortPathForUi(result.cwd || result.path), inner - visibleWidth(itemPad), "…"))}`));
+		lines.push(row(`${itemPad}${dim(`${state.messages.length} user prompt${state.messages.length === 1 ? "" : "s"} · choose one for actions/focus`)}`));
 		lines.push(empty(), divider(), empty());
 
 		const maxVisible = Math.max(6, Math.floor(settingNumber("sessionSearch.messageMaxVisible", 12, this.cwd)));
@@ -3329,14 +3341,14 @@ class QolSessionSearchComponent {
 		for (let i = start; i < end; i++) {
 			const message = state.messages[i]!;
 			const selected = i === state.selected;
-			const prefix = selected ? accent("▸") : dim("·");
-			const number = dim(`#${message.index}`.padStart(4));
-			const textWidth = Math.max(12, inner - visibleWidth(prefix) - visibleWidth(number) - 8);
+			const numberPlain = `#${message.index}`.padStart(4);
+			const number = selected ? this.theme.fg("text", numberPlain) : dim(numberPlain);
+			const textWidth = Math.max(12, inner - visibleWidth(itemPad) - visibleWidth(number) - 2);
 			const text = truncateToWidth(message.text, textWidth, "…");
-			const messageRow = ` ${prefix} ${number} ${selected ? this.theme.bold(accent(text)) : text}`;
+			const messageRow = `${itemPad}${number} ${selected ? this.theme.bold(accent(text)) : text}`;
 			lines.push(selected ? selectedRow(messageRow) : row(messageRow));
 		}
-		if (state.messages.length > maxVisible) lines.push(empty(), row(dim(`  ${state.selected + 1}/${state.messages.length} user prompts`)));
+		if (state.messages.length > maxVisible) lines.push(empty(), row(dim(`${state.selected + 1}/${state.messages.length} user prompts`)));
 		lines.push(divider());
 		lines.push(row(`${ansiYellow("↑↓")} ${dim("prompts")}  ${ansiYellow("enter")} ${dim("actions")}  ${ansiYellow("esc")} ${dim("sessions")}`));
 		lines.push(bottom());
