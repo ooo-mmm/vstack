@@ -1,14 +1,66 @@
 #!/usr/bin/env node
 import { existsSync } from "node:fs";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
+import { dirname, extname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
 const deepTypes = new Set(["deep-reasoning", "deep-lite", "deep"]);
+const researchModes = new Set(["lite", "standard", "full"]);
 const formats = new Set(["findings", "markdown", "json"]);
+const MAX_CONTEXT_FILES = 25;
+const modeDefaults = {
+  lite: { type: "deep-lite", numResults: 15, textMaxCharacters: 10000, timeout: 300 },
+  standard: { type: "deep-reasoning", numResults: 50, textMaxCharacters: 16000, timeout: 600 },
+  full: { type: "deep-reasoning", numResults: 150, textMaxCharacters: 24000, timeout: 1800 },
+};
+const defaultOutputSchema = {
+  type: "object",
+  required: ["executiveSummary", "keyFindings", "recommendation", "risks", "revisitConditions"],
+  properties: {
+    executiveSummary: { type: "string" },
+    keyFindings: { type: "array", items: { type: "string" } },
+    tradeoffs: { type: "array", items: { type: "string" } },
+    recommendation: { type: "string" },
+    risks: { type: "array", items: { type: "string" } },
+    revisitConditions: { type: "array", items: { type: "string" } },
+  },
+};
 
 function jsonOut(stream, value) { stream.write(`${JSON.stringify(value)}\n`); }
 function fail(message, extra = {}) { jsonOut(process.stderr, { ok: false, error: message, ...extra }); process.exit(1); }
+
+function helpPayload() {
+  return {
+    ok: true,
+    usage: "deep-research report|json|doctor [query] [flags]",
+    examples: [
+      "deep-research report 'question' --mode standard --output findings.md",
+      "deep-research report --query-file prompt.txt --context-glob 'context-*.md' --mode full --output findings.md",
+      "deep-research json 'question' --output raw.json",
+    ],
+    modes: modeDefaults,
+    flags: [
+      "--mode|--research-mode lite|standard|full",
+      "--type deep-reasoning|deep-lite|deep",
+      "--output <path>",
+      "--query-file <path>",
+      "--context <path> (repeatable)",
+      "--context-glob <glob>",
+      "--system-prompt <path-or-text>",
+      "--additional-query <query> (repeatable)",
+      "--include-domain <domain> (repeatable)",
+      "--exclude-domain <domain> (repeatable)",
+      "--start-date YYYY-MM-DD",
+      "--end-date YYYY-MM-DD",
+      "--num-results <n>",
+      "--text-max-characters <n>",
+      "--raw-output <path>",
+      "--no-raw-output",
+      "--timeout <seconds>",
+    ],
+    sidecar: "report --output findings.md writes findings.raw.json by default unless --raw-output or --no-raw-output is supplied. Raw provider JSON is not embedded in findings.md.",
+  };
+}
 
 async function loadEnvFile(path) {
   if (!existsSync(path)) return;
@@ -36,41 +88,76 @@ function resolveSecretRef(value, name) {
 
 function parseArgs(argv) {
   const command = argv.shift();
-  const options = { command, positional: [], context: [], additionalQuery: [], includeDomain: [], excludeDomain: [], type: "deep-reasoning", numResults: 10, textMaxCharacters: 12000, format: "findings", timeout: 600 };
+  const options = { command, positional: [], context: [], additionalQuery: [], includeDomain: [], excludeDomain: [], format: "findings", mode: "standard", explicit: new Set(), rawOutputDefault: true };
   while (argv.length) {
     const arg = argv.shift();
     const value = () => argv.shift() ?? fail(`Missing value for ${arg}`);
     if (arg === "--output") options.output = value();
     else if (arg === "--query-file") options.queryFile = value();
     else if (arg === "--context") options.context.push(value());
+    else if (arg === "--context-glob") options.contextGlob = value();
     else if (arg === "--system-prompt") options.systemPrompt = value();
     else if (arg === "--additional-query") options.additionalQuery.push(value());
     else if (arg === "--include-domain") options.includeDomain.push(value());
     else if (arg === "--exclude-domain") options.excludeDomain.push(value());
     else if (arg === "--start-date") options.startDate = value();
     else if (arg === "--end-date") options.endDate = value();
-    else if (arg === "--num-results") options.numResults = Number(value());
-    else if (arg === "--text-max-characters") options.textMaxCharacters = Number(value());
+    else if (arg === "--num-results") { options.numResults = Number(value()); options.explicit.add("numResults"); }
+    else if (arg === "--text-max-characters") { options.textMaxCharacters = Number(value()); options.explicit.add("textMaxCharacters"); }
     else if (arg === "--format") options.format = value();
     else if (arg === "--raw-output") options.rawOutput = value();
-    else if (arg === "--timeout") options.timeout = Number(value());
-    else if (arg === "--type") options.type = value();
+    else if (arg === "--no-raw-output") options.rawOutputDefault = false;
+    else if (arg === "--timeout") { options.timeout = Number(value()); options.explicit.add("timeout"); }
+    else if (arg === "--type") { options.type = value(); options.explicit.add("type"); }
+    else if (arg === "--mode" || arg === "--research-mode") options.mode = value();
+    else if (arg === "--help" || arg === "-h") options.help = true;
     else if (arg?.startsWith("--")) fail(`Unknown flag: ${arg}`);
     else options.positional.push(arg);
   }
   return options;
 }
 
+function cleanPath(path) { return path?.startsWith("@") ? path.slice(1) : path; }
+function resolvePath(path) { return resolve(cleanPath(path)); }
+
+async function expandSimpleGlob(rawGlob, limit = MAX_CONTEXT_FILES) {
+  const cleaned = cleanPath(rawGlob.trim());
+  if (!cleaned.includes("*")) return [resolve(cleaned)];
+  const normalized = cleaned.replace(/\\/g, "/");
+  const slash = normalized.lastIndexOf("/");
+  const dirPart = slash >= 0 ? normalized.slice(0, slash) : ".";
+  const basePattern = slash >= 0 ? normalized.slice(slash + 1) : normalized;
+  if (basePattern.split("*").length > 2) fail(`--context-glob supports one '*' wildcard in the file name: ${rawGlob}`);
+  const [prefix, suffix] = basePattern.split("*");
+  const dir = resolve(dirPart);
+  const entries = await readdir(dir, { withFileTypes: true });
+  const matches = entries.filter((entry) => entry.isFile() && entry.name.startsWith(prefix) && entry.name.endsWith(suffix)).map((entry) => join(dir, entry.name)).sort();
+  if (matches.length > limit) fail(`--context-glob matched ${matches.length} files; limit is ${limit}: ${rawGlob}`);
+  return matches;
+}
+
+function applyMode(options) {
+  if (!researchModes.has(options.mode)) fail(`Invalid --mode ${options.mode}. Expected one of: ${Array.from(researchModes).join(", ")}.`);
+  const defaults = modeDefaults[options.mode];
+  options.type = options.explicit.has("type") ? options.type : defaults.type;
+  options.numResults = options.explicit.has("numResults") ? options.numResults : defaults.numResults;
+  options.textMaxCharacters = options.explicit.has("textMaxCharacters") ? options.textMaxCharacters : defaults.textMaxCharacters;
+  options.timeout = options.explicit.has("timeout") ? options.timeout : defaults.timeout;
+  if (!deepTypes.has(options.type)) fail(`Invalid --type ${options.type}`);
+  if (!formats.has(options.format)) fail(`Invalid --format ${options.format}`);
+  return options;
+}
+
 async function resolveQuery(options) {
   let query = options.positional.join(" ").trim();
-  if (options.queryFile) query = (await readFile(resolve(options.queryFile), "utf8")).trim();
+  if (options.queryFile) query = (await readFile(resolvePath(options.queryFile), "utf8")).trim();
   if (!query) fail("A query or --query-file is required.");
   return query;
 }
 
 async function readMaybeFile(value) {
   if (!value) return undefined;
-  const path = resolve(value);
+  const path = resolvePath(value);
   if (existsSync(path)) return readFile(path, "utf8");
   return value;
 }
@@ -80,8 +167,9 @@ async function buildSystemPrompt(options) {
   const custom = await readMaybeFile(options.systemPrompt);
   if (custom) parts.push(custom);
   else parts.push("You are producing an evidence-backed research findings report. Prioritize primary sources, current documentation, tradeoffs, risks, and concrete revisit conditions. Include source URLs for material claims when Exa returns citations.");
-  for (const contextPath of options.context) {
-    const text = await readFile(resolve(contextPath), "utf8");
+  const contextPaths = [...options.context.map(resolvePath), ...(options.contextGlob ? await expandSimpleGlob(options.contextGlob) : [])];
+  for (const contextPath of Array.from(new Set(contextPaths)).sort()) {
+    const text = await readFile(contextPath, "utf8");
     parts.push(`Context from ${contextPath}:\n${text}`);
   }
   return parts.join("\n\n---\n\n");
@@ -90,7 +178,19 @@ async function buildSystemPrompt(options) {
 function normalizeResults(raw) {
   return Array.isArray(raw?.results) ? raw.results : [];
 }
+function structuredContentToMarkdown(content) {
+  if (!content || typeof content !== "object" || Array.isArray(content)) return undefined;
+  const parts = [];
+  if (typeof content.executiveSummary === "string" && content.executiveSummary.trim()) parts.push(content.executiveSummary.trim());
+  const findings = Array.isArray(content.keyFindings) ? content.keyFindings : Array.isArray(content.findings) ? content.findings : [];
+  if (findings.length) parts.push(findings.map((item) => `- ${typeof item === "string" ? item : JSON.stringify(item)}`).join("\n"));
+  if (typeof content.recommendation === "string" && content.recommendation.trim()) parts.push(content.recommendation.trim());
+  return parts.length ? parts.join("\n\n") : JSON.stringify(content);
+}
 function synthesized(raw) {
+  if (typeof raw?.output?.content === "string" && raw.output.content.trim()) return raw.output.content;
+  const structured = structuredContentToMarkdown(raw?.output?.content);
+  if (structured) return structured;
   for (const key of ["answer", "summary", "output", "research", "text"]) if (typeof raw?.[key] === "string" && raw[key].trim()) return raw[key];
   if (typeof raw?.data?.answer === "string") return raw.data.answer;
   return "Exa returned sources but no synthesized answer field. Review evidence and raw metadata.";
@@ -99,16 +199,94 @@ function sourcesMarkdown(results) {
   if (!results.length) return "- No source URLs returned by Exa.";
   return results.map((r, i) => `- [${i + 1}] ${r.title || r.url || "Untitled"}${r.url ? ` — ${r.url}` : ""}${r.publishedDate ? ` (${r.publishedDate})` : ""}`).join("\n");
 }
+function oneLine(value, max = 260) {
+  const cleaned = String(value || "").split(/\r?\n/).map((line) => line.replace(/^\s{0,3}#{1,6}\s+/g, "").replace(/^\s{0,3}>\s*/g, "").replace(/^\s*```.*$/g, "").trim()).filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
+  return cleaned.length > max ? `${cleaned.slice(0, max - 1)}…` : cleaned;
+}
+function resultSnippet(r, max = 900) {
+  return oneLine([r.summary, ...(Array.isArray(r.highlights) ? r.highlights : []), r.text].filter(Boolean).join(" "), max);
+}
+function isGenericNoAnswer(value) {
+  return !String(value || "").trim() || /Exa returned (sources|\d+ sources) but no synthesized answer field/i.test(String(value));
+}
+function fallbackSummary(raw) {
+  const answer = synthesized(raw);
+  if (!isGenericNoAnswer(answer)) return answer;
+  const results = normalizeResults(raw);
+  if (!results.length) return "No sources were returned. Re-run with broader terms or fewer filters before making a decision.";
+  const themes = results.slice(0, 5).map((r, i) => `(${i + 1}) ${r.title || r.url || "Untitled"}`).join("; ");
+  return `Exa returned ${results.length} sources but no synthesized answer field. The strongest source clusters are: ${themes}. Treat the findings below as an evidence brief and validate recommendations against primary sources before committing.`;
+}
+function keyFindings(raw) {
+  const answer = synthesized(raw);
+  if (!isGenericNoAnswer(answer)) return answer;
+  const results = normalizeResults(raw);
+  if (!results.length) return "- No source-backed findings were returned.";
+  return results.slice(0, 8).map((r, i) => `- [${i + 1}] ${r.title || r.url || "Untitled"}: ${resultSnippet(r, 260) || "Review source directly."}`).join("\n");
+}
 function evidenceMarkdown(results) {
   return results.map((r, i) => {
-    const snippets = [r.summary, ...(Array.isArray(r.highlights) ? r.highlights : []), r.text].filter(Boolean).join("\n");
-    return `### [${i + 1}] ${r.title || r.url || "Untitled"}\n\n${r.url || ""}\n\n${snippets || "No snippet returned."}`;
+    const snippet = resultSnippet(r, 1200).split("\n").map((line) => `> ${line}`).join("\n");
+    return `### [${i + 1}] ${r.title || r.url || "Untitled"}\n\n${r.url || ""}\n\n${snippet || "> No snippet returned."}`;
   }).join("\n\n");
 }
-function renderFindings(query, raw) {
-  const answer = synthesized(raw);
+function renderFindings(query, raw, metadata = {}, rawOutput) {
+  const answer = fallbackSummary(raw);
+  const findings = keyFindings(raw);
   const results = normalizeResults(raw);
-  return `# Findings: ${query}\n\n## Research Question\n\n${query}\n\n## Executive Summary\n\n${answer}\n\n## Key Findings\n\n${answer}\n\n## Evidence and Sources\n\n${sourcesMarkdown(results)}\n\n${evidenceMarkdown(results)}\n\n## Tradeoffs / Alternatives\n\n- Review source evidence for tradeoffs and project-specific applicability.\n\n## Recommendation\n\n${answer}\n\n## Risks / Unknowns\n\n- Verify source freshness and applicability.\n- Re-run if upstream APIs, pricing, or release notes change.\n\n## Revisit Conditions\n\n- New primary-source documentation contradicts these findings.\n- Implementation constraints differ from supplied context.\n- Exa returns materially different source coverage in a later run.\n\n## Raw Exa Metadata\n\n\`\`\`json\n${JSON.stringify(raw, null, 2)}\n\`\`\`\n`;
+  const metadataLines = [
+    `- Mode: ${metadata.researchMode || "standard"}`,
+    `- Exa type: ${metadata.type || "deep-reasoning"}`,
+    `- Queries: ${metadata.queryCount || 1}`,
+    `- Sources: ${metadata.uniqueSourceCount ?? results.length} unique${metadata.sourceCount && metadata.sourceCount !== results.length ? ` (${metadata.sourceCount} returned before dedupe)` : ""}`,
+    rawOutput ? `- Raw metadata sidecar: ${rawOutput}` : undefined,
+  ].filter(Boolean).join("\n");
+  return `# Findings: ${query}\n\n## Research Question\n\n${query}\n\n## Executive Summary\n\n${answer}\n\n## Key Findings\n\n${findings}\n\n## Evidence and Sources\n\n${sourcesMarkdown(results)}\n\n${evidenceMarkdown(results)}\n\n## Tradeoffs / Alternatives\n\n- Compare benefits against implementation cost, operational risk, and project-specific constraints before committing.\n- Prefer primary-source documentation and current release notes when evidence conflicts.\n\n## Recommendation / Decision Criteria\n\n${answer}\n\nUse the source evidence above as decision criteria; validate any project-specific assumptions before irreversible work.\n\n## Risks / Unknowns\n\n- Verify source freshness and applicability.\n- Re-run if upstream APIs, pricing, or release notes change.\n- Treat uncited or snippet-only claims as hypotheses until confirmed by primary sources.\n\n## Revisit Conditions\n\n- New primary-source documentation contradicts these findings.\n- Implementation constraints differ from supplied context.\n- Exa returns materially different source coverage in a later run.\n\n## Research Metadata\n\n${metadataLines}\n`;
+}
+
+function defaultRawOutputPath(outputPath) {
+  const ext = extname(outputPath);
+  return ext ? `${outputPath.slice(0, -ext.length)}.raw.json` : `${outputPath}.raw.json`;
+}
+
+function dedupeResults(responses) {
+  const seen = new Set();
+  const results = [];
+  let sourceCount = 0;
+  for (const raw of responses) {
+    const current = normalizeResults(raw);
+    sourceCount += current.length;
+    for (const result of current) {
+      const key = String(result.url || result.title || JSON.stringify(result)).trim().toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      results.push(result);
+    }
+  }
+  return { results, sourceCount };
+}
+
+function combineResponses(responses, options, elapsedMs) {
+  const { results, sourceCount } = dedupeResults(responses);
+  const answers = responses.map((raw, index) => {
+    const answer = synthesized(raw);
+    return answer ? `Query ${index + 1}: ${answer}` : undefined;
+  }).filter(Boolean);
+  const raw = responses.length === 1
+    ? { ...responses[0], results }
+    : { answer: answers.join("\n\n"), results, responses };
+  const metadata = {
+    researchMode: options.mode,
+    type: options.type,
+    numResults: options.numResults,
+    textMaxCharacters: options.textMaxCharacters,
+    timeoutSeconds: options.timeout,
+    queryCount: responses.length,
+    sourceCount,
+    uniqueSourceCount: results.length,
+    elapsedMs,
+  };
+  return { raw, metadata };
 }
 
 async function writeAtomic(path, content) {
@@ -120,20 +298,34 @@ async function writeAtomic(path, content) {
   return target;
 }
 
-async function callExa(query, options) {
-  if (process.env.EXA_MOCK_RESPONSE_FILE) return JSON.parse(await readFile(resolve(process.env.EXA_MOCK_RESPONSE_FILE), "utf8"));
+async function callExaBody(body, options, controller) {
+  if (process.env.EXA_MOCK_RESPONSE_FILE) {
+    const mock = JSON.parse(await readFile(resolve(process.env.EXA_MOCK_RESPONSE_FILE), "utf8"));
+    if (Array.isArray(mock)) return mock[Math.min(options.mockIndex++, mock.length - 1)];
+    return mock;
+  }
   if (typeof fetch !== "function") fail("This Node runtime does not provide fetch. Use Node 18+.");
   const key = resolveSecretRef(process.env.EXA_API_KEY, "EXA_API_KEY");
   if (!key) fail("EXA_API_KEY is required for Exa deep research. Set EXA_API_KEY or add it to .env.local.");
-  if (!deepTypes.has(options.type)) fail(`Invalid --type ${options.type}`);
-  if (!formats.has(options.format)) fail(`Invalid --format ${options.format}`);
+  const response = await fetch("https://api.exa.ai/search", { method: "POST", headers: { "content-type": "application/json", "x-api-key": key }, body: JSON.stringify(body), signal: controller.signal });
+  if (!response.ok) fail(`Exa request failed (${response.status}): ${await response.text().catch(() => response.statusText)}`);
+  return response.json();
+}
+
+async function callExa(query, options) {
+  applyMode(options);
+  options.mockIndex = 0;
+  const startedAt = Date.now();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), Math.max(1, options.timeout) * 1000);
   const body = {
     query,
     type: options.type,
     numResults: options.numResults,
-    contents: { text: { maxCharacters: options.textMaxCharacters }, highlights: true },
+    contents: options.mode === "lite"
+      ? { text: { maxCharacters: options.textMaxCharacters }, highlights: { maxCharacters: 600, numSentences: 3, highlightsPerUrl: 1 } }
+      : { text: { maxCharacters: options.textMaxCharacters }, highlights: { maxCharacters: 900, numSentences: 4, highlightsPerUrl: 2 }, summary: { query: "Summarize source evidence relevant to the research question, preserving concrete facts and tradeoffs." } },
+    outputSchema: options.mode === "lite" ? undefined : defaultOutputSchema,
     systemPrompt: await buildSystemPrompt(options),
     additionalQueries: options.additionalQuery.length ? options.additionalQuery : undefined,
     includeDomains: options.includeDomain.length ? options.includeDomain : undefined,
@@ -143,9 +335,14 @@ async function callExa(query, options) {
   };
   Object.keys(body).forEach((key) => body[key] === undefined && delete body[key]);
   try {
-    const response = await fetch("https://api.exa.ai/search", { method: "POST", headers: { "content-type": "application/json", "x-api-key": key }, body: JSON.stringify(body), signal: controller.signal });
-    if (!response.ok) fail(`Exa request failed (${response.status}): ${await response.text().catch(() => response.statusText)}`);
-    return response.json();
+    const queries = options.mode === "full" ? Array.from(new Set([query, ...options.additionalQuery].map((item) => item.trim()).filter(Boolean))) : [query];
+    const responses = [];
+    for (const currentQuery of queries) {
+      const currentBody = { ...body, query: currentQuery };
+      if (options.mode === "full") delete currentBody.additionalQueries;
+      responses.push(await callExaBody(currentBody, options, controller));
+    }
+    return combineResponses(responses, options, Date.now() - startedAt);
   } finally {
     clearTimeout(timer);
   }
@@ -154,8 +351,8 @@ async function callExa(query, options) {
 async function main() {
   await loadEnv();
   const options = parseArgs(process.argv.slice(2));
-  if (!options.command || options.command === "help" || options.command === "--help") {
-    jsonOut(process.stdout, { ok: true, usage: "deep-research report|json|doctor [query] --output path" });
+  if (!options.command || options.command === "help" || options.command === "--help" || options.help) {
+    jsonOut(process.stdout, helpPayload());
     return;
   }
   if (options.command === "doctor") {
@@ -164,13 +361,15 @@ async function main() {
   }
   if (options.command !== "report" && options.command !== "json") fail(`Unknown command: ${options.command}`);
   const query = await resolveQuery(options);
-  const raw = await callExa(query, options);
+  const { raw, metadata } = await callExa(query, options);
   const format = options.command === "json" ? "json" : options.format;
-  const content = format === "json" ? JSON.stringify(raw, null, 2) : renderFindings(query, raw);
+  let rawOutput = options.rawOutput;
+  if (!rawOutput && options.output && options.command === "report" && format !== "json" && options.rawOutputDefault) rawOutput = defaultRawOutputPath(resolve(options.output));
+  const content = format === "json" ? JSON.stringify(raw, null, 2) : renderFindings(query, raw, metadata, rawOutput ? resolve(rawOutput) : undefined);
   let output;
   if (options.output) output = await writeAtomic(options.output, content);
-  if (options.rawOutput) await writeAtomic(options.rawOutput, JSON.stringify(raw, null, 2));
-  jsonOut(process.stdout, { ok: true, output, rawOutput: options.rawOutput ? resolve(options.rawOutput) : undefined, sources: normalizeResults(raw).length });
+  if (rawOutput) await writeAtomic(rawOutput, JSON.stringify({ metadata: { ...metadata, rawOutputPath: resolve(rawOutput) }, raw }, null, 2));
+  jsonOut(process.stdout, { ok: true, output, rawOutput: rawOutput ? resolve(rawOutput) : undefined, mode: metadata.researchMode, queryCount: metadata.queryCount, sources: normalizeResults(raw).length, uniqueSources: metadata.uniqueSourceCount });
 }
 
 main().catch((error) => fail(error?.message || String(error)));

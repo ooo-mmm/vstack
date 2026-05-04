@@ -67,7 +67,7 @@ Create issue using input variables.
 Next available DXXX via `.agents/skills/decider/scripts/decisions next-id` (decider skill)
 
 ## Researcher Execution
-Use the deep-research skill with Exa. Write findings to `[RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/findings.md` and preserve raw Exa metadata when available.
+Use the deep-research skill with Exa. Run mode `[RESEARCH_MODE]` (`standard` by default; `full` for Strategic/high-risk/pervasive decisions). Write clean findings to `[RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/findings.md` and raw metadata to `[RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/raw-exa.json`.
 ```
 
 **[TYPE_SECTION]** — insert based on [TYPE]:
@@ -177,13 +177,22 @@ Create project research docs directory for `[RESEARCH_ISSUE_ID]/`:
 - Extract relevant architecture content directly
 - Ensure the researcher agent has all necessary context to execute the research effectively. If there is anything they need to know, add it.
 
+Determine `[RESEARCH_MODE]` before writing commands:
+
+| Type | Default mode |
+|------|--------------|
+| Targeted | `standard` |
+| Pervasive | `standard` unless risk is high, then `full` |
+| Strategic | `full` |
+
 **run.sh** - Generated executable command helper:
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
 .agents/skills/deep-research/scripts/deep-research report \
   --query-file "[RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/prompt.txt" \
-  --context "[RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/context-[TOPIC].md" \
+  --context-glob "[RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/context-*.md" \
+  --mode "[RESEARCH_MODE]" \
   --output "[RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/findings.md" \
   --raw-output "[RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/raw-exa.json"
 ```
@@ -222,7 +231,7 @@ Assets complete. Update issue description with asset paths, then set state to To
    `research-complete [RESEARCH_ISSUE_ID]`
 
    ## Researcher Execution
-   Run `[RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/run.sh` or use Pi `web_research` with `outputPath` set to `[RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/findings.md`.
+   Run `[RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/run.sh` or use Pi `web_research` with `queryFile`, `contextGlob`, `researchMode`, `outputPath` set to `[RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/findings.md`, and `rawOutputPath` set to `[RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/raw-exa.json`.
    ```
 
 3. **Update**: `.agents/skills/linear/scripts/linear.sh issues update [RESEARCH_ISSUE_ID] --description "[FULL_DESCRIPTION]"`
@@ -246,23 +255,31 @@ Read:
 - [RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/prompt.txt
 - [RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/context-*.md
 
-Use the deep-research skill with Exa.
+Use the deep-research skill with Exa. Prefer Pi `web_research` with:
+- `queryFile`: [RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/prompt.txt
+- `contextGlob`: [RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/context-*.md
+- `researchMode`: [RESEARCH_MODE]
+- `outputPath`: [RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/findings.md
+- `rawOutputPath`: [RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/raw-exa.json
+
+If Pi `web_research` is unavailable, run `[RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/run.sh`.
 Write findings to:
 [RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/findings.md
 
 Requirements:
-1. Use Exa deep research, preferably deep-reasoning.
+1. Use Exa deep research with mode `[RESEARCH_MODE]`.
 2. Include citations/source URLs.
-3. Include executive summary, key findings, recommendation, risks, and revisit conditions.
-4. Save raw Exa metadata if available.
-5. Do not change production code.
-6. Return only after findings.md exists.
+3. Include executive summary, key findings, evidence and sources, recommendation/decision criteria, risks, and revisit conditions.
+4. Save raw Exa metadata to `[RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/raw-exa.json`.
+5. Keep `findings.md` clean; do not embed raw JSON or fenced raw metadata.
+6. Do not change production code.
+7. Return only after findings.md and raw-exa.json exist.
 </delegation_format>
 
 After researcher returns:
 
 1. Verify `[RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/findings.md` exists.
-2. Verify it has non-empty `Executive Summary`, `Key Findings`, `Evidence and Sources`, `Recommendation`, `Risks / Unknowns`, and `Revisit Conditions` sections.
+2. Verify it has non-empty `Executive Summary`, `Key Findings`, `Evidence and Sources`, `Recommendation / Decision Criteria`, `Risks / Unknowns`, `Revisit Conditions`, and `Research Metadata` sections, and does not contain embedded raw JSON blocks.
 3. Add a comment to the research issue with a concise summary, findings path, researcher identity, and raw metadata path when present.
 4. If this workflow is running inside a managed parent orchestration flow, directly invoke `research-complete [RESEARCH_ISSUE_ID]`. If standalone, set the research issue Done only after verification and present the next command: `research-complete [RESEARCH_ISSUE_ID]`.
 
@@ -275,7 +292,7 @@ After researcher returns:
 - [ ] No external references in any file
 - [ ] Questions refined by domain agents
 - [ ] Deliverables are specific and actionable
-- [ ] run.sh or command.txt invokes deep-research with prompt/context/output paths
+- [ ] run.sh or command.txt invokes deep-research with prompt/context-glob/mode/output/raw-output paths
 - [ ] Delegation prompt is self-contained
 
 ## 6. Return State

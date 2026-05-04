@@ -22,6 +22,7 @@ export interface WebToolsSettings {
 	curatorTimeoutSeconds: number;
 	summaryModel: string;
 	includeContentByDefault: boolean;
+	exaResearchModes: Record<string, Record<string, unknown>>;
 	browserCookieAccess: boolean;
 	githubClone: { enabled: boolean; maxRepoSizeMB: number };
 	video: { enabled: boolean };
@@ -45,6 +46,7 @@ export const DEFAULT_SETTINGS: Omit<WebToolsSettings, "apiKeys" | "warnings" | "
 	curatorTimeoutSeconds: 20,
 	summaryModel: "current",
 	includeContentByDefault: false,
+	exaResearchModes: {},
 	browserCookieAccess: false,
 	githubClone: { enabled: true, maxRepoSizeMB: 350 },
 	video: { enabled: true },
@@ -155,10 +157,53 @@ function nested(raw: SettingsRecord, key: string): SettingsRecord {
 	return asRecord(raw[key]) ?? {};
 }
 
+function recordOfRecords(raw: SettingsRecord, key: string): Record<string, Record<string, unknown>> {
+	let rawValue = raw[key];
+	if (typeof rawValue === "string" && rawValue.trim()) {
+		try { rawValue = JSON.parse(rawValue); }
+		catch { return {}; }
+	}
+	const value = asRecord(rawValue);
+	if (!value) return {};
+	const output: Record<string, Record<string, unknown>> = {};
+	for (const [name, record] of Object.entries(value)) {
+		const nestedRecord = asRecord(record);
+		if (nestedRecord) output[name] = nestedRecord;
+	}
+	return output;
+}
+
 function readJsonFile(path: string): SettingsRecord {
 	if (!existsSync(path)) return {};
 	const parsed = JSON.parse(readFileSync(path, "utf8"));
 	return asRecord(parsed) ?? {};
+}
+
+function parseEnvFile(path: string): SettingsRecord {
+	if (!existsSync(path)) return {};
+	const parsed: SettingsRecord = {};
+	for (const line of readFileSync(path, "utf8").split(/\r?\n/)) {
+		const match = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/);
+		if (!match) continue;
+		let value = match[2] ?? "";
+		if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) value = value.slice(1, -1);
+		parsed[match[1]!] = value;
+	}
+	return parsed;
+}
+
+function projectEnvFiles(cwd: string): string[] {
+	let current = resolve(cwd);
+	while (true) {
+		if (existsSync(join(current, ".git")) || existsSync(join(current, ".vstack-lock.json")) || existsSync(join(current, ".pi"))) return [join(current, ".env"), join(current, ".env.local")];
+		const parent = dirname(current);
+		if (parent === current) return [join(resolve(cwd), ".env"), join(resolve(cwd), ".env.local")];
+		current = parent;
+	}
+}
+
+function readProjectEnvConfig(cwd: string): SettingsRecord {
+	return projectEnvFiles(cwd).reduce((merged, path) => mergeDeep(merged, parseEnvFile(path)), {} as SettingsRecord);
 }
 
 function resolveConfigPath(raw: SettingsRecord): string | undefined {
@@ -189,6 +234,7 @@ function resolveSecretRef(value: string | undefined, name: string, warnings: str
 export function loadSettings(cwd = process.cwd()): WebToolsSettings {
 	const raw = readRawVstackConfig(cwd);
 	const warnings = settingsDiagnostics(cwd);
+	const envFileConfig = readProjectEnvConfig(cwd);
 	const privateConfigFile = resolveConfigPath(raw);
 	let privateConfig: SettingsRecord = {};
 	if (privateConfigFile) {
@@ -200,7 +246,7 @@ export function loadSettings(cwd = process.cwd()): WebToolsSettings {
 	const shortcuts = nested(raw, "shortcuts");
 	const sharedSecrets = ["exaApiKey", "perplexityApiKey", "geminiApiKey", "openaiApiKey"].filter((key) => typeof raw[key] === "string");
 	if (sharedSecrets.length > 0) warnings.push(`API keys in shared Pi settings are supported for compatibility but env vars or PI_WEB_TOOLS_CONFIG_FILE are preferred: ${sharedSecrets.join(", ")}`);
-	const secrets = { ...raw, ...privateConfig };
+	const secrets = { ...envFileConfig, ...raw, ...privateConfig };
 	const exaKey = process.env.EXA_API_KEY || secretFrom(secrets, ["EXA_API_KEY", "exaApiKey"]);
 	const perplexityKey = process.env.PERPLEXITY_API_KEY || secretFrom(secrets, ["PERPLEXITY_API_KEY", "perplexityApiKey"]);
 	const geminiKey = process.env.GEMINI_API_KEY || secretFrom(secrets, ["GEMINI_API_KEY", "geminiApiKey"]);
@@ -219,6 +265,7 @@ export function loadSettings(cwd = process.cwd()): WebToolsSettings {
 		curatorTimeoutSeconds: numberSetting(raw, "curatorTimeoutSeconds", DEFAULT_SETTINGS.curatorTimeoutSeconds, 1, 600),
 		summaryModel: stringSetting(raw, "summaryModel", DEFAULT_SETTINGS.summaryModel),
 		includeContentByDefault: boolSetting(raw, "includeContentByDefault"),
+		exaResearchModes: recordOfRecords(raw, "exaResearchModes"),
 		browserCookieAccess: boolSetting(raw, "browserCookieAccess"),
 		githubClone: {
 			enabled: typeof githubClone.enabled === "boolean" ? githubClone.enabled : DEFAULT_SETTINGS.githubClone.enabled,

@@ -16,11 +16,13 @@
 
 {{sources}}
 
+{{evidence_excerpts}}
+
 ## Tradeoffs / Alternatives
 
 {{tradeoffs}}
 
-## Recommendation
+## Recommendation / Decision Criteria
 
 {{recommendation}}
 
@@ -32,8 +34,8 @@
 
 {{revisit_conditions}}
 
-## Raw Exa Metadata
+## Research Metadata
 
-```json
-{{raw_json}}
-```
+{{research_metadata}}
+
+<!-- Keep this file human-readable. Do not embed raw Exa JSON here; write provider payloads to the sidecar JSON file (findings.raw.json by default, or the explicit raw output path). -->

@@ -60,6 +60,37 @@ export function successSummary(theme: any, label: string, target: string, meta?:
 	return `${bullet(theme, "success")}${toolLabel(theme, `${label} `)}${accent(theme, oneLine(target, 92))}${meta ? dim(theme, ` · ${meta}`) : ""}`;
 }
 
+export function providerDisplayName(provider: unknown): string {
+	const value = String(provider ?? "").trim().toLowerCase();
+	if (value.includes("/")) return value.split("/").map((part) => providerDisplayName(part)).join("/");
+	if (value === "exa") return "Exa";
+	if (value === "github") return "GitHub";
+	if (value === "gemini") return "Gemini";
+	if (value === "perplexity") return "Perplexity";
+	if (value === "openai-native") return "OpenAI Native";
+	if (value === "openai" || value === "openai-codex" || value === "codex") return "Codex";
+	if (value === "http") return "HTTP";
+	if (value === "mixed") return "Mixed";
+	if (value === "auto") return "Auto";
+	if (value === "session" || value === "stored") return "Session";
+	if (value === "resolving…" || value === "resolving...") return "Resolving…";
+	return value ? value.replace(/(^|-)([a-z])/g, (_match, sep, char) => `${sep === "-" ? " " : ""}${char.toUpperCase()}`) : "Provider";
+}
+
+export function providerModeDisplayName(provider: unknown, mode?: unknown): string {
+	const providerValue = String(provider ?? "").trim().toLowerCase();
+	const modeValue = String(mode ?? "").trim().toLowerCase();
+	if (providerValue === "exa" && modeValue) {
+		if (modeValue === "lite" || modeValue === "deep-lite") return "Exa-Lite";
+		if (modeValue === "standard" || modeValue === "full" || modeValue === "deep" || modeValue === "deep-reasoning") return "Exa-Deep";
+	}
+	return providerDisplayName(provider);
+}
+
+export function providerLabel(label: string, provider: unknown, mode?: unknown): string {
+	return `${label} (${providerModeDisplayName(provider, mode)})`;
+}
+
 export function errorSummary(theme: any, label: string, message: string): string {
 	return `${bullet(theme, "error")}${toolLabel(theme, `${label} `)}${theme.fg("error", oneLine(message, 120))}`;
 }

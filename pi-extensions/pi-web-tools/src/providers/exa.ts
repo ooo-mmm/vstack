@@ -5,8 +5,14 @@ export type ExaDeepType = "deep-reasoning" | "deep-lite" | "deep";
 export interface ExaSearchParams {
 	query: string;
 	type?: "auto" | "keyword" | "neural" | ExaDeepType;
+	category?: string;
 	numResults?: number;
 	textMaxCharacters?: number;
+	highlightsMaxCharacters?: number;
+	highlightNumSentences?: number;
+	highlightsPerUrl?: number;
+	summaryQuery?: string;
+	maxAgeHours?: number;
 	includeDomains?: string[];
 	excludeDomains?: string[];
 	startPublishedDate?: string;
@@ -56,11 +62,33 @@ function normalizeResults(raw: any): NormalizedExaResult[] {
 }
 
 function synthesized(raw: any): string | undefined {
+	const outputContent = raw?.output?.content;
+	if (typeof outputContent === "string" && outputContent.trim()) return outputContent;
+	if (outputContent && typeof outputContent === "object") return structuredContentToMarkdown(outputContent);
 	for (const key of ["answer", "summary", "output", "research", "text"]) {
 		if (typeof raw?.[key] === "string" && raw[key].trim()) return raw[key];
 	}
 	if (typeof raw?.data?.answer === "string") return raw.data.answer;
 	return undefined;
+}
+
+function linesFrom(value: unknown): string[] {
+	if (Array.isArray(value)) return value.map((item) => typeof item === "string" ? item : JSON.stringify(item)).filter(Boolean);
+	if (typeof value === "string" && value.trim()) return [value.trim()];
+	return [];
+}
+
+function structuredContentToMarkdown(content: Record<string, unknown>): string | undefined {
+	const parts: string[] = [];
+	const summary = typeof content.executiveSummary === "string" ? content.executiveSummary : typeof content.summary === "string" ? content.summary : undefined;
+	if (summary?.trim()) parts.push(summary.trim());
+	const keyFindings = linesFrom(content.keyFindings ?? content.findings);
+	if (keyFindings.length) parts.push(keyFindings.map((item) => `- ${item}`).join("\n"));
+	const recommendation = typeof content.recommendation === "string" ? content.recommendation : undefined;
+	if (recommendation?.trim()) parts.push(recommendation.trim());
+	if (parts.length) return parts.join("\n\n");
+	try { return JSON.stringify(content); }
+	catch { return undefined; }
 }
 
 export class ExaClient {
@@ -89,12 +117,21 @@ export class ExaClient {
 	}
 
 	buildSearchBody(params: ExaSearchParams): Record<string, unknown> {
+		const highlightsOptions: Record<string, unknown> = {};
+		if (params.highlightsMaxCharacters != null) highlightsOptions.maxCharacters = params.highlightsMaxCharacters;
+		if (params.highlightNumSentences != null) highlightsOptions.numSentences = params.highlightNumSentences;
+		if (params.highlightsPerUrl != null) highlightsOptions.highlightsPerUrl = params.highlightsPerUrl;
+		const highlights = Object.keys(highlightsOptions).length ? highlightsOptions : true;
+		const contents: Record<string, unknown> = { text: { maxCharacters: params.textMaxCharacters ?? 12000 }, highlights };
+		if (params.summaryQuery) contents.summary = { query: params.summaryQuery };
 		const body: Record<string, unknown> = {
 			query: params.query,
 			type: params.type ?? "auto",
 			numResults: params.numResults ?? 10,
-			contents: { text: { maxCharacters: params.textMaxCharacters ?? 12000 }, highlights: true },
+			contents,
 		};
+		if (params.category) body.category = params.category;
+		if (params.maxAgeHours != null) body.maxAgeHours = params.maxAgeHours;
 		if (params.includeDomains?.length) body.includeDomains = params.includeDomains;
 		if (params.excludeDomains?.length) body.excludeDomains = params.excludeDomains;
 		if (params.startPublishedDate) body.startPublishedDate = params.startPublishedDate;

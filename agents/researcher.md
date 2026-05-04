@@ -28,10 +28,10 @@ Executes research issues and writes evidence-backed findings reports.
 ## Required Behavior
 
 1. Read the delegated research prompt and every provided context file.
-2. Use Exa deep research, preferably `deep-reasoning`.
-3. Write findings to the exact requested path.
-4. Include source URLs/citations in the findings report.
-5. Include executive summary, key findings, recommendation, risks, and revisit conditions.
-6. Preserve raw Exa metadata when the tool/script returns it.
+2. Prefer Pi `web_research` when active: pass `queryFile`, `contextGlob` or `contextFiles`, `researchMode`, `outputPath`, and `rawOutputPath` when supplied. Otherwise run `.agents/skills/deep-research/scripts/deep-research` from the project root.
+3. Use `researchMode: standard` by default, `lite` for quick spikes, and `full` for strategic/high-risk decisions.
+4. Write findings to the exact requested path.
+5. Keep `findings.md` clean: no embedded raw JSON, includes source URLs/citations, executive summary, key findings, evidence, recommendation/decision criteria, risks, and revisit conditions.
+6. Preserve raw Exa metadata in the sidecar JSON path (`findings.raw.json` or provided `raw-exa.json`) and verify it exists when expected.
 7. Do not change production code.
-8. Return exactly one completion message after `findings.md` exists.
+8. Return exactly one completion message after `findings.md` exists and passes the clean-report checks.

@@ -7,7 +7,7 @@ import { resolveWebProvider } from "../provider-selection.js";
 import type { WebProvider, WebToolsSettings } from "../settings.js";
 import { storeWebContent } from "../storage.js";
 import { sourceList } from "../utils/format.js";
-import { accent, emptyComponent, errorSummary, firstText, muted, successSummary, textComponent, tree, webCallText } from "../utils/render.js";
+import { accent, emptyComponent, errorSummary, firstText, muted, providerLabel, successSummary, textComponent, tree, webCallText } from "../utils/render.js";
 
 const providers = ["auto", "exa", "openai-native", "perplexity", "gemini"] as const;
 
@@ -46,17 +46,17 @@ export function createWebSearchToolDefinition(pi: ExtensionAPI, getSettings: (cw
 			if (context?.executionStarted && !context?.isPartial) return emptyComponent();
 			const query = args?.query || args?.queries?.[0] || "search";
 			const batch = args?.queries && args.queries.length > 1 ? ` +${args.queries.length - 1} queries` : undefined;
-			const provider = args?.provider && args.provider !== "auto" ? args.provider : undefined;
-			return textComponent(webCallText(theme, name === "web_search" ? "Web Search" : name, query, [provider, batch].filter(Boolean).join(" · ")));
+			const provider = forcedProvider ?? args?.provider ?? "auto";
+			return textComponent(webCallText(theme, providerLabel(name === "web_search" ? "Web Search" : name, provider), query, [batch].filter(Boolean).join(" · ")));
 		},
 		renderResult(result: any, options: any, theme: any, context: any) {
 			if (options?.isPartial) return emptyComponent();
-			if (context?.isError) return textComponent(errorSummary(theme, name === "web_search" ? "Web Search" : name, firstText(result) || "failed"));
+			if (context?.isError) return textComponent(errorSummary(theme, providerLabel(name === "web_search" ? "Web Search" : name, forcedProvider ?? context?.args?.provider ?? "auto"), firstText(result) || "failed"));
 			const details = result?.details ?? {};
 			const results = Array.isArray(details.results) ? details.results : [];
 			const provider = details.provider ? `${details.provider}` : "provider";
 			const query = context?.args?.query || context?.args?.queries?.[0] || "complete";
-			const lines = [successSummary(theme, name === "web_search" ? "Web Search" : name, query, `${provider} · ${results.length} results`)];
+			const lines = [successSummary(theme, providerLabel(name === "web_search" ? "Web Search" : name, provider), query, `${results.length} results`)];
 			const shown = results.slice(0, options?.expanded ? 8 : 3);
 			for (let index = 0; index < shown.length; index++) {
 				const item = shown[index]!;
