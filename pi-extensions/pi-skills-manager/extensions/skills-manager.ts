@@ -1040,7 +1040,7 @@ class ScrollableSkillPreview implements Component {
 	private footer(innerWidth: number, visibleHeight: number, totalLines: number): string {
 		const maxScroll = Math.max(0, totalLines - visibleHeight);
 		const scroll = maxScroll > 0 ? ` • ${this.scrollOffset + 1}-${Math.min(totalLines, this.scrollOffset + visibleHeight)}/${totalLines}` : "";
-		const own = isDeletableSkill(this.skill) ? " • e edit • r rename • backspace delete" : "";
+		const own = isDeletableSkill(this.skill) ? " • ctrl+e edit • ctrl+r rename • backspace delete" : "";
 		const insert = this.skill.enabled ? "enter insert • " : "";
 		return truncateToWidth(this.theme.fg("dim", `↑/↓ scroll • ${insert}ctrl+x enable/disable${own} • esc back${scroll}`), innerWidth, this.theme.fg("dim", "..."));
 	}
@@ -1468,7 +1468,7 @@ class SkillsManagerDialog implements Focusable {
 		const skill = this.deleteSkillPath ? this.registry.allSkills.find((entry) => entry.path === this.deleteSkillPath) : undefined;
 		const innerWidth = Math.max(1, Math.min(width - 4, 64));
 		const message = skill ? `Delete ${skill.name}? This removes ${skillStorageTarget(skill)} and cannot be undone.` : "Delete this skill?";
-		return renderCenteredDialog(this.theme, width, [skillEntityTitle(this.theme, "Delete skill"), "", ...wrapTextWithAnsi(message, innerWidth), "", this.theme.fg("dim", "enter/y delete • esc/n cancel")]);
+		return renderCenteredDialog(this.theme, width, [skillEntityTitle(this.theme, "Delete skill"), "", ...wrapTextWithAnsi(message, innerWidth), "", this.theme.fg("dim", "enter delete • esc cancel")]);
 	}
 	private renderGeneratingDialog(width: number): string[] {
 		const modelLabel = this.ctx.model?.id ?? "fallback template";
@@ -1478,7 +1478,7 @@ class SkillsManagerDialog implements Focusable {
 	handleInput(data: string): void {
 		if (this.mode === "generating") { if (matchesKey(data, Key.escape)) { this.generationAbortController?.abort(); this.generationAbortController = undefined; this.generationRunId += 1; this.mode = "create"; this.syncFocus(); this.requestRender(); } return; }
 		if (this.mode === "rename") { if (matchesKey(data, Key.escape)) { this.closeRenameDialog(); return; } if (this.renameError) this.renameError = undefined; this.renameInput.handleInput(data); return; }
-		if (this.mode === "delete-confirm") { if (matchesKey(data, Key.escape) || data === "n" || data === "N") { this.mode = this.deleteReturnMode === "preview" ? "preview" : "browse"; this.syncFocus(); return; } if (matchesKey(data, Key.enter) || data === "y" || data === "Y") void this.confirmDelete(); return; }
+		if (this.mode === "delete-confirm") { if (matchesKey(data, Key.escape)) { this.mode = this.deleteReturnMode === "preview" ? "preview" : "browse"; this.syncFocus(); return; } if (matchesKey(data, Key.enter)) void this.confirmDelete(); return; }
 		if (this.mode === "edit") { this.editorView?.handleInput(data); return; }
 		if (this.mode === "preview") {
 			const skill = this.getCurrentSkill();
@@ -1486,9 +1486,9 @@ class SkillsManagerDialog implements Focusable {
 			if (matchesKey(data, Key.escape) || matchesKey(data, Key.tab)) { this.exitToBrowse(skill.path); return; }
 			if (matchesKey(data, Key.enter)) { if (!skill.enabled) this.ctx.ui.notify("Enable this skill first with ctrl+x", "info"); else this.done(skill); return; }
 			if (matchesKey(data, Key.ctrl("x"))) { void this.toggleSkill(skill); return; }
-			if (isDeletableSkill(skill) && (data === "e" || data === "E")) { this.openEditor(); return; }
-			if (isDeletableSkill(skill) && (data === "r" || data === "R")) { this.openRenameDialog(); return; }
-			if (isDeletableSkill(skill) && (matchesKey(data, Key.backspace) || data === "d" || data === "D")) { this.openDeleteConfirm(skill, "preview"); return; }
+			if (isDeletableSkill(skill) && matchesKey(data, Key.ctrl("e"))) { this.openEditor(); return; }
+			if (isDeletableSkill(skill) && matchesKey(data, Key.ctrl("r"))) { this.openRenameDialog(); return; }
+			if (isDeletableSkill(skill) && (matchesKey(data, Key.backspace) || matchesKey(data, "delete"))) { this.openDeleteConfirm(skill, "preview"); return; }
 			this.preview?.handleInput(data); return;
 		}
 		if (this.mode === "create") { this.handleCreateInput(data); return; }

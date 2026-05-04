@@ -20,10 +20,10 @@ Popup controls:
 | Key | Action |
 | --- | --- |
 | Type | Search stashed prompts. |
-| `↑` / `↓`, `j` / `k` | Move selection. |
+| `↑` / `↓` | Move selection. |
 | `Enter` | Pop the selected prompt into the editor and remove it from the stash. |
 | `Ctrl+D` or `Delete` | Delete the selected prompt. |
-| `Ctrl+X`, then `y` | Delete all stashed prompts. |
+| `Ctrl+X`, then `Enter` | Delete all stashed prompts. |
 | `Esc` | Close. |
 
 ## Storage

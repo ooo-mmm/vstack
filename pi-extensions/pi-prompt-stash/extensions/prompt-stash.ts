@@ -395,8 +395,8 @@ async function openStashPopup(ctx: ExtensionContext): Promise<void> {
 
 				lines.push(panelLine("", innerWidth));
 				const status = confirmDeleteAll
-					? `${theme.fg("warning", "delete all stashed prompts?")} ${ansiYellow("y")} ${theme.fg("dim", "confirm · ")}${ansiYellow("n/esc")} ${theme.fg("dim", "cancel")}`
-					: `${ansiYellow("↑↓/jk")} ${theme.fg("dim", "select · ")}${ansiYellow("enter")} ${theme.fg("dim", "pop · ")}${ansiYellow("ctrl+d")} ${theme.fg("dim", "delete · ")}${ansiYellow("ctrl+x")} ${theme.fg("dim", "delete all · ")}${ansiYellow("esc")} ${theme.fg("dim", "close")}`;
+					? `${theme.fg("warning", "delete all stashed prompts?")} ${ansiYellow("enter")} ${theme.fg("dim", "confirm · ")}${ansiYellow("esc")} ${theme.fg("dim", "cancel")}`
+					: `${ansiYellow("↑↓")} ${theme.fg("dim", "select · ")}${ansiYellow("enter")} ${theme.fg("dim", "pop · ")}${ansiYellow("ctrl+d")} ${theme.fg("dim", "delete · ")}${ansiYellow("ctrl+x")} ${theme.fg("dim", "delete all · ")}${ansiYellow("esc")} ${theme.fg("dim", "close")}`;
 				lines.push(panelLine(status, innerWidth));
 
 				return framePopup(lines, width, theme, "Prompt Stash", `${items.length} saved`);
@@ -411,11 +411,11 @@ async function openStashPopup(ctx: ExtensionContext): Promise<void> {
 				},
 				handleInput(data: string) {
 					if (confirmDeleteAll) {
-						if (data === "y" || data === "Y") {
+						if (matchesKey(data, "return") || matchesKey(data, "enter")) {
 							clearAll();
 							return;
 						}
-						if (data === "n" || data === "N" || matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
+						if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
 							confirmDeleteAll = false;
 							tui.requestRender();
 							return;
@@ -430,13 +430,13 @@ async function openStashPopup(ctx: ExtensionContext): Promise<void> {
 						popSelected();
 						return;
 					}
-					if (matchesKey(data, "up") || data === "k") {
+					if (matchesKey(data, "up")) {
 						selected -= 1;
 						clampSelection();
 						tui.requestRender();
 						return;
 					}
-					if (matchesKey(data, "down") || data === "j") {
+					if (matchesKey(data, "down")) {
 						selected += 1;
 						clampSelection();
 						tui.requestRender();

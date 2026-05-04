@@ -11,7 +11,7 @@ Polished session manager overlay for Pi. It complements Pi's built-in `/resume` 
 - Threaded lineage view using Pi `parentSession` relationships when there is no active search.
 - Resume through `ctx.switchSession()`.
 - Rename sessions using Pi session-info entries; current-session renames go through `pi.setSessionName()`.
-- Delete with confirmation, current-session protection, and optional `trash` CLI fallback.
+- Delete one session or all shown deletable sessions with confirmation, current-session protection, and optional `trash` CLI fallback.
 - Clean one-line rendering for names, prompts, and paths.
 
 No SQLite, FTS, or native runtime dependencies are used; Pi's `SessionManager.list()` / `listAll()` APIs provide the index data.
@@ -26,12 +26,13 @@ No SQLite, FTS, or native runtime dependencies are used; Pi's `SessionManager.li
 
 | Key | Action |
 | --- | --- |
-| `↑` / `↓`, `j` / `k` | Move selection. |
+| `↑` / `↓` | Move selection. |
 | `PageUp` / `PageDown` | Page the list. |
 | `Home` / `End` | Jump to first/last result. |
 | `Enter` | Resume selected session. |
-| `Ctrl+R` or `r` with empty search | Rename selected session inline. |
-| `Ctrl+D` or `d` with empty search | Delete selected session after confirmation. |
+| `Ctrl+R` | Rename selected session inline. |
+| `Ctrl+D` | Delete selected session after confirmation. |
+| `Ctrl+X` | Delete all shown deletable sessions after confirmation. |
 | `Tab` | Toggle current/all scope. |
 | `Ctrl+S` | Cycle threaded/recent/relevance sort. |
 | `Ctrl+N` | Toggle named-only filter. |

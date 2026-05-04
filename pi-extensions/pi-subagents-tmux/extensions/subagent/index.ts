@@ -658,10 +658,10 @@ function createAgentsBrowserComponent(
 		}
 		if (matchesKey(data, "home")) { if (ui.pane === "inspector") ui.inspectorScroll = 0; else { ui.selected = 0; ui.scroll = 0; } requestRender(); return; }
 		if (matchesKey(data, "end")) { if (ui.pane === "inspector") ui.inspectorScroll = Number.MAX_SAFE_INTEGER; else { ui.selected = Math.max(0, filtered().length - 1); clamp(); } requestRender(); return; }
-		if (matchesKey(data, "enter") || matchesKey(data, "return") || data === "i" || data === "I") return insertSelected();
-		if (data === "s" || data === "S") return startSelected();
-		if (data === "a" || data === "A") return attachSelected();
-		if (data === "x" || data === "X") return stopSelected();
+		if (matchesKey(data, "enter") || matchesKey(data, "return")) return insertSelected();
+		if (matchesKey(data, "ctrl+p")) return startSelected();
+		if (matchesKey(data, "ctrl+o")) return attachSelected();
+		if (matchesKey(data, "ctrl+x")) return stopSelected();
 		if (matchesKey(data, "backspace")) { ui.search = ui.search.slice(0, -1); ui.selected = 0; ui.scroll = 0; ui.inspectorScroll = 0; clamp(); requestRender(); return; }
 		if (matchesKey(data, "ctrl+u")) { ui.search = ""; ui.selected = 0; ui.scroll = 0; ui.inspectorScroll = 0; requestRender(); return; }
 		if (isAgentBrowserTextInput(data)) { ui.search += data; ui.pane = "list"; ui.selected = 0; ui.scroll = 0; ui.inspectorScroll = 0; clamp(); requestRender(); }
@@ -672,7 +672,7 @@ function createAgentsBrowserComponent(
 		const layout = getLayout();
 		const safeWidth = Math.max(1, width);
 		const bodyWidth = agentFrameContentWidth(safeWidth);
-		const footer = `${ansiYellow("tab")} ${theme.fg("dim", "scope · ")}${ansiYellow("↑↓")} ${theme.fg("dim", "navigate/scroll · ")}${ansiYellow("←/→")} ${theme.fg("dim", "pane · ")}${ansiYellow("enter/i")} ${theme.fg("dim", "insert · ")}${ansiYellow("s/a/x")} ${theme.fg("dim", "pane · ")}${ansiYellow("esc")} ${theme.fg("dim", "close")}`;
+		const footer = `${ansiYellow("tab")} ${theme.fg("dim", "scope · ")}${ansiYellow("↑↓")} ${theme.fg("dim", "navigate/scroll · ")}${ansiYellow("←/→")} ${theme.fg("dim", "pane · ")}${ansiYellow("enter")} ${theme.fg("dim", "insert · ")}${ansiYellow("ctrl+p/o/x")} ${theme.fg("dim", "pane · ")}${ansiYellow("esc")} ${theme.fg("dim", "close")}`;
 		const lines = [
 			renderAgentScopeTabs(ui.scope, bodyWidth, theme),
 			"",
@@ -2783,7 +2783,7 @@ function traceViewerLines(state: TraceViewerState, width: number, rows: number, 
 	const innerWidth = Math.max(1, width - 4);
 	const frameRows = Math.max(8, rows);
 	const item = state.items[state.selected] ?? state.items[0];
-	const help = `${ansiYellow("tab/←→")} ${theme.fg("dim", "sections · ")}${ansiYellow("↑↓")} ${theme.fg("dim", "scroll · ")}${ansiYellow("enter/e")} ${theme.fg("dim", "open · ")}${ansiYellow("esc")} ${theme.fg("dim", "close")}`;
+	const help = `${ansiYellow("tab/←→")} ${theme.fg("dim", "sections · ")}${ansiYellow("↑↓")} ${theme.fg("dim", "scroll · ")}${ansiYellow("enter")} ${theme.fg("dim", "open · ")}${ansiYellow("esc")} ${theme.fg("dim", "close")}`;
 	const tabs = renderTraceTabBar(state.items, state.selected, innerWidth, theme);
 	const meta = [
 		item?.ref ? theme.fg("accent", item.ref) : "",
@@ -2800,7 +2800,7 @@ function traceViewerLines(state: TraceViewerState, width: number, rows: number, 
 	state.scroll = Math.max(0, Math.min(state.scroll, maxScroll));
 	const visible = content.slice(state.scroll, state.scroll + bodyRows);
 	const footer = item?.path
-		? `${theme.fg("dim", `${state.scroll + 1}-${Math.min(content.length, state.scroll + bodyRows)}/${content.length} · `)}${ansiYellow("enter/e")} ${theme.fg("dim", "opens $VISUAL/$EDITOR")}`
+		? `${theme.fg("dim", `${state.scroll + 1}-${Math.min(content.length, state.scroll + bodyRows)}/${content.length} · `)}${ansiYellow("enter")} ${theme.fg("dim", "opens $VISUAL/$EDITOR")}`
 		: theme.fg("dim", `${state.scroll + 1}-${Math.min(content.length, state.scroll + bodyRows)}/${content.length} · metadata`);
 	const innerLines = [
 		tabs,
@@ -2871,13 +2871,13 @@ async function openTraceViewer(ctx: ExtensionContext, title: string, items: Trac
 	await ctx.ui.custom<void>((tui, theme, _kb, done) => ({
 		handleInput(data: string) {
 			if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) return done();
-			if (matchesKey(data, "up") || data === "k") { state.scroll = Math.max(0, state.scroll - 1); tui.requestRender(); return; }
-			if (matchesKey(data, "down") || data === "j") { state.scroll += 1; tui.requestRender(); return; }
+			if (matchesKey(data, "up")) { state.scroll = Math.max(0, state.scroll - 1); tui.requestRender(); return; }
+			if (matchesKey(data, "down")) { state.scroll += 1; tui.requestRender(); return; }
 			if (matchesKey(data, "pageup") || matchesKey(data, "page_up")) { state.scroll = Math.max(0, state.scroll - 12); tui.requestRender(); return; }
 			if (matchesKey(data, "pagedown") || matchesKey(data, "page_down")) { state.scroll += 12; tui.requestRender(); return; }
-			if (matchesKey(data, "left") || data === "h") { state.selected = (state.selected + state.items.length - 1) % state.items.length; state.scroll = 0; tui.requestRender(); return; }
-			if (matchesKey(data, "right") || data === "l" || matchesKey(data, "tab")) { state.selected = (state.selected + 1) % state.items.length; state.scroll = 0; tui.requestRender(); return; }
-			if (matchesKey(data, "enter") || matchesKey(data, "return") || data === "e") { notice = openFileInExternalEditor(state.items[state.selected]?.path, ctx.cwd); tui.requestRender(); return; }
+			if (matchesKey(data, "left")) { state.selected = (state.selected + state.items.length - 1) % state.items.length; state.scroll = 0; tui.requestRender(); return; }
+			if (matchesKey(data, "right") || matchesKey(data, "tab")) { state.selected = (state.selected + 1) % state.items.length; state.scroll = 0; tui.requestRender(); return; }
+			if (matchesKey(data, "enter") || matchesKey(data, "return")) { notice = openFileInExternalEditor(state.items[state.selected]?.path, ctx.cwd); tui.requestRender(); return; }
 		},
 		render(width: number): string[] {
 			const rows = Math.min(30, Math.max(12, Math.floor(tui.terminal.rows * 0.72)));
@@ -2890,7 +2890,7 @@ async function openTraceViewer(ctx: ExtensionContext, title: string, items: Trac
 
 function transcriptIndexItems(records: PaneTaskRegistry, cwd: string): TraceViewerItem[] {
 	const sorted = Object.values(records).filter((record) => record.taskId && record.agent).sort((a, b) => recordTimestamp(b) - recordTimestamp(a));
-	const lines = ["Recent subagent traces", "", "Use ←/→ to select a trace tab; Enter/e opens its transcript file.", ""];
+	const lines = ["Recent subagent traces", "", "Use ←/→ to select a trace tab; Enter opens its transcript file.", ""];
 	for (const record of sorted.slice(0, 80)) {
 		const ref = recordTraceRef(record);
 		lines.push(ref);

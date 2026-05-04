@@ -864,7 +864,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 					syncOutputScroll();
 
 					const lines = [
-						`${ansiYellow("↑↓/jk")} ${theme.fg("dim", "select")} · ${ansiYellow("s")} ${theme.fg("dim", "stop")} · ${ansiYellow("c")} ${theme.fg("dim", "clear")} · ${ansiYellow("f")} ${theme.fg("dim", "follow")} · ${ansiYellow("PgUp/PgDn")} ${theme.fg("dim", "scroll")} · ${ansiYellow("esc")} ${theme.fg("dim", "close")}`,
+						`${ansiYellow("↑↓")} ${theme.fg("dim", "select")} · ${ansiYellow("s")} ${theme.fg("dim", "stop")} · ${ansiYellow("c")} ${theme.fg("dim", "clear")} · ${ansiYellow("f")} ${theme.fg("dim", "follow")} · ${ansiYellow("PgUp/PgDn")} ${theme.fg("dim", "scroll")} · ${ansiYellow("esc")} ${theme.fg("dim", "close")}`,
 						"",
 					];
 
@@ -932,10 +932,10 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 							done(undefined);
 							return;
 						}
-						if (matchesKey(data, "up") || data === "k") return moveSelection(-1);
-						if (matchesKey(data, "down") || data === "j") return moveSelection(1);
-						if (matchesKey(data, "home") || data === "g") return moveSelection(-Number.MAX_SAFE_INTEGER);
-						if (matchesKey(data, "end") || data === "G") return moveSelection(Number.MAX_SAFE_INTEGER);
+						if (matchesKey(data, "up")) return moveSelection(-1);
+						if (matchesKey(data, "down")) return moveSelection(1);
+						if (matchesKey(data, "home")) return moveSelection(-Number.MAX_SAFE_INTEGER);
+						if (matchesKey(data, "end")) return moveSelection(Number.MAX_SAFE_INTEGER);
 						if (matchesKey(data, "pageup") || matchesKey(data, "shift+up")) return moveOutput(-DASHBOARD_OUTPUT_ROWS);
 						if (matchesKey(data, "pagedown") || matchesKey(data, "shift+down")) return moveOutput(DASHBOARD_OUTPUT_ROWS);
 						if (data === "f") {

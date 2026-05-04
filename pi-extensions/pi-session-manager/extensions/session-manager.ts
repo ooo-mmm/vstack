@@ -31,7 +31,7 @@ type SessionInfo = Awaited<ReturnType<typeof SessionManager.list>>[number];
 type Scope = "current" | "all";
 type SortMode = "threaded" | "recent" | "relevance";
 type NameFilter = "all" | "named";
-type Mode = "browse" | "loading" | "rename" | "confirm-delete" | "deleting";
+type Mode = "browse" | "loading" | "rename" | "confirm-delete" | "confirm-delete-all" | "deleting";
 
 type SessionAction = { type: "resume"; path: string; title: string } | { type: "cancel" };
 
@@ -547,6 +547,7 @@ class SessionManagerOverlay implements Focusable {
 	private renameInput = new Input();
 	private renameTarget: SessionInfo | undefined;
 	private deleteTarget: SessionInfo | undefined;
+	private deleteAllTargets: SessionInfo[] = [];
 	private notice: { kind: "info" | "error"; text: string } | undefined;
 	private queryError: string | undefined;
 	private loadingProgress: { loaded: number; total: number } | undefined;
@@ -712,6 +713,7 @@ class SessionManagerOverlay implements Focusable {
 		this.mode = "browse";
 		this.renameTarget = undefined;
 		this.deleteTarget = undefined;
+		this.deleteAllTargets = [];
 	}
 
 	private startDelete(session: SessionInfo): void {
@@ -744,6 +746,57 @@ class SessionManagerOverlay implements Focusable {
 		this.requestRender();
 	}
 
+	private startDeleteAll(): void {
+		const seen = new Set<string>();
+		const targets: SessionInfo[] = [];
+		for (const node of this.filtered) {
+			const session = node.session;
+			if (this.isCurrent(session)) continue;
+			const key = canonicalPath(session.path) ?? session.path;
+			if (seen.has(key)) continue;
+			seen.add(key);
+			targets.push(session);
+		}
+		if (targets.length === 0) {
+			this.notify("error", "No deletable sessions in the current view");
+			return;
+		}
+		this.deleteAllTargets = targets;
+		this.deleteTarget = undefined;
+		this.mode = "confirm-delete-all";
+		this.notice = undefined;
+	}
+
+	private async confirmDeleteAll(): Promise<void> {
+		const targets = this.deleteAllTargets;
+		if (targets.length === 0) return;
+		this.mode = "deleting";
+		this.requestRender();
+		let deleted = 0;
+		let trashed = 0;
+		const failures: string[] = [];
+		for (const target of targets) {
+			if (this.isCurrent(target)) continue;
+			const result = await deleteSessionFile(target.path, this.ctx.cwd);
+			if (result.ok) {
+				deleted += 1;
+				if (result.method === "trash") trashed += 1;
+				this.sessions = this.sessions.filter((session) => !samePath(session.path, target.path));
+			} else {
+				failures.push(`${sessionResumeTitle(target)}: ${result.error ?? "unknown error"}`);
+			}
+		}
+		this.mode = "browse";
+		this.deleteAllTargets = [];
+		if (failures.length > 0) {
+			this.notify("error", `Deleted ${deleted}; failed ${failures.length}: ${failures[0]}`);
+		} else {
+			this.notify("info", trashed > 0 ? `${deleted} sessions moved to trash` : `${deleted} sessions deleted`);
+		}
+		this.applyFilter(false);
+		this.requestRender();
+	}
+
 	handleInput(data: string): void {
 		if (this.mode === "rename") {
 			if (this.keybindings.matches(data, "tui.select.cancel")) {
@@ -756,9 +809,10 @@ class SessionManagerOverlay implements Focusable {
 			return;
 		}
 
-		if (this.mode === "confirm-delete") {
+		if (this.mode === "confirm-delete" || this.mode === "confirm-delete-all") {
 			if (this.keybindings.matches(data, "tui.select.confirm")) {
-				void this.confirmDelete();
+				if (this.mode === "confirm-delete-all") void this.confirmDeleteAll();
+				else void this.confirmDelete();
 				return;
 			}
 			if (this.keybindings.matches(data, "tui.select.cancel")) {
@@ -812,16 +866,22 @@ class SessionManagerOverlay implements Focusable {
 			return;
 		}
 
-		if (this.keybindings.matches(data, "app.session.rename") || (data === "r" && !this.searchInput.getValue())) {
+		if (this.keybindings.matches(data, "app.session.rename")) {
 			const selected = this.selected();
 			if (selected) this.startRename(selected);
 			this.requestRender();
 			return;
 		}
 
-		if (this.keybindings.matches(data, "app.session.delete") || (data === "d" && !this.searchInput.getValue())) {
+		if (this.keybindings.matches(data, "app.session.delete")) {
 			const selected = this.selected();
 			if (selected) this.startDelete(selected);
+			this.requestRender();
+			return;
+		}
+
+		if (matchesKey(data, "ctrl+x")) {
+			this.startDeleteAll();
 			this.requestRender();
 			return;
 		}
@@ -832,12 +892,12 @@ class SessionManagerOverlay implements Focusable {
 			return;
 		}
 
-		if (this.keybindings.matches(data, "tui.select.up") || data === "k") {
+		if (this.keybindings.matches(data, "tui.select.up")) {
 			this.moveSelection(-1);
 			this.requestRender();
 			return;
 		}
-		if (this.keybindings.matches(data, "tui.select.down") || data === "j") {
+		if (this.keybindings.matches(data, "tui.select.down")) {
 			this.moveSelection(1);
 			this.requestRender();
 			return;
@@ -952,6 +1012,9 @@ class SessionManagerOverlay implements Focusable {
 	private renderSubheader(inner: number, accent: (s: string) => string, muted: (s: string) => string, dim: (s: string) => string, warning: (s: string) => string, error: (s: string) => string): string {
 		if (this.mode === "confirm-delete" && this.deleteTarget) {
 			return error(`Delete “${truncateToWidth(sessionResumeTitle(this.deleteTarget), Math.max(12, inner - 10), "…")}”?`);
+		}
+		if (this.mode === "confirm-delete-all") {
+			return error(`Delete all ${this.deleteAllTargets.length} shown deletable sessions?`);
 		}
 		if (this.mode === "deleting") return warning("Deleting session…");
 		if (this.mode === "rename" && this.renameTarget) return accent(`Rename “${truncateToWidth(sessionResumeTitle(this.renameTarget), Math.max(12, inner - 10), "…")}”`);
@@ -1105,10 +1168,10 @@ class SessionManagerOverlay implements Focusable {
 	}
 
 	private renderFooter(inner: number, dim: (s: string) => string, warning: (s: string) => string, error: (s: string) => string): string[] {
-		if (this.mode === "confirm-delete") return [`${ansiYellow("Enter")} ${error("confirm")} · ${ansiYellow("Esc")} ${error("cancel")}`];
+		if (this.mode === "confirm-delete" || this.mode === "confirm-delete-all") return [`${ansiYellow("Enter")} ${error("confirm")} · ${ansiYellow("Esc")} ${error("cancel")}`];
 		if (this.mode === "rename") return [`${ansiYellow("Enter")} ${warning("save")} · ${ansiYellow("Esc")} ${warning("cancel")} · ${warning("empty name clears title")}`];
 		return [
-			`${ansiYellow("↑↓/jk")} ${dim("move · ")}${ansiYellow("Enter")} ${dim("resume · ")}${ansiYellow("Ctrl+R")} ${dim("rename · ")}${ansiYellow("Ctrl+D")} ${dim("delete")}`,
+			`${ansiYellow("↑↓")} ${dim("move · ")}${ansiYellow("Enter")} ${dim("resume · ")}${ansiYellow("Ctrl+R")} ${dim("rename · ")}${ansiYellow("Ctrl+D")} ${dim("delete · ")}${ansiYellow("Ctrl+X")} ${dim("delete all")}`,
 			`${ansiYellow("Tab")} ${dim("scope · ")}${ansiYellow("Ctrl+S")} ${dim("sort · ")}${ansiYellow("Ctrl+N")} ${dim("names · ")}${ansiYellow("Ctrl+P")} ${dim("path · ")}${ansiYellow("Esc")} ${dim("close")}`,
 		];
 	}

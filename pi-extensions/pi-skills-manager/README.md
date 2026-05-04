@@ -43,7 +43,7 @@ Preview mode:
 - `↑/↓`, `PageUp/PageDown`, `Home/End` scroll.
 - `Enter` inserts an enabled skill.
 - `Ctrl+X` enables/disables.
-- `e` edits, `r` renames, and `Backspace`/`d` deletes your own skills.
+- `Ctrl+E` edits, `Ctrl+R` renames, and `Backspace`/`Delete` deletes your own skills.
 - `Esc` or `Tab` returns to browse.
 
 Edit mode: `Ctrl+S` saves; `Esc` returns to preview.

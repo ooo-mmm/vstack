@@ -849,13 +849,13 @@ async function openQuestionUi(ctx: ExtensionContext, pending: PendingQuestion): 
 						tui.requestRender();
 						return;
 					}
-					if (matchesKey(data, "up") || data === "k") {
+					if (matchesKey(data, "up")) {
 						selectedRows[activeTab] -= 1;
 						clamp();
 						tui.requestRender();
 						return;
 					}
-					if (matchesKey(data, "down") || data === "j") {
+					if (matchesKey(data, "down")) {
 						selectedRows[activeTab] += 1;
 						clamp();
 						tui.requestRender();

@@ -766,12 +766,12 @@ export default function taskPanel(pi: ExtensionAPI): void {
 				return {
 					handleInput(data: string) {
 						if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) { done(undefined); return; }
-						if (matchesKey(data, "up") || data === "k") { move(-1); return; }
-						if (matchesKey(data, "down") || data === "j") { move(1); return; }
+						if (matchesKey(data, "up")) { move(-1); return; }
+						if (matchesKey(data, "down")) { move(1); return; }
 						if (matchesKey(data, "pageup")) { move(-MANAGE_TASK_ROWS); return; }
 						if (matchesKey(data, "pagedown")) { move(MANAGE_TASK_ROWS); return; }
-						if (matchesKey(data, "home") || data === "g") { move(-Number.MAX_SAFE_INTEGER); return; }
-						if (matchesKey(data, "end") || data === "G") { move(Number.MAX_SAFE_INTEGER); return; }
+						if (matchesKey(data, "home")) { move(-Number.MAX_SAFE_INTEGER); return; }
+						if (matchesKey(data, "end")) { move(Number.MAX_SAFE_INTEGER); return; }
 						if (matchesKey(data, "return") || matchesKey(data, "enter") || data === "s") {
 							const task = selectedTask();
 							applyTaskAction("start_task", () => task ? (startTask(state, task.id, ctx.cwd)?.content ?? "No task matched") : "No task selected");

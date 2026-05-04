@@ -17,6 +17,7 @@ Pi extension inventory and settings manager for vstack-installed packages.
 - `/extensions` opens on the `All` tab. Selecting a package shows its overview, resources, and settings in the inspector.
 - Package tabs show one package plus its child resources.
 - `Alt+R` toggles the raw resource list; `Alt+A` opens diagnostics/audit; `Tab` and `Shift+Tab` cycle tabs.
+- `Delete` resets the selected setting; `Ctrl+X` resets settings for the selected extension/package.
 - `/extensions settings` starts with `All`, then one tab per package with settings. Type to filter, `Enter` to toggle/edit, `Esc` to cancel.
 
 Settings are stored under `vstack.extensionManager` in Pi `settings.json` files so they do not collide with Pi's top-level `extensions` array.
