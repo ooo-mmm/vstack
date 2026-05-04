@@ -2075,9 +2075,10 @@ function applyPatchChangeLabel(change: ApplyPatchChange): string {
 
 function applyPatchSummaryTarget(changes: ApplyPatchChange[], theme: any): string {
 	if (changes.length === 0) return theme.fg("muted", "patch");
+	if (changes.length > 1) return theme.fg("muted", `${changes.length} files changed`);
 	const first = changes[0]!;
 	const firstPath = first.moveTo || first.path;
-	return changes.length === 1 ? theme.fg("accent", firstPath) : `${theme.fg("accent", firstPath)}${theme.fg("muted", ` +${changes.length - 1} files`)}`;
+	return theme.fg("accent", firstPath);
 }
 
 function applyPatchKindLabel(changes: ApplyPatchChange[]): string {
@@ -2111,21 +2112,22 @@ function applyPatchChangesFromContext(context: any): ApplyPatchChange[] {
 }
 
 function renderApplyPatchCall(args: any, theme: any, context: any): TruncatedLines | ReturnType<typeof makeEmpty> {
-	if (context?.executionStarted && !context?.isPartial) return makeEmpty();
+	if (context?.executionStarted) return makeEmpty();
 	const patchText = patchTextFromArgs(args);
 	let changes: ApplyPatchChange[] = [];
-	if (context?.argsComplete && patchText) {
+	if (patchText) {
 		try {
 			changes = parseApplyPatchPreview(patchText);
-			if (context?.state) context.state._vstackApplyPatchChanges = changes;
+			if (context?.argsComplete && context?.state) context.state._vstackApplyPatchChanges = changes;
 		} catch {
 			// Leave compact pending header only if patch cannot be parsed.
 		}
 	}
 	const files = changes.length > 0 ? changes.map((change) => change.moveTo || change.path) : extractApplyPatchFiles(patchText);
-	const summary = changes.length > 0 ? applyPatchSummaryTarget(changes, theme) : files.length === 0 ? theme.fg("muted", "patch") : files.length === 1 ? theme.fg("accent", files[0]!) : `${theme.fg("accent", files[0]!)}${theme.fg("muted", ` +${files.length - 1} files`)}`;
-	const total = changes.length > 0 ? `${theme.fg("dim", " · ")}${diffSummary(summarizeApplyPatchChanges(changes), theme, context?.cwd)}` : "";
-	return makeTruncatedLines(`${genericStatusPrefix(context, theme)}${toolLabel(theme, applyPatchKindLabel(changes))}${summary}${total}`);
+	const multiFile = changes.length > 1 || files.length > 1;
+	const summary = multiFile ? theme.fg("muted", `${Math.max(changes.length, files.length)} files changed`) : theme.fg("muted", "patch");
+	const total = changes.length > 1 ? `${theme.fg("dim", " · ")}${diffSummary(summarizeApplyPatchChanges(changes), theme, context?.cwd)}` : "";
+	return makeTruncatedLines(`${genericStatusPrefix(context, theme)}${toolLabel(theme, "Apply Patch ")}${summary}${total}`);
 }
 
 function renderApplyPatchResult(result: any, { expanded, isPartial }: any, theme: any, context: any): TruncatedLines | ReturnType<typeof makeEmpty> {
@@ -2142,19 +2144,20 @@ function renderApplyPatchResult(result: any, { expanded, isPartial }: any, theme
 	const total = summarizeApplyPatchChanges(changes);
 	let text = `${stackPrefix(theme)}${call}${theme.fg("dim", " · ")}${applyPatchResultSummary(changes, total, theme, context?.cwd)}`;
 	const maxShown = expanded ? changes.length : Math.min(1, changes.length);
+	const hidden = changes.length - maxShown;
 	const rowLimit = maxShown > 1 ? Math.max(4, Math.floor(settingNumber("applyPatchPreviewLines", 18, context?.cwd) / Math.max(1, maxShown))) : undefined;
 	for (let i = 0; i < maxShown; i++) {
 		const change = changes[i]!;
 		const changed = change.diff.additions > 0 || change.diff.removals > 0;
+		const connector = changes.length > 1 ? treeConnector(theme, i === maxShown - 1 && hidden === 0 ? "└" : "├", context?.cwd) : "";
 		if (!changed) {
-			if (changes.length > 1) text += `\n${theme.fg("accent", applyPatchChangeLabel(change))} ${theme.fg("success", applyPatchChangeStatus(change))}`;
+			if (changes.length > 1) text += `\n${connector}${theme.fg("accent", applyPatchChangeLabel(change))} ${theme.fg("success", applyPatchChangeStatus(change))}`;
 			continue;
 		}
-		if (changes.length > 1) text += `\n${theme.fg("accent", applyPatchChangeLabel(change))} ${diffSummary(change.diff, theme, context?.cwd)}`;
+		if (changes.length > 1) text += `\n${connector}${theme.fg("accent", applyPatchChangeLabel(change))} ${diffSummary(change.diff, theme, context?.cwd)}`;
 		text += `\n${renderStructuredDiff(change.diff, theme, expanded, context?.cwd, rowLimit, change.diff.path)}`;
 	}
-	const hidden = changes.length - maxShown;
-	if (hidden > 0) text += `\n${theme.fg("muted", `… ${hidden} more file patch${hidden === 1 ? "" : "es"} · Ctrl+O to expand`)}`;
+	if (hidden > 0) text += `\n${treeConnector(theme, "└", context?.cwd)}${theme.fg("muted", `… ${hidden} more file patch${hidden === 1 ? "" : "es"} · Ctrl+O to expand`)}`;
 	return makeTruncatedLines(text);
 }
 
