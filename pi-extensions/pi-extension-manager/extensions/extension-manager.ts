@@ -1387,7 +1387,11 @@ function managerMutedForSelection(theme: Theme, text: string, selected: boolean)
 function renderTabBar(tabs: ManagerTab[], active: TopTab, width: number, theme: Theme): string {
 	const activeIndex = Math.max(0, tabs.findIndex((tab) => tab.id === active));
 	const partFor = (tab: ManagerTab): string => {
-		const label = ` ${truncateToWidth(tab.label, 18, "…")} `;
+		const maxLabelWidth = 18;
+		// Keep the pill background contiguous: avoid truncateToWidth appending an
+		// ellipsis after style resets on some terminals/themes.
+		const labelText = truncateToWidth(tab.label, maxLabelWidth, "");
+		const label = ` ${labelText}${" ".repeat(Math.max(0, maxLabelWidth - visibleWidth(labelText)))} `;
 		if (tab.id === active) return managerActivePill(theme, label);
 		return managerInactivePill(theme, label);
 	};
@@ -1470,15 +1474,14 @@ function renderExtensions(inventory: Inventory, ui: ManagerUiState, width: numbe
 	const right = renderInspector(inventory, selected, ui, rightWidth, theme, layout.settingsRows);
 	const rows = layout.bodyRows;
 	const view = ui.topTab === TAB_ALL ? (ui.showResources ? "raw resources" : "packages") : "package";
+	const searchText = ` ${ui.search || theme.fg("dim", "Type to filter")}`;
+	const searchLine = theme.bg("toolPendingBg", pad(searchText, width));
 	const lines = [
 		"",
-		truncateToWidth(
-			`${theme.fg("accent", "Search")}: ${ui.search || theme.fg("dim", "type to filter")}  ${theme.fg("accent", "View")}: ${view}  ${theme.fg("accent", "Filters")}: kind ${ui.kindFilter} · provider ${ui.providerFilter} · state ${ui.stateFilter} · scope ${ui.scopeFilter}`,
-			width,
-			"",
-		),
+		searchLine,
+		`${theme.fg("muted", "View")}: ${theme.fg("text", view)}  ${theme.fg("muted", "Filters")}: kind ${ui.kindFilter} · provider ${ui.providerFilter} · state ${ui.stateFilter} · scope ${ui.scopeFilter}`,
 		"",
-		theme.fg("dim", "Alt+K/P/S/O filters · Alt+R raw resources · Alt+T toggle provider · d reset setting · D reset extension · ←/→ pane"),
+		`${ansiYellow("Alt+K/P/S/O")} ${theme.fg("dim", "filters · ")}${ansiYellow("Alt+R")} ${theme.fg("dim", "raw resources · ")}${ansiYellow("Alt+T")} ${theme.fg("dim", "toggle provider · ")}${ansiYellow("d")} ${theme.fg("dim", "reset setting · ")}${ansiYellow("D")} ${theme.fg("dim", "reset extension · ")}${ansiYellow("←/→")} ${theme.fg("dim", "pane")}`,
 		divider(width, theme),
 	];
 	for (let i = 0; i < rows; i += 1) {
