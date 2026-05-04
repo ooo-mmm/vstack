@@ -41,7 +41,12 @@ pub fn run(names: &[String], global: bool) -> Result<()> {
         }
 
         if removed.is_empty() {
-            eprintln!("  {name}: not found");
+            if lock_entry.is_some() {
+                eprintln!("  removed stale lock entry for {name}");
+                lock.remove(name);
+            } else {
+                eprintln!("  {name}: not found");
+            }
         } else {
             let pi_settings_path = config::pi_settings_path(global);
             for path in &removed {

@@ -173,7 +173,7 @@ trading-design = "Focus on dark theme with green/red accent colors for this proj
 - **Test after CLI changes.** `cd cli && cargo test` for unit tests. For integration: `cargo run -- add .. --all --copy` into a temp dir.
 - **Hooks must be portable.** No hardcoded paths. Scripts should work in any Rust project (or degrade gracefully).
 - **Child workflows return JSON to parent.** Subagent workflows (project-management, issue-lifecycle) output JSON in `<output_format>` tags — the calling primary agent writes files.
-- **Never bump the CLI version.** The version in `cli/Cargo.toml` and the matching GitHub release tag are managed manually by the user. Do not change the version or create releases unless explicitly asked.
+- **Keep CLI version and GitHub release tag in sync.** `cli/Cargo.toml` version and the GitHub release/tag must always match. Do not bump the version or create releases unless explicitly asked; when asked, update both together.
 
 ## Updating Skills
 

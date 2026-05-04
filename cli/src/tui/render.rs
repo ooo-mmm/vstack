@@ -1353,7 +1353,11 @@ fn draw_action_bar(frame: &mut Frame, area: Rect, select: &mut TabbedSelect) {
     // — primary buttons get bold colored fills; secondary get a softer style.
     let mut buttons: Vec<(String, ActionButton, Color, Color, bool)> = Vec::new();
     if install_n > 0 {
-        let scope_word = if select.scope_global { "global" } else { "project" };
+        let scope_word = if select.scope_global {
+            "global"
+        } else {
+            "project"
+        };
         buttons.push((
             format!(" Install {scope_word} ({install_n}) "),
             ActionButton::BatchInstall,

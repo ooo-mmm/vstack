@@ -780,6 +780,24 @@ pub fn reconcile_lock_with_disk(lock: &mut LockFile, global: bool, source: &str)
         }
     }
 
+    // Remove stale Pi package lock entries. Pi packages do not have the skill
+    // marker file; their on-disk truth is the deployed package directory and/or
+    // a matching settings.json packages entry.
+    let stale_pi_extensions: Vec<String> = lock
+        .entries
+        .iter()
+        .filter(|(_, e)| {
+            e.kind == ItemKind::PiExtension
+                && !crate::pi_extension::is_pi_extension_installed(&e.name, global)
+        })
+        .map(|(name, _)| name.clone())
+        .collect();
+    for name in stale_pi_extensions {
+        eprintln!("  Removed stale lock entry (Pi package missing): {name}");
+        lock.remove(&name);
+        modified = true;
+    }
+
     modified
 }
 

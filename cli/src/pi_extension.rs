@@ -1018,7 +1018,11 @@ mod tests {
             );
             assert_eq!(
                 pkgs,
-                vec!["npm:@foo/bar", "./packages/pi-qol", "./packages/pi-tool-renderer"],
+                vec![
+                    "npm:@foo/bar",
+                    "./packages/pi-qol",
+                    "./packages/pi-tool-renderer"
+                ],
                 "reinstall should preserve package load order: {pkgs:?}"
             );
         });
