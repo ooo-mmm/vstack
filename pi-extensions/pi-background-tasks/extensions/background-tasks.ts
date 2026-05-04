@@ -54,6 +54,7 @@ const WIDGET_PADDING_X = 1;
 const TOOL_PREVIEW_TASKS = 3;
 const TOOL_PREVIEW_LINES = 12;
 const WIDGET_COMPACT_TASKS = 3;
+const DEFAULT_WIDGET_FINISHED_RETENTION_MS = 15_000;
 
 const liveSnapshots = new Map<string, BackgroundTaskSnapshot>();
 
@@ -590,13 +591,12 @@ function renderTaskEventMessage(
 	const details = message.details;
 	const task = latestSnapshot(details.task) ?? details.task;
 	if (!expanded) {
-		const prefix = details.eventType === "exit" ? bgStatusIcon(task.status, theme) : theme.fg("accent", "●");
+		const prefix = details.eventType === "exit" ? theme.fg("success", "✓") : theme.fg("accent", "●");
 		const label = details.eventType === "exit" ? "Background task finished" : "Background task output";
-		const status = details.eventType === "exit" ? ` · ${summarizeTaskStatus(task.status, task.exitCode)}` : "";
 		return new Text(
 			`${prefix} ${theme.fg("toolTitle", theme.bold(label))} ${theme.fg("accent", task.id)}${theme.fg(
 				"dim",
-				`${status} · ${compactText(taskDisplayName(task), 64)} · Ctrl+O details`,
+				` · ${compactText(taskDisplayName(task), 64)} · Ctrl+O details`,
 			)}`,
 			0,
 			0,
@@ -604,10 +604,11 @@ function renderTaskEventMessage(
 	}
 
 	const headingLabel = details.eventType === "exit" ? "Background task finished " : "Background task output ";
+	const headingIcon = details.eventType === "exit" ? theme.fg("success", "✓") : theme.fg("accent", "●");
 	const lines = [
-		`${bgStatusIcon(task.status, theme)} ${bgToolLabel(theme, headingLabel)}${theme.fg("accent", task.id)}${theme.fg(
+		`${headingIcon} ${bgToolLabel(theme, headingLabel)}${theme.fg("accent", task.id)}${theme.fg(
 			"dim",
-			` · ${summarizeTaskStatus(task.status, task.exitCode)} · ${compactText(taskDisplayName(task), 72)}`,
+			` · ${compactText(taskDisplayName(task), 72)}`,
 		)}`,
 		...renderTaskDetails(task, theme),
 	];
@@ -685,18 +686,14 @@ function renderBgToolResult(result: any, options: any, theme: Theme, context: an
 		return renderLines(`${theme.fg("error", "✗ ")}${bgToolLabel(theme, "Background task")} ${theme.fg("error", first)}`);
 	}
 
-	if (action === "list") {
-		const tasks = Array.isArray(details.tasks) ? details.tasks as BackgroundTaskSnapshot[] : [];
-		return renderLines(renderBgTaskList(tasks, theme, expanded, cwd));
-	}
+	if (action === "list") return renderEmpty();
 
 	if (action === "spawn") {
-		const task = latestSnapshot(details.task as BackgroundTaskSnapshot | undefined);
-		if (!task) return renderLines(`${theme.fg("success", "● ")}${bgToolLabel(theme, "Background task started")}`);
-		const label = task.status === "running" ? "Background task started " : "Background task finished ";
-		let text = `${bgStatusIcon(task.status, theme)} ${bgToolLabel(theme, label)}${theme.fg("accent", task.id)}${theme.fg(
+		const task = details.task as BackgroundTaskSnapshot | undefined;
+		if (!task) return renderLines(`${theme.fg("warning", "● ")}${bgToolLabel(theme, "Background task started")}`);
+		let text = `${theme.fg("warning", "● ")}${bgToolLabel(theme, "Background task started ")}${theme.fg("accent", task.id)}${theme.fg(
 			"dim",
-			` · ${summarizeTaskStatus(task.status, task.exitCode)} · pid ${task.pid} · ${compactText(taskDisplayName(task), 72)}${expanded ? "" : " · Ctrl+O details"}`,
+			` · pid ${task.pid} · ${compactText(taskDisplayName(task), 72)}${expanded ? "" : " · Ctrl+O details"}`,
 		)}`;
 		if (expanded) text += `\n${renderTaskDetails(task, theme, cwd).join("\n")}`;
 		return renderLines(text);
@@ -762,7 +759,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 	};
 
 	const renderWidgetLines = (theme: Theme): string[] => {
-		const sorted = sortedTasks();
+		const sorted = widgetTasks();
 		const running = sorted.filter((task) => task.status === "running");
 		const display = [...running, ...sorted.filter((task) => task.status !== "running")];
 		const finished = sorted.length - running.length;
@@ -788,9 +785,16 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		return lines;
 	};
 
+	const widgetFinishedRetentionMs = (cwd?: string): number => Math.max(0, Math.floor(settingNumber("widgetFinishedRetentionSeconds", DEFAULT_WIDGET_FINISHED_RETENTION_MS / 1_000, cwd) * 1_000));
+
+	const widgetTasks = (now: number = Date.now()): ManagedTask[] => {
+		const retention = widgetFinishedRetentionMs(activeCtx?.cwd);
+		return sortedTasks().filter((task) => task.status === "running" || now - task.updatedAt <= retention);
+	};
+
 	const syncWidget = (ctx: ExtensionContext) => {
 		activeCtx = ctx;
-		if (tasks.size === 0 || !ctx.hasUI || widgetMode === "hidden" || !settingBoolean("showWidget", true, ctx.cwd)) {
+		if (tasks.size === 0 || widgetTasks().length === 0 || !ctx.hasUI || widgetMode === "hidden" || !settingBoolean("showWidget", true, ctx.cwd)) {
 			clearWidget();
 			return;
 		}
@@ -802,10 +806,12 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 				let timer: ReturnType<typeof setInterval> | null = null;
 
 				const ensureTimer = () => {
-					const hasRunning = sortedTasks().some((task) => task.status === "running");
-					if (!hasRunning) {
+					const visible = widgetTasks();
+					const shouldTick = visible.some((task) => task.status === "running") || visible.some((task) => task.status !== "running");
+					if (!shouldTick) {
 						if (timer) clearInterval(timer);
 						timer = null;
+						clearWidget();
 						return;
 					}
 					if (timer) return;
@@ -854,7 +860,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		};
 		const headline =
 			eventType === "exit"
-				? `Background task ${task.id} finished (${summarizeTaskStatus(task.status, task.exitCode)}).`
+				? `Background task ${task.id} finished.`
 				: `Background task ${task.id} emitted new output.`;
 
 		pi.sendMessage(
