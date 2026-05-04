@@ -1,7 +1,7 @@
 {
   "name": "pi-prompt-stash",
   "version": "0.1.0",
-  "description": "Pi package for per-session prompt stash history with Alt+S stash/pop workflow.",
+  "description": "Pi package for per-session prompt stash history with Alt+S stash/restore workflow.",
   "license": "MIT",
   "keywords": [
     "pi-package",
@@ -33,7 +33,7 @@
         {
           "key": "enabled",
           "label": "Enable prompt stash",
-          "description": "Register /prompt-stash and the stash/pop shortcut.",
+          "description": "Register /prompt-stash and the stash/restore shortcut.",
           "type": "boolean",
           "default": true,
           "category": "General",
@@ -52,7 +52,7 @@
         {
           "key": "shortcut",
           "label": "Stash shortcut",
-          "description": "Shortcut for stash/pop. Requires reload because shortcuts are handled by the editor at load.",
+          "description": "Shortcut for stash/restore. Requires reload because shortcuts are handled by the editor at load.",
           "type": "string",
           "default": "alt+s",
           "category": "Input",

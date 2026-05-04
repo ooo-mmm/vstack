@@ -313,9 +313,9 @@ async function openStashPopup(ctx: ExtensionContext): Promise<void> {
 	}
 
 	const releaseModalLock = acquireVstackModalLock();
-	let popped: string | null = null;
+	let restored: string | null = null;
 	try {
-		popped = await ctx.ui.custom<string | null>(
+		restored = await ctx.ui.custom<string | null>(
 		(tui, theme, _keybindings, done) => {
 			const searchInput = new Input();
 			searchInput.focused = true;
@@ -354,11 +354,9 @@ async function openStashPopup(ctx: ExtensionContext): Promise<void> {
 				tui.requestRender();
 			};
 
-			const popSelected = () => {
+			const restoreSelected = () => {
 				const item = filtered()[selected];
 				if (!item) return;
-				items = items.filter((candidate) => candidate.id !== item.id);
-				saveItems(path, items);
 				done(item.text);
 			};
 
@@ -396,7 +394,7 @@ async function openStashPopup(ctx: ExtensionContext): Promise<void> {
 				lines.push(panelLine("", innerWidth));
 				const status = confirmDeleteAll
 					? `${theme.fg("warning", "delete all stashed prompts?")} ${ansiYellow("enter")} ${theme.fg("dim", "confirm · ")}${ansiYellow("esc")} ${theme.fg("dim", "cancel")}`
-					: `${ansiYellow("↑↓")} ${theme.fg("dim", "select · ")}${ansiYellow("enter")} ${theme.fg("dim", "pop · ")}${ansiYellow("ctrl+d")} ${theme.fg("dim", "delete · ")}${ansiYellow("ctrl+x")} ${theme.fg("dim", "delete all · ")}${ansiYellow("esc")} ${theme.fg("dim", "close")}`;
+					: `${ansiYellow("↑↓")} ${theme.fg("dim", "select · ")}${ansiYellow("enter")} ${theme.fg("dim", "restore · ")}${ansiYellow("ctrl+d")} ${theme.fg("dim", "delete · ")}${ansiYellow("ctrl+x")} ${theme.fg("dim", "delete all · ")}${ansiYellow("esc")} ${theme.fg("dim", "close")}`;
 				lines.push(panelLine(status, innerWidth));
 
 				return framePopup(lines, width, theme, "Prompt Stash", `${items.length} saved`);
@@ -427,7 +425,7 @@ async function openStashPopup(ctx: ExtensionContext): Promise<void> {
 						return;
 					}
 					if (matchesKey(data, "return") || matchesKey(data, "enter")) {
-						popSelected();
+						restoreSelected();
 						return;
 					}
 					if (matchesKey(data, "up")) {
@@ -499,8 +497,8 @@ async function openStashPopup(ctx: ExtensionContext): Promise<void> {
 		releaseModalLock();
 	}
 
-	if (popped != null) {
-		ctx.ui.setEditorText(popped);
+	if (restored != null) {
+		ctx.ui.setEditorText(restored);
 	}
 }
 
@@ -537,7 +535,7 @@ export default function promptStash(pi: ExtensionAPI): void {
 	const shortcut = settingString("shortcut", DEFAULT_SHORTCUT);
 	if (shortcut !== "none") {
 		pi.registerShortcut(shortcut, {
-			description: "Stash current prompt or pop from prompt stash",
+			description: "Stash current prompt or restore from prompt stash",
 			handler: async (ctx) => toggleStash(ctx as ExtensionContext),
 		});
 	}
