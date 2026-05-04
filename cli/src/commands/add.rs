@@ -33,9 +33,13 @@ fn source_label(source: &str) -> String {
 fn build_source_options(
     registry: &config::SourceRegistry,
     resolved: &ResolvedSource,
+    project_root: &Path,
 ) -> Vec<tui::RepoOption> {
     let mut sources = Vec::new();
     sources.push(crate::REPO.to_string());
+    if let Some(current) = registry.current_for_project(project_root) {
+        sources.push(current.to_string());
+    }
     if let Some(current) = &registry.current {
         sources.push(current.clone());
     }
@@ -63,6 +67,7 @@ fn build_source_options(
 fn resolve_source_for_app(
     source: Option<&str>,
     registry: &config::SourceRegistry,
+    project_root: &Path,
 ) -> Result<ResolvedSource> {
     match source {
         Some(path) if Path::new(path).exists() => {
@@ -81,14 +86,28 @@ fn resolve_source_for_app(
             persist: true,
         }),
         None => {
-            // Prefer the user's last-selected source over CWD auto-detection.
-            // This prevents a local vstack repo from hijacking the source
-            // when the user previously selected a remote (e.g., vanillagreencom/vstack).
-            if let Some(current) = &registry.current {
+            // Prefer the source selected for THIS project. Source selection is
+            // intentionally project-scoped: choosing a repo while working in
+            // one project must not silently change the source used by another.
+            if let Some(current) = registry.current_for_project(project_root) {
                 if let Ok(dir) = resolve_source(Some(current)) {
                     return Ok(ResolvedSource {
-                        source: current.clone(),
+                        source: current.to_string(),
                         label: source_label(current),
+                        dir,
+                        persist: true,
+                    });
+                }
+            }
+
+            // Existing projects already record installed item sources in the
+            // lock file. Use that before any global/default source so a
+            // project's repo choice remains stable across invocations.
+            if let Some(current) = source_from_project_lock(project_root) {
+                if let Ok(dir) = resolve_source(Some(&current)) {
+                    return Ok(ResolvedSource {
+                        label: source_label(&current),
+                        source: current,
                         dir,
                         persist: true,
                     });
@@ -136,6 +155,7 @@ pub fn run(
     let mut registry =
         config::SourceRegistry::load(&config::source_registry_path()).unwrap_or_default();
     let mut current_source = source.clone();
+    let project_root = config::project_root();
     let (
         resolved_source,
         selected_agents,
@@ -147,9 +167,13 @@ pub fn run(
         method,
         update_cli,
     ) = loop {
-        let resolved = resolve_source_for_app(current_source.as_deref(), &registry)?;
+        let resolved = resolve_source_for_app(current_source.as_deref(), &registry, &project_root)?;
         if resolved.persist {
-            registry.remember(&resolved.source);
+            if global {
+                registry.remember(&resolved.source);
+            } else {
+                registry.remember_for_project(&project_root, &resolved.source);
+            }
             registry.save(&config::source_registry_path())?;
         }
         let source_dir = resolved.dir.clone();
@@ -296,7 +320,7 @@ pub fn run(
         } else {
             let selector = tui::SourceSelectorData {
                 current_label: resolved.label.clone(),
-                options: build_source_options(&registry, &resolved),
+                options: build_source_options(&registry, &resolved, &project_root),
             };
             let items = tui::DiscoveredItems {
                 agents,
@@ -761,6 +785,20 @@ fn resolve_source(source: Option<&str>) -> Result<PathBuf> {
             clone_or_update(crate::REPO)
         }
     }
+}
+
+fn source_from_project_lock(project_root: &Path) -> Option<String> {
+    let lock = config::LockFile::load(&project_root.join(".vstack-lock.json")).ok()?;
+    let mut counts = std::collections::BTreeMap::<String, usize>::new();
+    for entry in lock.entries.values() {
+        *counts.entry(entry.source.clone()).or_default() += 1;
+    }
+    counts
+        .into_iter()
+        .max_by(|(a_source, a_count), (b_source, b_count)| {
+            a_count.cmp(b_count).then_with(|| b_source.cmp(a_source))
+        })
+        .map(|(source, _)| source)
 }
 
 fn looks_like_remote(source: &str) -> bool {

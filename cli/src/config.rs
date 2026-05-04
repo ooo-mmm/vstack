@@ -83,8 +83,14 @@ pub struct LockFile {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SourceRegistry {
+    /// Last selected source outside a project-scoped install.
     pub current: Option<String>,
     pub entries: Vec<String>,
+    /// Last selected source per project root. This prevents choosing a source
+    /// in one project from silently changing the package source used by
+    /// another project.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub project_current: BTreeMap<String, String>,
 }
 
 impl LockFile {
@@ -148,7 +154,10 @@ impl SourceRegistry {
         {
             self.current = None;
         }
-        before - self.entries.len()
+        let before_project = self.project_current.len();
+        self.project_current
+            .retain(|_, source| !is_dead_local_path(source));
+        before - self.entries.len() + before_project - self.project_current.len()
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {
@@ -161,10 +170,38 @@ impl SourceRegistry {
     }
 
     pub fn remember(&mut self, source: &str) {
+        // Temporary installer sandboxes should be usable for the current
+        // command, but should not become sticky source choices in the user's
+        // global registry. They are often one-off partial vstack sources such
+        // as /tmp/vstack-install-<package>.
+        if is_temporary_local_path(source) {
+            return;
+        }
+        self.remember_entry(source);
+        self.current = Some(source.to_string());
+    }
+
+    pub fn remember_for_project(&mut self, project_root: &Path, source: &str) {
+        // Same temp-source rule as the global current: allow the current
+        // command to use /tmp explicitly, but don't make it sticky.
+        if is_temporary_local_path(source) {
+            return;
+        }
+        self.remember_entry(source);
+        self.project_current
+            .insert(project_key(project_root), source.to_string());
+    }
+
+    pub fn current_for_project(&self, project_root: &Path) -> Option<&str> {
+        self.project_current
+            .get(&project_key(project_root))
+            .map(String::as_str)
+    }
+
+    fn remember_entry(&mut self, source: &str) {
         if !self.entries.iter().any(|entry| entry == source) {
             self.entries.push(source.to_string());
         }
-        self.current = Some(source.to_string());
     }
 
     pub fn forget(&mut self, source: &str) {
@@ -172,7 +209,16 @@ impl SourceRegistry {
         if self.current.as_deref() == Some(source) {
             self.current = None;
         }
+        self.project_current.retain(|_, current| current != source);
     }
+}
+
+fn project_key(project_root: &Path) -> String {
+    project_root
+        .canonicalize()
+        .unwrap_or_else(|_| project_root.to_path_buf())
+        .display()
+        .to_string()
 }
 
 /// True iff `entry` looks like a local filesystem path (absolute, `~`-tilde,
@@ -180,21 +226,37 @@ impl SourceRegistry {
 /// match those shapes (remote shorthand `owner/repo`, URLs, etc.) is left
 /// alone — only path-like entries can become dead.
 fn is_dead_local_path(entry: &str) -> bool {
+    expanded_local_path(entry).is_some_and(|expanded| !expanded.exists())
+}
+
+/// True iff `entry` is a local path under the OS temp directory. These paths
+/// are valid to install from explicitly, but should not be remembered as
+/// durable package sources.
+fn is_temporary_local_path(entry: &str) -> bool {
+    let Some(path) = expanded_local_path(entry) else {
+        return false;
+    };
+    let temp = std::env::temp_dir();
+    let temp = temp.canonicalize().unwrap_or(temp);
+    let path = path.canonicalize().unwrap_or(path);
+    path.starts_with(temp)
+}
+
+fn expanded_local_path(entry: &str) -> Option<PathBuf> {
     let looks_like_path = entry.starts_with('/')
         || entry.starts_with('~')
         || entry.starts_with("./")
         || entry.starts_with("../");
     if !looks_like_path {
-        return false;
+        return None;
     }
-    let expanded = if let Some(stripped) = entry.strip_prefix("~/") {
+    Some(if let Some(stripped) = entry.strip_prefix("~/") {
         user_home_dir().join(stripped)
     } else if entry == "~" {
         user_home_dir()
     } else {
         PathBuf::from(entry)
-    };
-    !expanded.exists()
+    })
 }
 
 /// Resolve the lock file path based on scope
@@ -767,6 +829,7 @@ mod source_registry_tests {
                 dead.display().to_string(),
                 "https://example.com/repo".to_string(),
             ],
+            ..Default::default()
         };
         let pruned = reg.prune_dead_paths();
         assert_eq!(pruned, 1);
@@ -789,6 +852,7 @@ mod source_registry_tests {
         let mut reg = SourceRegistry {
             current: Some(dead.display().to_string()),
             entries: vec![dead.display().to_string()],
+            ..Default::default()
         };
         let pruned = reg.prune_dead_paths();
         assert_eq!(pruned, 1);
@@ -814,5 +878,50 @@ mod source_registry_tests {
             serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(on_disk["entries"].as_array().unwrap().len(), 1);
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn remember_ignores_temp_sources() {
+        let dir = sandbox("remember_temp");
+        let mut reg = SourceRegistry::default();
+
+        reg.remember("vanillagreencom/vstack");
+        reg.remember(&dir.display().to_string());
+
+        assert_eq!(reg.current.as_deref(), Some("vanillagreencom/vstack"));
+        assert_eq!(reg.entries, vec!["vanillagreencom/vstack".to_string()]);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn remember_for_project_does_not_change_global_current() {
+        let project_a = sandbox("project_a");
+        let project_b = sandbox("project_b");
+        let mut reg = SourceRegistry::default();
+
+        reg.remember("vanillagreencom/vstack");
+        reg.remember_for_project(&project_a, "owner/a");
+        reg.remember_for_project(&project_b, "owner/b");
+
+        assert_eq!(reg.current.as_deref(), Some("vanillagreencom/vstack"));
+        assert_eq!(reg.current_for_project(&project_a), Some("owner/a"));
+        assert_eq!(reg.current_for_project(&project_b), Some("owner/b"));
+        assert!(reg.entries.contains(&"owner/a".to_string()));
+        assert!(reg.entries.contains(&"owner/b".to_string()));
+        let _ = fs::remove_dir_all(&project_a);
+        let _ = fs::remove_dir_all(&project_b);
+    }
+
+    #[test]
+    fn forget_clears_matching_project_current() {
+        let project = sandbox("forget_project");
+        let mut reg = SourceRegistry::default();
+        reg.remember_for_project(&project, "owner/repo");
+
+        reg.forget("owner/repo");
+
+        assert_eq!(reg.current_for_project(&project), None);
+        assert!(!reg.entries.contains(&"owner/repo".to_string()));
+        let _ = fs::remove_dir_all(&project);
     }
 }
