@@ -5,17 +5,34 @@ import { fetchHttpContent, isProbablyPdf } from "../extract/http.js";
 import { fetchPdfText } from "../extract/pdf.js";
 import { ExaClient } from "../providers/exa.js";
 import type { WebToolsSettings } from "../settings.js";
-import { storeWebContent } from "../storage.js";
+import { storeWebContent, type StoredWebContent } from "../storage.js";
 import { truncateText } from "../utils/format.js";
 import { accent, emptyComponent, errorSummary, firstText, muted, providerLabel, successSummary, textComponent, tree, webCallText } from "../utils/render.js";
 
 export const webFetchSchema = Type.Object({
 	url: Type.Optional(Type.String()),
 	urls: Type.Optional(Type.Array(Type.String())),
-	textMaxCharacters: Type.Optional(Type.Number()),
+	textMaxCharacters: Type.Optional(Type.Number({ description: "Preview character cap for direct/GitHub/PDF fetches and provider extraction cap for Exa fallback/override. Direct fetches still store the full extracted text in session storage before preview truncation." })),
 	provider: Type.Optional(Type.Union([Type.Literal("auto"), Type.Literal("http"), Type.Literal("exa")])),
 });
 export type WebFetchInput = Static<typeof webFetchSchema>;
+
+export const DEFAULT_WEB_FETCH_PREVIEW_CHARACTERS = 4000;
+
+interface WebFetchPreviewItem {
+	id: string;
+	shownCharacters: number;
+	fullCharacters: number;
+	truncated: boolean;
+}
+
+interface WebFetchPreviewDetails {
+	maxCharacters: number;
+	shownCharacters: number;
+	fullCharacters: number;
+	truncated: boolean;
+	items: WebFetchPreviewItem[];
+}
 
 function urls(params: WebFetchInput): string[] {
 	const items = [...(params.urls ?? [])];
@@ -26,7 +43,7 @@ function urls(params: WebFetchInput): string[] {
 function fetchProviderForLabel(requested: unknown, actual?: unknown): string {
 	const requestedValue = String(requested ?? "auto").trim().toLowerCase() || "auto";
 	const actualValue = String(actual ?? requestedValue).trim().toLowerCase() || requestedValue;
-	return requestedValue === "auto" && actualValue !== "auto" ? `${actualValue}/auto` : actualValue;
+	return actualValue;
 }
 
 function pendingFetchProviderForLabel(requested: unknown): string {
@@ -39,13 +56,54 @@ function storedProvider(stored: any[]): string {
 	return providers.length === 1 ? providers[0]! : "mixed";
 }
 
+function previewLimit(params: WebFetchInput): number {
+	const raw = params.textMaxCharacters ?? DEFAULT_WEB_FETCH_PREVIEW_CHARACTERS;
+	return Number.isFinite(raw) ? Math.max(0, Math.floor(raw)) : DEFAULT_WEB_FETCH_PREVIEW_CHARACTERS;
+}
+
+function previewStats(content: string, maxCharacters: number): WebFetchPreviewItem {
+	const fullCharacters = content.length;
+	return {
+		id: "",
+		shownCharacters: Math.min(fullCharacters, Math.max(0, maxCharacters)),
+		fullCharacters,
+		truncated: fullCharacters > maxCharacters,
+	};
+}
+
+export function buildWebFetchToolResult(stored: StoredWebContent[], provider: string, maxCharacters = DEFAULT_WEB_FETCH_PREVIEW_CHARACTERS) {
+	const previewItems = stored.map((item) => {
+		const stats = previewStats(item.content, maxCharacters);
+		const { text } = truncateText(item.content, maxCharacters);
+		return { item, text, stats: { ...stats, id: item.id } };
+	});
+	const preview: WebFetchPreviewDetails = {
+		maxCharacters,
+		shownCharacters: previewItems.reduce((sum, item) => sum + item.stats.shownCharacters, 0),
+		fullCharacters: previewItems.reduce((sum, item) => sum + item.stats.fullCharacters, 0),
+		truncated: previewItems.some((item) => item.stats.truncated),
+		items: previewItems.map((item) => item.stats),
+	};
+	const ids = stored.map((item) => item.id).join(", ");
+	const previewText = previewItems.map(({ item, text, stats }) => {
+		const label = item.title ?? item.url ?? "content";
+		const meta = `preview ${stats.shownCharacters}/${stats.fullCharacters} chars${stats.truncated ? "; full text stored" : ""}`;
+		return `- ${item.id}: ${label}\n[${meta}]\n${text}`;
+	}).join("\n\n");
+	const previewMeta = preview.truncated ? ` (${preview.shownCharacters}/${preview.fullCharacters} chars shown)` : "";
+	return {
+		content: [{ type: "text", text: `Fetched ${stored.length} URL(s). Preview returned${previewMeta}. Full extracted text is stored under content id(s): ${ids || "none"}.\n\n${previewText}\n\nUse get_web_content with the content id for stored full text.` }],
+		details: { provider, stored, preview },
+	};
+}
+
 export function createWebFetchToolDefinition(pi: ExtensionAPI, getSettings: (cwd?: string) => WebToolsSettings, name = "web_fetch") {
 	return {
 		renderShell: "self" as const,
 		name,
 		label: name === "web_fetch" ? "Web Fetch" : "Fetch Content",
-		description: "Fetch known URL content and store full extracted text for get_web_content. Auto handles GitHub, PDF, HTML/text/JSON, with Exa contents as fallback/override.",
-		promptSnippet: "Fetch and store known URL content for later retrieval.",
+		description: "Fetch known URL content and store full extracted text for get_web_content. Auto handles GitHub, PDF, HTML/text/JSON, with Exa contents as fallback/override. Direct/GitHub/PDF fetches store full extracted text; the tool result is only a preview.",
+		promptSnippet: "Fetch and store known URL content; use the returned content id with get_web_content for full stored text.",
 		parameters: webFetchSchema,
 		renderCall(args: WebFetchInput, theme: any, context: any) {
 			if (context?.executionStarted && !context?.isPartial) return emptyComponent();
@@ -57,10 +115,14 @@ export function createWebFetchToolDefinition(pi: ExtensionAPI, getSettings: (cwd
 			if (context?.isError) return textComponent(errorSummary(theme, providerLabel(name === "web_fetch" ? "Web Fetch" : name, fetchProviderForLabel(context?.args?.provider)), firstText(result) || "failed"));
 			const stored = Array.isArray(result?.details?.stored) ? result.details.stored : [];
 			const provider = fetchProviderForLabel(context?.args?.provider, result?.details?.provider);
-			const lines = [successSummary(theme, providerLabel(name === "web_fetch" ? "Web Fetch" : name, provider), context?.args?.url || context?.args?.urls?.[0] || "content", `${stored.length} stored`)];
+			const preview = result?.details?.preview;
+			const meta = [`${stored.length} stored`, preview?.truncated ? `preview ${preview.shownCharacters}/${preview.fullCharacters} chars` : undefined].filter(Boolean).join(" · ");
+			const lines = [successSummary(theme, providerLabel(name === "web_fetch" ? "Web Fetch" : name, provider), context?.args?.url || context?.args?.urls?.[0] || "content", meta)];
 			for (let index = 0; index < stored.slice(0, 3).length; index++) {
 				const item = stored[index]!;
-				lines.push(`${tree(theme, index === stored.length - 1 ? "└" : "├")}${accent(theme, item.title ?? item.url ?? item.id)}${muted(theme, ` · ${item.id}`)}`);
+				const itemPreview = Array.isArray(preview?.items) ? preview.items.find((candidate: any) => candidate?.id === item.id) : undefined;
+				const previewMeta = itemPreview?.truncated ? ` · preview ${itemPreview.shownCharacters}/${itemPreview.fullCharacters} chars` : "";
+				lines.push(`${tree(theme, index === stored.length - 1 ? "└" : "├")}${accent(theme, item.title ?? item.url ?? item.id)}${muted(theme, ` · content id ${item.id}${previewMeta}`)}`);
 			}
 			if (stored.length > 3) lines.push(`${tree(theme, "└")}${muted(theme, `… ${stored.length - 3} more`)}`);
 			return textComponent(lines.join("\n"));
@@ -100,14 +162,10 @@ export function createWebFetchToolDefinition(pi: ExtensionAPI, getSettings: (cwd
 					stored.push(...await fetchWithExa(failed.map((item) => item.url)));
 				}
 				const actualProvider = storedProvider(stored);
-				const preview = stored.map((item) => {
-					const { text } = truncateText(item.content, params.textMaxCharacters ?? 1200);
-					return `- ${item.id}: ${item.title ?? item.url ?? "content"}\n${text}`;
-				}).join("\n\n");
-				return { content: [{ type: "text", text: `Fetched ${stored.length} URL(s).\n${preview}\n\nUse get_web_content with contentId for stored full text.` }], details: { provider: params.provider === "http" ? "http" : actualProvider, stored } };
+				return buildWebFetchToolResult(stored, params.provider === "http" ? "http" : actualProvider, previewLimit(params));
 			}
 			const stored = await fetchWithExa(list);
-			return { content: [{ type: "text", text: `Fetched ${stored.length} URL(s).\n${stored.map((item) => `- ${item.id}: ${item.title ?? item.url ?? "content"}`).join("\n")}` }], details: { provider: "exa", stored } };
+			return buildWebFetchToolResult(stored, "exa", previewLimit(params));
 		},
 	};
 }

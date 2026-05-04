@@ -5,17 +5,19 @@ import { accent, emptyComponent, errorSummary, firstText, muted, providerDisplay
 
 export const getWebContentSchema = Type.Object({
 	id: Type.String({ description: "Content id returned by web_search or web_fetch." }),
-	maxCharacters: Type.Optional(Type.Number()),
+	maxCharacters: Type.Optional(Type.Number({ description: "Maximum characters to return to the model. Defaults to 50000; omit for normal full-context retrieval, lower only for previews." })),
 });
 export type GetWebContentInput = Static<typeof getWebContentSchema>;
+
+export const DEFAULT_GET_WEB_CONTENT_CHARACTERS = 50000;
 
 export function createGetWebContentToolDefinition(name = "get_web_content") {
 	return {
 		renderShell: "self" as const,
 		name,
 		label: "Get Web Content",
-		description: "Retrieve full stored content from prior pi-web-tools calls by content id.",
-		promptSnippet: "Retrieve stored full web content by id.",
+		description: "Retrieve stored content from prior pi-web-tools calls by content id. Content is stored in the current Pi session, not fetched again; omit maxCharacters to return up to 50000 characters.",
+		promptSnippet: "Retrieve stored full web content by content id; omit maxCharacters unless the user asks for a short preview.",
 		parameters: getWebContentSchema,
 		renderCall(args: GetWebContentInput, theme: any, context: any) {
 			if (context?.executionStarted && !context?.isPartial) return emptyComponent();
@@ -44,8 +46,9 @@ export function createGetWebContentToolDefinition(name = "get_web_content") {
 		async execute(_toolCallId: string, params: GetWebContentInput) {
 			const item = getWebContent(params.id);
 			if (!item) throw new Error(`Stored content id not found: ${params.id}. Use a content id returned by web_search/web_fetch; passing a URL here will not fetch it.`);
-			const { text, truncated } = truncateText(item.content, params.maxCharacters ?? 50000);
-			return { content: [{ type: "text", text: `${item.title ?? item.url ?? item.id}\n${item.url ?? ""}\n\n${text}${truncated ? "\n\n[Use a larger maxCharacters value for more.]" : ""}` }], details: { ...item, truncated, maxCharacters: params.maxCharacters ?? 50000, contentLength: item.content.length } };
+			const maxCharacters = params.maxCharacters ?? DEFAULT_GET_WEB_CONTENT_CHARACTERS;
+			const { text, truncated } = truncateText(item.content, maxCharacters);
+			return { content: [{ type: "text", text: `${item.title ?? item.url ?? item.id}\n${item.url ?? ""}\n\n${text}${truncated ? "\n\n[Use a larger maxCharacters value for more.]" : ""}` }], details: { ...item, truncated, maxCharacters, contentLength: item.content.length } };
 		},
 	};
 }

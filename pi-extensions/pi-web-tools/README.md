@@ -12,6 +12,16 @@ Implemented in this package:
 - `get_web_content` retrieval for stored full content.
 - `/web-tools doctor` and `/web-tools provider ...` guidance.
 
+## Fetch storage and truncation
+
+`web_fetch` returns a compact preview and stores extracted content in the current Pi session under a generated content id such as `web-...`. Tool text and UI label preview output separately from stored full text; when a preview is truncated the renderer shows `preview <shown>/<full> chars`. Use `get_web_content` with that content id to retrieve the stored text; it does not fetch the URL again.
+
+- GitHub blob, GitHub repo metadata/README, direct HTTP, and basic PDF extraction store the full extracted text before preview truncation.
+- Exa `contents` fallback/override stores the text returned by Exa; `textMaxCharacters` is the provider extraction cap for that path.
+- `web_fetch.textMaxCharacters` caps the immediate preview shown to the model for direct/GitHub/PDF paths; default preview cap is 4k characters per stored item.
+- `get_web_content.maxCharacters` caps the retrieval returned to the model; default is 50k characters. Omit it for normal full-context retrieval, lower it only for previews.
+- Session storage is not a standalone project file. The durable handle shown in UI is the `content id`, and Pi persists it with the session history.
+
 Staged for follow-up parity with `pi-web-access`:
 
 - Perplexity/Gemini direct search execution.
