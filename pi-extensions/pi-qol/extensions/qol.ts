@@ -1,6 +1,6 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import { complete, type Message } from "@mariozechner/pi-ai";
-import { AssistantMessageComponent, BorderedLoader, convertToLlm, CustomEditor, serializeConversation, SessionManager, type ExtensionAPI, type ExtensionCommandContext, type ExtensionContext, type KeybindingsManager, type SessionEntry, type Theme } from "@mariozechner/pi-coding-agent";
+import { AssistantMessageComponent, BorderedLoader, convertToLlm, CustomEditor, serializeConversation, SessionManager, Theme, type ExtensionAPI, type ExtensionCommandContext, type ExtensionContext, type KeybindingsManager, type SessionEntry } from "@mariozechner/pi-coding-agent";
 import type { AutocompleteItem, AutocompleteSuggestions, EditorTheme, TUI } from "@mariozechner/pi-tui";
 import { matchesKey, Text, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@mariozechner/pi-tui";
 import { execFile, execFileSync } from "node:child_process";
@@ -23,6 +23,7 @@ const VSTACK_MODAL_LOCK_SYMBOL = Symbol.for("vstack.pi.modal-lock");
 const THINKING_TIMER_STORE_SYMBOL = Symbol.for("vstack.pi-qol.thinking-timer.store");
 const THINKING_TIMER_PATCH_SYMBOL = Symbol.for("vstack.pi-qol.thinking-timer.patch");
 const SESSION_SEARCH_PENDING_SYMBOL = Symbol.for("vstack.pi-qol.session-search.pending-context");
+const PENDING_QUEUE_THEME_PATCH_SYMBOL = Symbol.for("vstack.pi-qol.pending-queue.theme-patch");
 const QUESTION_OPENED_EVENT = "vstack:pi-questions:opened";
 const QUESTION_NOTIFY_DEDUP_MS = 2000;
 const DEFAULT_NOTIFICATION_TITLE = "Pi";
@@ -2136,6 +2137,7 @@ function statusMessage(ctx: ExtensionContext): string {
 		`Statusline: ${settingBoolean("replaceFooter", true, ctx.cwd) ? "replaces footer" : "footer preserved"}; prompt=${settingBoolean("compactPrompt", true, ctx.cwd) ? "π compact" : "default chrome"}`,
 		`Shift+Enter newline: ${settingBoolean("newlineOnShiftEnter", true, ctx.cwd) ? "enabled" : "disabled"}`,
 		`Fallback newline key: ${newlineFallbackKey(ctx.cwd)}`,
+		`Pending queue preview: ${settingBoolean("pendingQueue.asciiGreen", true, ctx.cwd) ? "ANSI green" : "Pi default"}`,
 		`Image chips: ${settingBoolean("showImageChips", true, ctx.cwd) ? "filled (placeholders and existing image paths)" : "off"}`,
 		`Image placeholders/paths in draft: ${labels.length ? labels.join(", ") : "none"}`,
 		`Rename command: ${settingBoolean("enableSessionNameCommand", true, ctx.cwd) ? "enabled (/rename)" : "disabled"}`,
@@ -2365,6 +2367,44 @@ function ansiRed(text: string): string {
 
 function ansiYellow(text: string): string {
 	return `${ANSI_YELLOW_FG}${text}${ANSI_FG_RESET}`;
+}
+
+interface PendingQueueThemePatch {
+	originalFg: unknown;
+	cwd?: string;
+}
+
+function isPendingQueuePreviewText(text: string): boolean {
+	const plain = stripAnsi(text);
+	return plain.startsWith("Steering: ") || plain.startsWith("Follow-up: ");
+}
+
+function installPendingQueueThemePatch(ctx: ExtensionContext): void {
+	if (!ctx.hasUI) return;
+	const proto = Theme.prototype as unknown as Record<PropertyKey, unknown>;
+	const existing = proto[PENDING_QUEUE_THEME_PATCH_SYMBOL] as PendingQueueThemePatch | undefined;
+	if (existing) {
+		existing.cwd = ctx.cwd;
+		return;
+	}
+	const originalFg = proto.fg;
+	if (typeof originalFg !== "function") return;
+	const patch: PendingQueueThemePatch = { originalFg, cwd: ctx.cwd };
+	proto[PENDING_QUEUE_THEME_PATCH_SYMBOL] = patch;
+	proto.fg = function patchedQolFg(this: Theme, token: string, text: string): string {
+		if (token === "dim" && typeof text === "string" && settingBoolean("pendingQueue.asciiGreen", true, patch.cwd) && isPendingQueuePreviewText(text)) {
+			return ansiGreen(text);
+		}
+		return (patch.originalFg as (this: Theme, token: string, text: string) => string).call(this, token, text);
+	};
+}
+
+function restorePendingQueueThemePatch(_ctx: ExtensionContext): void {
+	const proto = Theme.prototype as unknown as Record<PropertyKey, unknown>;
+	const patch = proto[PENDING_QUEUE_THEME_PATCH_SYMBOL] as PendingQueueThemePatch | undefined;
+	if (!patch) return;
+	proto.fg = patch.originalFg;
+	delete proto[PENDING_QUEUE_THEME_PATCH_SYMBOL];
 }
 
 function oneLine(text: string): string {
@@ -3930,6 +3970,7 @@ export default function qol(pi: ExtensionAPI): void {
 		resetThinkingTimer(ctx);
 		void consumePendingSessionSearchContext(pi, ctx, event.reason);
 		installAutocompleteHintStyling(ctx);
+		installPendingQueueThemePatch(ctx);
 		if (ctx.hasUI) {
 			gitState = makeFallbackGitState(ctx.cwd);
 			void refreshStatusline(ctx);
@@ -4012,6 +4053,7 @@ export default function qol(pi: ExtensionAPI): void {
 		if (host[QOL_NOTIFICATION_SERVICE_SYMBOL] === notificationService) delete host[QOL_NOTIFICATION_SERVICE_SYMBOL];
 		ctx.ui.setStatus(STATUS_KEY, undefined);
 		ctx.ui.setStatus(SESSION_SEARCH_STATUS_KEY, undefined);
+		restorePendingQueueThemePatch(ctx);
 		resetStatuslineUi(ctx);
 		ctx.ui.setEditorComponent(undefined);
 	});

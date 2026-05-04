@@ -148,6 +148,15 @@
           "requiresReload": true
         },
         {
+          "key": "pendingQueue.asciiGreen",
+          "label": "Green pending queue preview",
+          "description": "Render Pi's built-in steering/follow-up queue preview and Alt+Up hint in ANSI green instead of the dim hint color.",
+          "type": "boolean",
+          "default": true,
+          "category": "Input",
+          "apply": "live"
+        },
+        {
           "key": "showImageChips",
           "label": "Style image chips",
           "description": "Render [Image #N] placeholders and existing pasted image paths in the editor as visually distinct chips. Pi still owns attachment state.",
