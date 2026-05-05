@@ -185,10 +185,6 @@ function resultTruncated(result: any): boolean {
 	return truncatedMarker(textContent(result));
 }
 
-function makeText(text: string): Text {
-	return new Text(text, 0, 0);
-}
-
 function makeEmpty() {
 	return {
 		invalidate() {},
@@ -376,10 +372,10 @@ function installCompactionSummaryRenderer(pi: ExtensionAPI, Component: any): voi
 			this.clear?.();
 
 			const hint = expanded ? "" : theme.fg("dim", " · Ctrl+O to expand");
-			this.addChild?.(new Text(`${stackPrefix(theme)}${toolLabel(theme, "Compacted ")}${theme.fg("success", `${tokenStr} tokens`)}${hint}`, 0, 0));
+			this.addChild?.(makeTruncatedLines(`${stackPrefix(theme)}${toolLabel(theme, "Compacted ")}${theme.fg("success", `${tokenStr} tokens`)}${hint}`));
 
 			if (expanded) {
-				this.addChild?.(new Text(`${treeConnector(theme, "└", cwd)}${theme.fg("muted", "Summary")}`, 0, 0));
+				this.addChild?.(makeTruncatedLines(`${treeConnector(theme, "└", cwd)}${theme.fg("muted", "Summary")}`));
 				this.addChild?.(new Markdown(summary, 0, 0, this?.markdownTheme ?? getMarkdownTheme(), {
 					color: (text: string) => theme.fg("customMessageText", text),
 				}));
@@ -461,10 +457,10 @@ function installSkillInvocationRenderer(pi: ExtensionAPI, Component: any): void 
 			this.clear?.();
 
 			const hint = expanded ? "" : th.fg("dim", ` · ${keyText("app.tools.expand")} expand`);
-			this.addChild?.(new Text(`${stackPrefix(th)}${toolLabel(th, "Skill ")}${th.fg("accent", name)}${hint}`, 0, 0));
+			this.addChild?.(makeTruncatedLines(`${stackPrefix(th)}${toolLabel(th, "Skill ")}${th.fg("accent", name)}${hint}`));
 
 			if (expanded) {
-				this.addChild?.(new Text(`${treeConnector(th, "└", cwd)}${th.fg("muted", "Content")}`, 0, 0));
+				this.addChild?.(makeTruncatedLines(`${treeConnector(th, "└", cwd)}${th.fg("muted", "Content")}`));
 				this.addChild?.(new Markdown(`**${name}**\n\n${content}`, 0, 0, this?.markdownTheme ?? getMarkdownTheme(), {
 					color: (text: string) => th.fg("customMessageText", text),
 				}));
@@ -606,7 +602,10 @@ class TruncatedLines {
 	render(width: number): string[] {
 		if (this.cachedLines && this.cachedWidth === width) return this.cachedLines;
 		const targetWidth = Math.max(1, width);
-		const lines = this.lines.map((line) => truncateToWidth(line, targetWidth));
+		const lines = this.lines.flatMap((line) => {
+			const wrapped = wrapTextWithAnsi(line, targetWidth);
+			return wrapped.length > 0 ? wrapped : [""];
+		});
 		this.cachedLines = lines;
 		this.cachedWidth = width;
 		return lines;
@@ -2820,7 +2819,10 @@ function installToolChromePatch(): void {
 		let end = rendered.length - 1;
 		while (end >= start && stripAnsi(rendered[end] ?? "").trim().length === 0) end--;
 		if (start > end) return rendered;
-		const core = rendered.slice(start, end + 1).map((line) => truncateToWidth(line, Math.max(1, width), ""));
+		const core = rendered.slice(start, end + 1).flatMap((line) => {
+			const wrapped = wrapTextWithAnsi(line, Math.max(1, width));
+			return wrapped.length > 0 ? wrapped : [""];
+		});
 		if (mode === "transparent") return core;
 		const activeTheme = this?.ui?.theme ?? (activeToolChromeCtx?.hasUI ? activeToolChromeCtx.ui.theme : undefined);
 		const rule = mutedHorizontalRule(activeTheme, width);

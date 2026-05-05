@@ -1,6 +1,6 @@
 import { StringEnum } from "@mariozechner/pi-ai";
 import type { AgentToolResult, ExtensionAPI, ExtensionCommandContext, ExtensionContext, Theme, ToolExecutionMode } from "@mariozechner/pi-coding-agent";
-import { Text, matchesKey, truncateToWidth, visibleWidth, type AutocompleteItem } from "@mariozechner/pi-tui";
+import { matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi, type AutocompleteItem } from "@mariozechner/pi-tui";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -263,7 +263,7 @@ class SingleLineText {
 	invalidate(): void {}
 	render(width: number): string[] {
 		if (!this.text.trim()) return [];
-		return [truncateToWidth(this.text, Math.max(1, width), "")];
+		return wrapTextWithAnsi(this.text, Math.max(1, width));
 	}
 }
 
@@ -272,7 +272,7 @@ class RuledSingleLineText {
 	invalidate(): void {}
 	render(width: number): string[] {
 		if (!this.text.trim()) return [];
-		return [mutedRule(this.theme, width), truncateToWidth(this.text, Math.max(1, width), ""), mutedRule(this.theme, width)];
+		return [mutedRule(this.theme, width), ...wrapTextWithAnsi(this.text, Math.max(1, width)), mutedRule(this.theme, width)];
 	}
 }
 
@@ -938,14 +938,14 @@ export default function taskPanel(pi: ExtensionAPI): void {
 			return { content: [{ type: "text", text: toolResultContent(summary, state, runCtx.cwd) }], details: { action: params.action, deferDisplay: deferAllCompleteDisplay, message, summary, state: cloneState(state) } };
 		},
 		renderCall(_args, theme) {
-			return compactToolOutput ? singleLine("") : new Text(theme.fg("toolTitle", "tasks_write"), 0, 0);
+			return compactToolOutput ? singleLine("") : singleLine(theme.fg("toolTitle", "tasks_write"));
 		},
 		renderResult(result, _options, theme) {
 			if (result.details?.deferDisplay) return singleLine("");
 			const summary = result.details?.summary ?? result.content?.find((part: any) => part?.type === "text")?.text?.replace(/^•\s*/, "") ?? "tasks updated";
 			const action = result.details?.action ?? "";
 			if (compactToolOutput) return singleLine(renderTaskToolSummary(summary, action, theme));
-			return new Text(theme.fg("text", `• ${summary}`), 0, 0);
+			return singleLine(theme.fg("text", `• ${summary}`));
 		},
 	});
 

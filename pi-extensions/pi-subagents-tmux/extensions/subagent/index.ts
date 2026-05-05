@@ -30,7 +30,7 @@ import {
 	type TruncationResult,
 	withFileMutationQueue,
 } from "@mariozechner/pi-coding-agent";
-import { type Component, Container, Markdown, matchesKey, Spacer, Text, truncateToWidth, visibleWidth, wrapTextWithAnsi, type TUI } from "@mariozechner/pi-tui";
+import { type Component, Container, Markdown, matchesKey, Spacer, truncateToWidth, visibleWidth, wrapTextWithAnsi, type TUI } from "@mariozechner/pi-tui";
 import { Type } from "typebox";
 import { type AgentConfig, type AgentScope, discoverAgents, formatAgentList } from "./agents.js";
 
@@ -1767,15 +1767,32 @@ function dashboardFrame(lines: string[], width: number, theme: Theme): string[] 
 
 function toolChromeRule(theme: Theme, width: number): string {
 	const rule = "─".repeat(Math.max(1, width));
-	try {
-		return (theme.fg as (token: string, text: string) => string)("borderMuted", rule);
-	} catch {
+	for (const token of ["borderMuted", "muted"] as const) {
 		try {
-			return theme.fg("muted", rule);
+			const styled = theme.fg(token, rule);
+			if (styled !== rule) return styled;
 		} catch {
-			return rule;
+			// Try the next token/fallback below.
 		}
 	}
+	return `\x1b[90m${rule}\x1b[39m`;
+}
+
+function wrapAnsiLines(text: string, width: number): string[] {
+	const targetWidth = Math.max(1, width);
+	return text.split(/\r?\n/).flatMap((line) => {
+		const wrapped = wrapTextWithAnsi(line, targetWidth);
+		return wrapped.length > 0 ? wrapped : [""];
+	});
+}
+
+function wrappedText(text: string): Component {
+	return {
+		invalidate() {},
+		render(width: number): string[] {
+			return wrapAnsiLines(text, width);
+		},
+	};
 }
 
 function framedMessage(content: string, theme: Theme): Component {
@@ -1783,7 +1800,7 @@ function framedMessage(content: string, theme: Theme): Component {
 		invalidate() {},
 		render(width: number): string[] {
 			const rule = toolChromeRule(theme, width);
-			return [rule, ...content.split("\n"), rule];
+			return [rule, ...wrapAnsiLines(content, width), rule];
 		},
 	};
 }
@@ -2711,7 +2728,7 @@ function paneCompletionStatus(status: PaneTaskStatus, theme: Theme): string {
 function renderPaneCompletionMessage(message: { content: string; details?: unknown }, options: { expanded?: boolean } | undefined, theme: Theme) {
 	const details = message.details as PaneCompletionMessageDetails | undefined;
 	const completions = details?.completions ?? [];
-	if (completions.length === 0) return new Text(message.content, 0, 0);
+	if (completions.length === 0) return wrappedText(message.content);
 	const expanded = Boolean(options?.expanded);
 	if (!expanded) {
 		const lines: string[] = [];
@@ -2721,33 +2738,31 @@ function renderPaneCompletionMessage(message: { content: string; details?: unkno
 			);
 			lines.push(`${subagentBranch(theme, "└")}${theme.fg("toolOutput", oneLinePreview(detail.summary, 120) || "No summary provided.")}`);
 		}
-		return new Text(lines.join("\n"), 0, 0);
+		return wrappedText(lines.join("\n"));
 	}
 
 	const container = new Container();
-	container.addChild(new Text(theme.fg("toolTitle", theme.bold(`Subagent completion${completions.length === 1 ? "" : "s"} (${completions.length})`)), 0, 0));
+	container.addChild(wrappedText(theme.fg("toolTitle", theme.bold(`Subagent completion${completions.length === 1 ? "" : "s"} (${completions.length})`))));
 	for (const [index, detail] of completions.entries()) {
 		if (index > 0) container.addChild(new Spacer(1));
 		container.addChild(
-			new Text(
+			wrappedText(
 				`${paneCompletionIcon(detail.status, theme)} ${theme.fg("accent", theme.bold(detail.agent))} ${theme.fg("muted", detail.taskId)} ${paneCompletionStatus(detail.status, theme)}`,
-				0,
-				0,
 			),
 		);
-		container.addChild(new Text(theme.fg("muted", "─── Summary ───"), 0, 0));
-		container.addChild(new Text(detail.summary || "No summary provided.", 0, 0));
-		container.addChild(new Text(theme.fg("muted", "─── Files Changed ───"), 0, 0));
-		container.addChild(new Text(detail.filesChanged.length ? detail.filesChanged.map((file) => `- ${file}`).join("\n") : "None reported", 0, 0));
-		container.addChild(new Text(theme.fg("muted", "─── Validation ───"), 0, 0));
-		container.addChild(new Text(detail.validation.length ? detail.validation.map((item) => `- ${item}`).join("\n") : "None reported", 0, 0));
+		container.addChild(wrappedText(theme.fg("muted", "─── Summary ───")));
+		container.addChild(wrappedText(detail.summary || "No summary provided."));
+		container.addChild(wrappedText(theme.fg("muted", "─── Files Changed ───")));
+		container.addChild(wrappedText(detail.filesChanged.length ? detail.filesChanged.map((file) => `- ${file}`).join("\n") : "None reported"));
+		container.addChild(wrappedText(theme.fg("muted", "─── Validation ───")));
+		container.addChild(wrappedText(detail.validation.length ? detail.validation.map((item) => `- ${item}`).join("\n") : "None reported"));
 		if (detail.notes) {
-			container.addChild(new Text(theme.fg("muted", "─── Notes ───"), 0, 0));
-			container.addChild(new Text(detail.notes, 0, 0));
+			container.addChild(wrappedText(theme.fg("muted", "─── Notes ───")));
+			container.addChild(wrappedText(detail.notes));
 		}
-		container.addChild(new Text(theme.fg("muted", "─── Artifacts ───"), 0, 0));
+		container.addChild(wrappedText(theme.fg("muted", "─── Artifacts ───")));
 		container.addChild(
-			new Text(
+			wrappedText(
 				[
 					`Source: ${compactPath(detail.sourcePath)}`,
 					detail.archivePath ? `Archive: ${compactPath(detail.archivePath)}` : "",
@@ -2756,8 +2771,6 @@ function renderPaneCompletionMessage(message: { content: string; details?: unkno
 					.filter(Boolean)
 					.map((line) => theme.fg("dim", line))
 					.join("\n"),
-				0,
-				0,
 			),
 		);
 	}
@@ -3226,7 +3239,7 @@ export default function (pi: ExtensionAPI) {
 	};
 
 	pi.registerMessageRenderer("subagent-agents", (message, _options, _theme) => {
-		return new Text(message.content, 0, 0);
+		return wrappedText(message.content);
 	});
 
 	pi.registerMessageRenderer("subagent-trace", (message, _options, _theme) => {
@@ -3757,12 +3770,12 @@ export default function (pi: ExtensionAPI) {
 			const raw = result.content?.find?.((part: any) => part?.type === "text")?.text ?? "";
 			const details = result.details as GetSubagentResultDetails | undefined;
 			const status = details?.status ? theme.fg(details.status === "completed" ? "success" : details.status === "failed" ? "error" : "warning", details.status) : undefined;
-			if (context?.isError) return new Text(`${theme.fg("error", ICONS.times)} ${theme.fg("toolTitle", "Subagent result lookup failed")}\n${theme.fg("muted", raw)}`, 0, 0);
+			if (context?.isError) return wrappedText(`${theme.fg("error", ICONS.times)} ${theme.fg("toolTitle", "Subagent result lookup failed")}\n${theme.fg("muted", raw)}`);
 			if (expanded && raw.trim()) return new Markdown(raw, 0, 0, getMarkdownTheme());
 			const target = details?.agent ? details.agent : "subagent";
 			const suffix = status;
 			if (quietInline(context?.cwd) && dashboardEnabled(context?.cwd)) {
-				return new Text(`${theme.fg("success", ICONS.check)} ${theme.fg("toolTitle", theme.bold(`result ${target}`))}${suffix ? ` ${theme.fg("dim", "·")} ${suffix}` : ""}`, 0, 0);
+				return wrappedText(`${theme.fg("success", ICONS.check)} ${theme.fg("toolTitle", theme.bold(`result ${target}`))}${suffix ? ` ${theme.fg("dim", "·")} ${suffix}` : ""}`);
 			}
 			const lines = [`${theme.fg("success", ICONS.check)} ${theme.fg("toolTitle", theme.bold(target))}${suffix ? ` ${theme.fg("dim", "·")} ${suffix}` : ""}`];
 			if (details?.summary) lines.push(`  ${theme.fg("toolOutput", oneLinePreview(details.summary, 120))}`);
@@ -3770,7 +3783,7 @@ export default function (pi: ExtensionAPI) {
 				const marker = details.notes.split(/\r?\n/).find((line) => /(?:PANE_|STEER_|_OK\b)/.test(line));
 				if (marker) lines.push(`  ${theme.fg("toolOutput", oneLinePreview(marker, 120))}`);
 			}
-			return new Text(lines.join("\n"), 0, 0);
+			return wrappedText(lines.join("\n"));
 		},
 	});
 
@@ -3903,12 +3916,12 @@ export default function (pi: ExtensionAPI) {
 		renderResult(result, { expanded }, theme, context) {
 			const raw = result.content?.find?.((part: any) => part?.type === "text")?.text ?? "";
 			const details = result.details as SteerSubagentDetails | undefined;
-			if (context?.isError) return new Text(`${theme.fg("error", ICONS.times)} ${theme.fg("toolTitle", "Steer subagent failed")}\n${theme.fg("muted", raw)}`, 0, 0);
-			if (!details) return new Text(raw, 0, 0);
-			if (expanded) return new Text(raw, 0, 0);
+			if (context?.isError) return wrappedText(`${theme.fg("error", ICONS.times)} ${theme.fg("toolTitle", "Steer subagent failed")}\n${theme.fg("muted", raw)}`);
+			if (!details) return wrappedText(raw);
+			if (expanded) return wrappedText(raw);
 			const status = details.bridge ? theme.fg("success", "bridge") : theme.fg("warning", "inbox fallback");
 			const icon = details.bridge ? ICONS.check : ICONS.warning;
-			return new Text(`${theme.fg(details.bridge ? "success" : "warning", icon)} ${theme.fg("toolTitle", theme.bold(`steered ${details.agent}`))} via ${status}`, 0, 0);
+			return wrappedText(`${theme.fg(details.bridge ? "success" : "warning", icon)} ${theme.fg("toolTitle", theme.bold(`steered ${details.agent}`))} via ${status}`);
 		},
 	});
 
@@ -4357,7 +4370,7 @@ export default function (pi: ExtensionAPI) {
 						theme.fg("dim", ` ${preview}`);
 				}
 				if (args.chain.length > 3) text += `\n  ${theme.fg("muted", `... +${args.chain.length - 3} more`)}`;
-				return new Text(text, 0, 0);
+				return wrappedText(text);
 			}
 			if (args.tasks && args.tasks.length > 0) {
 				const tasks = args.tasks as Array<{ agent: string; task?: string }>;
@@ -4365,7 +4378,7 @@ export default function (pi: ExtensionAPI) {
 					theme.fg("accent", "● ") +
 					theme.fg("toolTitle", theme.bold(`${tasks.length} agent${tasks.length === 1 ? "" : "s"} launching`)) +
 					theme.fg("muted", ` [${scope}]`);
-				return new Text(text, 0, 0);
+				return wrappedText(text);
 			}
 			const agentName = args.agent || "...";
 			const preview = args.task ? oneLinePreview(args.task, 56) : "...";
@@ -4374,7 +4387,7 @@ export default function (pi: ExtensionAPI) {
 				theme.fg("accent", agentName) +
 				theme.fg("muted", ` [${scope}]`);
 			text += `\n  ${theme.fg("dim", preview)}`;
-			return new Text(text, 0, 0);
+			return wrappedText(text);
 		},
 
 		renderResult(result, { expanded }, theme, context) {
@@ -4383,7 +4396,7 @@ export default function (pi: ExtensionAPI) {
 			const details = result.details as SubagentDetails | undefined;
 			if (!details || details.results.length === 0) {
 				const text = result.content[0];
-				return new Text(text?.type === "text" ? text.text : "(no output)", 0, 0);
+				return wrappedText(text?.type === "text" ? text.text : "(no output)");
 			}
 
 			const mdTheme = getMarkdownTheme();
@@ -4407,11 +4420,11 @@ export default function (pi: ExtensionAPI) {
 			};
 			const addFinalResponseMarkdown = (container: Container, finalOutput: string, toolCalls: DisplayItem[]) => {
 				if (!finalOutput.trim()) {
-					container.addChild(new Text(theme.fg("muted", "(no final response)"), 0, 0));
+					container.addChild(wrappedText(theme.fg("muted", "(no final response)")));
 					return;
 				}
 				if (finalOutputLooksLikeToolEcho(finalOutput, toolCalls)) {
-					container.addChild(new Text(finalResponseSuppressedLine(theme), 0, 0));
+					container.addChild(wrappedText(finalResponseSuppressedLine(theme)));
 					return;
 				}
 				container.addChild(new Markdown(finalOutput.trim(), 0, 0, mdTheme));
@@ -4450,34 +4463,34 @@ export default function (pi: ExtensionAPI) {
 					let header = `${icon} ${theme.fg("toolTitle", theme.bold(r.agent))}${theme.fg("muted", ` (${r.agentSource})`)}`;
 					if (isError && r.stopReason) header += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
 					header += truncationBadge(r);
-					container.addChild(new Text(header, 0, 0));
+					container.addChild(wrappedText(header));
 					if (isError && r.errorMessage)
-						container.addChild(new Text(theme.fg("error", `Error: ${r.errorMessage}`), 0, 0));
+						container.addChild(wrappedText(theme.fg("error", `Error: ${r.errorMessage}`)));
 					container.addChild(new Spacer(1));
-					container.addChild(new Text(theme.fg("muted", "─── Task ───"), 0, 0));
-					container.addChild(new Text(theme.fg("dim", r.task), 0, 0));
+					container.addChild(wrappedText(theme.fg("muted", "─── Task ───")));
+					container.addChild(wrappedText(theme.fg("dim", r.task)));
 					container.addChild(new Spacer(1));
 					const toolCalls = displayItems.filter((item) => item.type === "toolCall");
-					container.addChild(new Text(theme.fg("muted", "─── Tools used ───"), 0, 0));
-					if (toolCalls.length === 0) container.addChild(new Text(theme.fg("muted", "(none)"), 0, 0));
+					container.addChild(wrappedText(theme.fg("muted", "─── Tools used ───")));
+					if (toolCalls.length === 0) container.addChild(wrappedText(theme.fg("muted", "(none)")));
 					else {
 						for (const item of toolCalls) {
 							container.addChild(
-								new Text(theme.fg("muted", "→ ") + formatToolCall(item.name, item.args, theme.fg.bind(theme)), 0, 0),
+								wrappedText(theme.fg("muted", "→ ") + formatToolCall(item.name, item.args, theme.fg.bind(theme))),
 							);
 						}
 					}
 					container.addChild(new Spacer(1));
-					container.addChild(new Text(theme.fg("muted", "─── Final response ───"), 0, 0));
+					container.addChild(wrappedText(theme.fg("muted", "─── Final response ───")));
 					addFinalResponseMarkdown(container, finalOutput, toolCalls);
 					const outputPath = fullOutputLine(r);
-					if (outputPath) container.addChild(new Text(outputPath, 0, 0));
+					if (outputPath) container.addChild(wrappedText(outputPath));
 					const transcript = transcriptLine(r);
-					if (transcript) container.addChild(new Text(transcript, 0, 0));
+					if (transcript) container.addChild(wrappedText(transcript));
 					const usageStr = queued ? "" : formatUsageStats(r.usage, r.model);
 					if (usageStr) {
 						container.addChild(new Spacer(1));
-						container.addChild(new Text(theme.fg("dim", usageStr), 0, 0));
+						container.addChild(wrappedText(theme.fg("dim", usageStr)));
 					}
 					return container;
 				}
@@ -4496,7 +4509,7 @@ export default function (pi: ExtensionAPI) {
 				if (outputPath) text += `\n${outputPath}`;
 				const usageStr = formatUsageStats(r.usage, r.model);
 				if (usageStr) text += `\n${theme.fg("dim", usageStr)}`;
-				return new Text(text, 0, 0);
+				return wrappedText(text);
 			}
 
 			const aggregateUsage = (results: SingleResult[]) => {
@@ -4519,13 +4532,11 @@ export default function (pi: ExtensionAPI) {
 				if (expanded) {
 					const container = new Container();
 					container.addChild(
-						new Text(
+						wrappedText(
 							icon +
 								" " +
 								theme.fg("toolTitle", theme.bold("chain ")) +
 								theme.fg("accent", `${successCount}/${details.results.length} steps`),
-							0,
-							0,
 						),
 					);
 
@@ -4536,39 +4547,37 @@ export default function (pi: ExtensionAPI) {
 
 						container.addChild(new Spacer(1));
 						container.addChild(
-							new Text(
+							wrappedText(
 								`${theme.fg("muted", `─── Step ${r.step}: `) + theme.fg("accent", r.agent)} ${rIcon}${truncationBadge(r)}`,
-								0,
-								0,
 							),
 						);
-						container.addChild(new Text(theme.fg("muted", "Task: ") + theme.fg("dim", r.task), 0, 0));
+						container.addChild(wrappedText(theme.fg("muted", "Task: ") + theme.fg("dim", r.task)));
 						const toolCalls = displayItems.filter((item) => item.type === "toolCall");
-						container.addChild(new Text(theme.fg("muted", "Tools used:"), 0, 0));
-						if (toolCalls.length === 0) container.addChild(new Text(theme.fg("muted", "(none)"), 0, 0));
+						container.addChild(wrappedText(theme.fg("muted", "Tools used:")));
+						if (toolCalls.length === 0) container.addChild(wrappedText(theme.fg("muted", "(none)")));
 						else {
 							for (const item of toolCalls) {
 								container.addChild(
-									new Text(theme.fg("muted", "→ ") + formatToolCall(item.name, item.args, theme.fg.bind(theme)), 0, 0),
+									wrappedText(theme.fg("muted", "→ ") + formatToolCall(item.name, item.args, theme.fg.bind(theme))),
 								);
 							}
 						}
 
-						container.addChild(new Text(theme.fg("muted", "Final response:"), 0, 0));
+						container.addChild(wrappedText(theme.fg("muted", "Final response:")));
 						addFinalResponseMarkdown(container, finalOutput, toolCalls);
 
 						const outputPath = fullOutputLine(r);
-						if (outputPath) container.addChild(new Text(outputPath, 0, 0));
+						if (outputPath) container.addChild(wrappedText(outputPath));
 						const transcript = transcriptLine(r);
-						if (transcript) container.addChild(new Text(transcript, 0, 0));
+						if (transcript) container.addChild(wrappedText(transcript));
 						const stepUsage = formatUsageStats(r.usage, r.model);
-						if (stepUsage) container.addChild(new Text(theme.fg("dim", stepUsage), 0, 0));
+						if (stepUsage) container.addChild(wrappedText(theme.fg("dim", stepUsage)));
 					}
 
 					const usageStr = formatUsageStats(aggregateUsage(details.results));
 					if (usageStr) {
 						container.addChild(new Spacer(1));
-						container.addChild(new Text(theme.fg("dim", `Total: ${usageStr}`), 0, 0));
+						container.addChild(wrappedText(theme.fg("dim", `Total: ${usageStr}`)));
 					}
 					return container;
 				}
@@ -4593,7 +4602,7 @@ export default function (pi: ExtensionAPI) {
 				const usageStr = formatUsageStats(aggregateUsage(details.results));
 				if (usageStr) text += `\n\n${theme.fg("dim", `Total: ${usageStr}`)}`;
 				text += `\n${theme.fg("muted", "(Ctrl+O to expand)")}`;
-				return new Text(text, 0, 0);
+				return wrappedText(text);
 			}
 
 			if (details.mode === "parallel") {
@@ -4677,7 +4686,7 @@ export default function (pi: ExtensionAPI) {
 
 					const usageStr = formatUsageStats(aggregateUsage(details.results));
 					if (usageStr) lines.push("", theme.fg("dim", `Total: ${usageStr}`));
-					return new Text(lines.join("\n"), 0, 0);
+					return wrappedText(lines.join("\n"));
 				}
 
 				let text = `${headerText}\n${treeText}`;
@@ -4685,11 +4694,11 @@ export default function (pi: ExtensionAPI) {
 					const usageStr = formatUsageStats(aggregateUsage(details.results));
 					if (usageStr) text += `\n${theme.fg("dim", `Total: ${usageStr}`)}`;
 				}
-				return new Text(text, 0, 0);
+				return wrappedText(text);
 			}
 
 			const text = result.content[0];
-			return new Text(text?.type === "text" ? text.text : "(no output)", 0, 0);
+			return wrappedText(text?.type === "text" ? text.text : "(no output)");
 		},
 	});
 
