@@ -480,8 +480,8 @@ function agentStatusIcon(status: ReturnType<typeof agentStatus>, theme: Theme): 
 
 function agentStatusLabel(agent: AgentConfig, status: AgentPaneStatus | undefined, theme: Theme): string {
 	const state = agentStatus(agent, status);
-	if (state === "live") return theme.fg("success", `live ${status?.entry?.paneId ?? ""}`.trim());
-	if (state === "dead") return theme.fg("warning", `dead ${status?.entry?.paneId ?? ""}`.trim());
+	if (state === "live") return theme.fg("success", "live");
+	if (state === "dead") return theme.fg("warning", "dead");
 	if (state === "pane") return theme.fg("muted", "pane-ready/startable");
 	return theme.fg("dim", "one-shot");
 }
@@ -539,7 +539,7 @@ function renderAgentInspector(agent: AgentConfig | undefined, statuses: Map<stri
 		`${theme.fg("muted", "State")}: ${agentStatusLabel(agent, status, theme)}`,
 	];
 	if (status?.entry) {
-		lines.push(`${theme.fg("muted", "Pane")}: ${status.entry.paneId} ${status.entry.windowName}`);
+		lines.push(`${theme.fg("muted", "Pane")}: ${status.entry.windowName}`);
 		lines.push(`${theme.fg("muted", "Last task")}: ${status.entry.lastTaskAt ?? "never"}`);
 	}
 	lines.push("", theme.fg("muted", theme.bold("System Prompt")));
@@ -732,8 +732,8 @@ async function openAgentsBrowser(
 			}
 			if (action.type === "start") {
 				if (!agent.pane) throw new Error(`${agent.name} is not configured with pane: true.`);
-				const pane = await ensurePersistentPane(runtimeRoot, parentSessionId, ctx.cwd, agent, parentModel, parentThinkingLevel);
-				ctx.ui.notify(`Started/reused ${agent.name} in ${pane.paneId}`, "info");
+				await ensurePersistentPane(runtimeRoot, parentSessionId, ctx.cwd, agent, parentModel, parentThinkingLevel);
+				ctx.ui.notify(`Started/reused ${agent.name}`, "info");
 				continue;
 			}
 			if (action.type === "attach") {
@@ -742,19 +742,17 @@ async function openAgentsBrowser(
 				if (!entry || !(await paneExists(entry.paneId))) throw new Error(`No live pane for ${agent.name}.`);
 				const result = await tmux(["select-pane", "-t", entry.paneId]);
 				if (result.code !== 0) throw new Error(result.stderr || result.stdout || "tmux select-pane failed");
-				ctx.ui.notify(`Attached to ${agent.name} at ${entry.paneId}`, "info");
+				ctx.ui.notify(`Attached to ${agent.name}`, "info");
 				return;
 			}
 			if (action.type === "stop") {
-				let stoppedPaneId: string | undefined;
 				await updatePaneRegistry(runtimeRoot, async (registry) => {
 					const entry = registry[agent.name];
 					if (!entry) throw new Error(`No pane registry entry for ${agent.name}.`);
 					if (await paneExists(entry.paneId)) await tmux(["kill-pane", "-t", entry.paneId]);
-					stoppedPaneId = entry.paneId;
 					delete registry[agent.name];
 				});
-				ctx.ui.notify(`Stopped ${agent.name} pane ${stoppedPaneId}`, "info");
+				ctx.ui.notify(`Stopped ${agent.name}`, "info");
 				continue;
 			}
 		} catch (error) {
@@ -1830,7 +1828,7 @@ function renderDashboardWidgetLines(state: SubagentDashboardState, theme: Theme,
 	for (const [index, item] of shown.entries()) {
 		const branch = subagentBranch(theme, index === shown.length - 1 && items.length <= shown.length ? "└" : "├", cwd);
 		const name = padAnsi(theme.fg("accent", theme.bold(item.agent)), nameWidth);
-		const where = item.paneId ? theme.fg("dim", `pane ${item.paneId}`) : theme.fg("dim", item.kind);
+		const where = theme.fg("dim", item.kind);
 		const bridge = item.bridge ? theme.fg("success", " · bridge") : "";
 		const transcriptRef = dashboardTraceRef(item);
 		const transcript = transcriptRef ? theme.fg("dim", ` · trace ${transcriptRef}`) : "";
@@ -2351,7 +2349,7 @@ async function runPersistentPaneAgent(
 	}
 
 	const queued = await queuePersistentPaneTask(runtimeRoot, parentSessionId, defaultCwd, agent, task, cwd, parentModel, parentThinkingLevel, pi);
-	const text = `Queued ${agent.name} task ${queued.taskId} in pane ${queued.pane.paneId}.`;
+	const text = `Queued task for ${agent.name}.`;
 	return {
 		agent: agent.name,
 		agentSource: agent.source,
@@ -2739,7 +2737,6 @@ function formatTaskRecordResult(record: PaneTaskRecord, verbose = false): string
 		`| --- | --- |`,
 		`| Status | ${record.status} |`,
 		`| Task ID | \`${record.taskId}\` |`,
-		record.paneId ? `| Pane | \`${record.paneId}\` |` : "",
 		`| Created | ${record.createdAt} |`,
 		record.completedAt ? `| Completed | ${record.completedAt} |` : "",
 		"",
@@ -2987,7 +2984,6 @@ async function traceViewerItems(record: PaneTaskRecord): Promise<TraceViewerItem
 		`Ref      ${ref}`,
 		`Agent    ${record.agent}`,
 		`Status   ${record.status}`,
-		record.paneId ? `Pane: ${record.paneId}` : "",
 		`Task ID  ${record.taskId}`,
 		`Created  ${record.createdAt}`,
 		record.completedAt ? `Done     ${record.completedAt}` : "",
@@ -3058,9 +3054,8 @@ function steerDiagnostics(details: SteerSubagentDetails): string[] {
 	return [
 		`Target agent: ${details.agent}`,
 		details.taskId ? `Task ID: ${details.taskId}` : "Task ID: (not specified)",
-		`Pane: ${details.paneId}`,
 		`Delivery: ${details.deliverAs}`,
-		`Bridge: ${details.bridge ? "exact child session" : "not used"}`,
+		`Bridge: ${details.bridge ? "active" : "not used"}`,
 		details.bridgePid ? `Bridge PID: ${details.bridgePid}` : "Bridge PID: (none)",
 		details.bridgeSocket ? `Bridge socket: ${details.bridgeSocket}` : "Bridge socket: (none)",
 		`Child session file: ${details.sessionFile}`,
@@ -3207,9 +3202,9 @@ export default function (pi: ExtensionAPI) {
 			if (completions.length === 1) {
 				const detail = completions[0]!;
 				const status = paneCompletionStatus(detail.status, theme);
-				return new Text(`${paneCompletionIcon(detail.status, theme)} ${theme.fg("toolTitle", theme.bold(`${detail.agent} completed`))} ${status}${theme.fg("dim", ` · ${shortTaskId(detail.taskId)} · dashboard`)}`, 0, 0);
+				return new Text(`${paneCompletionIcon(detail.status, theme)} ${theme.fg("accent", theme.bold(detail.agent))} ${status}`, 0, 0);
 			}
-			if (completions.length > 1) return new Text(`${theme.fg("success", "✓")} ${theme.fg("toolTitle", theme.bold(`${completions.length} subagents completed`))}${theme.fg("dim", " · dashboard")}`, 0, 0);
+			if (completions.length > 1) return new Text(`${theme.fg("success", "✓")} ${theme.fg("toolTitle", theme.bold(`${completions.length} subagents completed`))}`, 0, 0);
 		}
 		return renderPaneCompletionMessage(message as { content: string; details?: unknown }, options as { expanded?: boolean } | undefined, theme);
 	});
@@ -3330,8 +3325,7 @@ export default function (pi: ExtensionAPI) {
 			if (context?.isError) return new Text(`${theme.fg("error", "✗")} ${theme.fg("toolTitle", "Subagent completion failed")}\n${theme.fg("muted", raw)}`, 0, 0);
 			if (expanded && details?.outboxFile) return new Text(`${theme.fg("success", "✓")} ${theme.fg("toolTitle", theme.bold("Subagent completion written"))}\n${theme.fg("dim", `Outbox: ${compactPath(details.outboxFile)}`)}`, 0, 0);
 			const agent = details?.agent ? ` ${details.agent}` : "";
-			const task = details?.taskId ? theme.fg("dim", ` · ${shortTaskId(details.taskId)}`) : "";
-			return new Text(`${theme.fg("success", "✓")} ${theme.fg("toolTitle", theme.bold(`completed${agent}`))}${task}`, 0, 0);
+			return new Text(`${theme.fg("success", "✓")} ${theme.fg("toolTitle", theme.bold(`completed${agent}`))}`, 0, 0);
 		},
 	});
 
@@ -3485,7 +3479,7 @@ export default function (pi: ExtensionAPI) {
 							transcriptPath: pane.sessionFile,
 						});
 					}
-					content = `Started/reused ${agent.name} in ${pane.paneId} (${pane.windowName}).\nSession: ${pane.sessionFile}`;
+					content = `Started/reused ${agent.name} (${pane.windowName}).\nSession: ${pane.sessionFile}`;
 				} else if (command === "send") {
 					const agent = findAgent(parts[1]);
 					if (!agent) throw new Error(`Unknown agent: ${parts[1] ?? "(missing)"}`);
@@ -3493,24 +3487,24 @@ export default function (pi: ExtensionAPI) {
 					const task = parts.slice(2).join(" ").trim();
 					if (!task) throw new Error("Usage: /agents send <name> <task>");
 					const queued = await queuePersistentPaneTask(runtimeRoot, parentSessionId, ctx.cwd, agent, task, undefined, parentModel, parentThinkingLevel, pi);
-					content = `Queued ${agent.name} task ${queued.taskId} in pane ${queued.pane.paneId}.\nArtifacts: inbox=${compactPath(queued.taskFile)} completion=${compactPath(queued.outboxFile)} transcript=${compactPath(queued.pane.sessionFile)}`;
+					content = `Queued task for ${agent.name}.\nArtifacts: inbox=${compactPath(queued.taskFile)} completion=${compactPath(queued.outboxFile)} transcript=${compactPath(queued.pane.sessionFile)}`;
 				} else if (command === "attach") {
 					const registry = await readPaneRegistry(runtimeRoot);
 					const entry = registry[parts[1] ?? ""];
 					if (!entry || !(await paneExists(entry.paneId))) throw new Error(`No live pane for agent: ${parts[1] ?? "(missing)"}`);
 					const result = await tmux(["select-pane", "-t", entry.paneId]);
 					if (result.code !== 0) throw new Error(result.stderr || result.stdout || "tmux select-pane failed");
-					content = `Attached to ${entry.agent} at ${entry.paneId}.`;
+					content = `Attached to ${entry.agent}.`;
 				} else if (command === "stop") {
-					let stopped: { agent: string; paneId: string } | undefined;
+					let stoppedAgent: string | undefined;
 					await updatePaneRegistry(runtimeRoot, async (registry) => {
 						const entry = registry[parts[1] ?? ""];
 						if (!entry) throw new Error(`No pane registry entry for agent: ${parts[1] ?? "(missing)"}`);
 						if (await paneExists(entry.paneId)) await tmux(["kill-pane", "-t", entry.paneId]);
-						stopped = { agent: entry.agent, paneId: entry.paneId };
+						stoppedAgent = entry.agent;
 						delete registry[entry.agent];
 					});
-					content = `Stopped ${stopped!.agent} pane ${stopped!.paneId}.`;
+					content = `Stopped ${stoppedAgent}.`;
 				} else if (command === "collect") {
 					const collected = await pollPaneCompletions(runtimeRoot, pi, false);
 					content = `Collected ${collected} subagent completion file${collected === 1 ? "" : "s"}.`;
@@ -3519,7 +3513,7 @@ export default function (pi: ExtensionAPI) {
 					const lines = await Promise.all(
 						Object.values(registry).map(async (entry) => {
 							const live = await paneExists(entry.paneId);
-							return `- ${entry.agent}: ${live ? "live" : "dead"} ${entry.paneId} ${entry.windowName} model=${entry.model ?? "default"} lastTask=${entry.lastTaskAt ?? "never"}`;
+							return `- ${entry.agent}: ${live ? "live" : "dead"} ${entry.windowName} model=${entry.model ?? "default"} lastTask=${entry.lastTaskAt ?? "never"}`;
 						}),
 					);
 					content = [`# Persistent subagent panes`, "", lines.join("\n") || "No persistent panes registered."].join("\n");
@@ -3710,9 +3704,9 @@ export default function (pi: ExtensionAPI) {
 			if (context?.isError) return new Text(`${theme.fg("error", "✗")} ${theme.fg("toolTitle", "Subagent result lookup failed")}\n${theme.fg("muted", raw)}`, 0, 0);
 			if (expanded && raw.trim()) return new Markdown(raw, 0, 0, getMarkdownTheme());
 			const target = details?.agent ? details.agent : "subagent";
-			const suffix = [status, details?.paneId ? theme.fg("dim", `pane ${details.paneId}`) : "", details?.taskId ? theme.fg("dim", shortTaskId(details.taskId)) : ""].filter(Boolean).join(" · ");
+			const suffix = status;
 			if (quietInline(context?.cwd) && dashboardEnabled(context?.cwd)) {
-				return new Text(`${theme.fg("success", "✓")} ${theme.fg("toolTitle", theme.bold(`result ${target}`))}${suffix ? ` ${theme.fg("dim", "·")} ${suffix}` : ""}${theme.fg("dim", " · dashboard updated")}`, 0, 0);
+				return new Text(`${theme.fg("success", "✓")} ${theme.fg("toolTitle", theme.bold(`result ${target}`))}${suffix ? ` ${theme.fg("dim", "·")} ${suffix}` : ""}`, 0, 0);
 			}
 			const lines = [`${theme.fg("success", "✓")} ${theme.fg("toolTitle", theme.bold(target))}${suffix ? ` ${theme.fg("dim", "·")} ${suffix}` : ""}`];
 			if (details?.summary) lines.push(`  ${theme.fg("toolOutput", oneLinePreview(details.summary, 120))}`);
@@ -3728,7 +3722,7 @@ export default function (pi: ExtensionAPI) {
 		renderShell: "self",
 		name: "steer_subagent",
 		label: "Steer Subagent",
-		description: "Send a steering message to a persistent pane subagent via pi-session-bridge. Bridge targeting is limited to an exact child session-file match under this parent session runtime; otherwise an explicit inbox fallback is queued instead of targeting by cwd.",
+		description: "Send a steering message to a persistent pane subagent via pi-session-bridge. Bridge targeting requires the agent's child session to live under this parent session's runtime; otherwise an inbox-file fallback is queued instead.",
 		parameters: SteerSubagentParams,
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			const runtimeRoot = sessionRuntimeDir(runtimeSessionId(ctx));
@@ -3762,7 +3756,7 @@ export default function (pi: ExtensionAPI) {
 			const entry = registry[agentName];
 			if (!entry) return { content: [{ type: "text", text: `No persistent pane registry entry for ${agentName} in runtime ${runtimeRoot}.` }], isError: true };
 			if (!paneSessionBelongsToRuntime(runtimeRoot, entry)) return { content: [{ type: "text", text: `Refusing to steer ${agentName}: pane session file is outside this runtime. Session: ${entry.sessionFile}. Runtime: ${runtimeRoot}` }], isError: true };
-			if (!(await paneExists(entry.paneId))) return { content: [{ type: "text", text: `Pane ${entry.paneId} for ${agentName} is not live.` }], isError: true };
+			if (!(await paneExists(entry.paneId))) return { content: [{ type: "text", text: `Subagent ${agentName} is not live.` }], isError: true };
 
 			const deliverAs = params.deliverAs ?? "steer";
 			const metadata = await ensurePaneBridgeMetadata(runtimeRoot, entry);
@@ -3801,7 +3795,7 @@ export default function (pi: ExtensionAPI) {
 						transcriptPath: entry.sessionFile,
 					});
 					return {
-						content: [{ type: "text", text: [`Steered ${agentName} via exact child pi-session-bridge (${deliverAs}).`, ...steerDiagnostics(baseDetails)].join("\n") }],
+						content: [{ type: "text", text: [`Steered ${agentName} via bridge (${deliverAs}).`, ...steerDiagnostics(baseDetails)].join("\n") }],
 						details: baseDetails,
 					};
 				}
@@ -3819,7 +3813,7 @@ export default function (pi: ExtensionAPI) {
 					transcriptPath: entry.sessionFile,
 				});
 				return {
-					content: [{ type: "text", text: [`Exact child bridge was found for ${agentName}, but pi-bridge ${command} failed (exit ${result.code}); queued inbox fallback instead.`, result.stderr || result.stdout ? `Bridge output: ${(result.stderr || result.stdout).trim()}` : "", ...steerDiagnostics(details)].filter(Boolean).join("\n") }],
+					content: [{ type: "text", text: [`Bridge for ${agentName} found, but pi-bridge ${command} failed (exit ${result.code}); queued inbox fallback instead.`, result.stderr || result.stdout ? `Bridge output: ${(result.stderr || result.stdout).trim()}` : "", ...steerDiagnostics(details)].filter(Boolean).join("\n") }],
 					details,
 				};
 			}
@@ -3841,7 +3835,7 @@ export default function (pi: ExtensionAPI) {
 				content: [
 					{
 						type: "text",
-						text: [`Exact child bridge not found for ${agentName}; no bridge message was sent. Queued inbox fallback instead, which is not true mid-run steering and will be read when the pane is idle.`, ...steerDiagnostics(details)].join("\n"),
+						text: [`No live bridge for ${agentName}; no bridge message was sent. Queued inbox fallback instead, which is not true mid-run steering and will be read when the pane is idle.`, ...steerDiagnostics(details)].join("\n"),
 					},
 				],
 				details,
@@ -3859,9 +3853,8 @@ export default function (pi: ExtensionAPI) {
 			if (context?.isError) return new Text(`${theme.fg("error", "✗")} ${theme.fg("toolTitle", "Steer subagent failed")}\n${theme.fg("muted", raw)}`, 0, 0);
 			if (!details) return new Text(raw, 0, 0);
 			if (expanded) return new Text(raw, 0, 0);
-			const status = details.bridge ? theme.fg("success", "exact child bridge") : theme.fg("warning", "inbox fallback");
-			const dashboard = quietInline(context?.cwd) && dashboardEnabled(context?.cwd) ? theme.fg("dim", " · dashboard updated") : "";
-			return new Text(`${theme.fg(details.bridge ? "success" : "warning", details.bridge ? "✓" : "◐")} ${theme.fg("toolTitle", theme.bold(`steered ${details.agent}`))} via ${status}${theme.fg("dim", ` · pane ${details.paneId}`)}${dashboard}`, 0, 0);
+			const status = details.bridge ? theme.fg("success", "bridge") : theme.fg("warning", "inbox fallback");
+			return new Text(`${theme.fg(details.bridge ? "success" : "warning", details.bridge ? "✓" : "◐")} ${theme.fg("toolTitle", theme.bold(`steered ${details.agent}`))} via ${status}`, 0, 0);
 		},
 	});
 
@@ -4358,12 +4351,12 @@ export default function (pi: ExtensionAPI) {
 			const transcriptLine = (r: SingleResult) => (r.transcriptPath ? theme.fg("dim", `Transcript: ${compactPath(r.transcriptPath)}`) : "");
 			const queuedPaneLine = (r: SingleResult) => {
 				if (!r.taskId || !r.paneId) return "";
-				const suffix = quietInline(cwd) && dashboardEnabled(cwd) ? " · dashboard" : " · Ctrl+O";
-				return `${theme.fg("success", "✓")} ${theme.fg("toolTitle", theme.bold(`queued ${r.agent}`))}${theme.fg("dim", ` → pane ${r.paneId} · ${shortTaskId(r.taskId)}${suffix}`)}`;
+				const hint = quietInline(cwd) && dashboardEnabled(cwd) ? "" : theme.fg("dim", " · Ctrl+O");
+				return `${theme.fg("success", "✓")} ${theme.fg("toolTitle", theme.bold(`queued ${r.agent}`))}${hint}`;
 			};
 			const finalOutputPreview = (r: SingleResult, maxChars = 96) => {
 				const finalOutput = getFinalOutput(r.messages).trim();
-				if (r.taskId && r.paneId) return theme.fg("dim", `queued → pane ${r.paneId} · ${shortTaskId(r.taskId)}`);
+				if (r.taskId && r.paneId) return theme.fg("dim", "queued");
 				return finalOutput ? theme.fg("toolOutput", oneLinePreview(finalOutput, maxChars)) : theme.fg("muted", "(no final response)");
 			};
 			const addFinalResponseMarkdown = (container: Container, finalOutput: string, toolCalls: DisplayItem[]) => {
