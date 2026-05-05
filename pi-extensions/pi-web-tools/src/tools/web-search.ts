@@ -3,6 +3,7 @@ import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-age
 import { Type, type Static } from "typebox";
 import { ExaClient } from "../providers/exa.js";
 import { nativeOpenAiNotice } from "../providers/openai-native.js";
+import { PerplexityClient } from "../providers/perplexity.js";
 import { resolveWebProvider } from "../provider-selection.js";
 import type { WebProvider, WebToolsSettings } from "../settings.js";
 import { storeWebContent } from "../storage.js";
@@ -74,6 +75,28 @@ export function createWebSearchToolDefinition(pi: ExtensionAPI, getSettings: (cw
 			const queries = normalizeQueries(params);
 			if (queries.length === 0) throw new Error("web_search requires query or queries.");
 			if (resolution.provider === "openai-native") return { content: [{ type: "text", text: nativeOpenAiNotice() }], details: { provider: "openai-native" } };
+			if (resolution.provider === "perplexity") {
+				const client = new PerplexityClient({ apiKey: settings.apiKeys.perplexity });
+				const all = [] as any[];
+				let answer: string | undefined;
+				for (const query of queries) {
+					const response = await client.search({
+						query,
+						numResults: params.numResults,
+						includeDomains: params.includeDomains,
+						excludeDomains: params.excludeDomains,
+						startPublishedDate: params.startPublishedDate,
+						endPublishedDate: params.endPublishedDate,
+					}, signal);
+					if (!answer && response.answer) answer = response.answer;
+					for (const result of response.results) all.push({ ...result });
+				}
+				const body = answer ? `${answer}\n\n${sourceList(all)}` : `Provider: perplexity\nResults: ${all.length}\n${sourceList(all)}`;
+				return {
+					content: [{ type: "text", text: body }],
+					details: { provider: "perplexity", answer, results: all },
+				};
+			}
 			if (resolution.provider !== "exa") throw new Error(`${resolution.provider} direct execution is staged for a follow-up; use provider=exa or openai-native.`);
 			const client = new ExaClient({ apiKey: settings.apiKeys.exa });
 			const all = [] as any[];

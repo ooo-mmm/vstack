@@ -37,11 +37,16 @@ export async function fetchHttpContent(url: string, options: HttpFetchOptions = 
 	if (!response.ok) {
 		if (options.jinaFallback && (response.status === 403 || response.status === 429 || response.status >= 500)) {
 			chain.push(`http:${response.status}`);
-			const jina = await fetchViaJina(url, { fetchImpl, signal: options.signal, apiKey: options.jinaApiKey });
-			chain.push("jina");
-			let content = jina.markdown;
-			if (options.textMaxCharacters && content.length > options.textMaxCharacters) content = content.slice(0, options.textMaxCharacters);
-			return { url, title: jina.title, content, contentType, status: response.status, metadata: { ...metadata, extraction: "jina", extractionChain: chain } };
+			try {
+				const jina = await fetchViaJina(url, { fetchImpl, signal: options.signal, apiKey: options.jinaApiKey });
+				chain.push("jina");
+				let content = jina.markdown;
+				if (options.textMaxCharacters && content.length > options.textMaxCharacters) content = content.slice(0, options.textMaxCharacters);
+				return { url, title: jina.title, content, contentType, status: response.status, metadata: { ...metadata, extraction: "jina", extractionChain: chain } };
+			} catch (error) {
+				chain.push("jina-failed");
+				throw new Error(`HTTP fetch failed (${response.status}) and Jina fallback failed: ${error instanceof Error ? error.message : String(error)}`);
+			}
 		}
 		throw new Error(`HTTP fetch failed (${response.status}) for ${url}`);
 	}
