@@ -311,8 +311,9 @@ function installAssistantMessageRenderer(pi: ExtensionAPI, AssistantMessageCompo
 		prototype[ASSISTANT_MESSAGE_PATCH_SYMBOL] = state;
 		prototype.render = function spacedAssistantRender(this: any, width: number): string[] {
 			const rendered = state!.originalRender.call(this, width);
-			if (!Array.isArray(rendered) || rendered.length === 0 || this?.hasToolCalls) return rendered;
+			if (!Array.isArray(rendered) || rendered.length === 0) return rendered;
 			if (isThinkingOnlyAssistantMessage(this?.lastMessage)) return trimThinkingOnlyAssistantLines(rendered);
+			if (this?.hasToolCalls) return rendered;
 			const end = trimTrailingBlankLines(rendered);
 			if (end.length === 0) return rendered;
 			return [...end, " ".repeat(Math.max(0, width))];
