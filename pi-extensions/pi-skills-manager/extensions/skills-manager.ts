@@ -1,7 +1,7 @@
 /**
  * vstack Pi Skills Manager.
  *
- * A polished /skills shell for browsing, previewing, inserting, creating,
+ * A polished /skill manager view for browsing, previewing, inserting, creating,
  * editing, renaming, deleting, and enabling/disabling Pi skills.
  */
 
@@ -16,7 +16,6 @@ import {
 	stripFrontmatter,
 	type ExtensionAPI,
 	type ExtensionContext,
-	type InputEventResult,
 	type PackageSource,
 	type ResolvedResource,
 	type Theme,
@@ -50,9 +49,6 @@ const STARTUP_HIDE_ENABLED_SYMBOL = Symbol.for("vstack.pi-skills-manager.hide-st
 const DEFAULT_POPUP_WIDTH: OverlaySize = "82%";
 const DEFAULT_POPUP_MAX_HEIGHT: OverlaySize = "86%";
 const DEFAULT_LIST_ROWS = 14;
-const SKILL_CONTEXT_MESSAGE_TYPE = "pi-skills-manager:loaded-skills";
-const SKILL_MARKER_PREFIX = "[skill] ";
-const SKILL_MARKER_FRAGMENTS = ["[skill]", "[skill", "[skil", "[ski", "[sk"];
 const VSTACK_MODAL_LOCK_SYMBOL = Symbol.for("vstack.pi.modal-lock");
 const ANSI_GREEN_FG = "\x1b[32m";
 const ANSI_YELLOW_FG = "\x1b[33m";
@@ -108,24 +104,6 @@ interface SkillRegistry {
 	skills: SkillEntry[];
 	allSkills: SkillEntry[];
 	byName: Map<string, SkillEntry>;
-}
-
-interface PendingSkillContext {
-	content: string;
-	details: {
-		count: number;
-		names: string[];
-		locations: string[];
-	};
-}
-
-interface SkillMarkerExpansion {
-	changed: boolean;
-	text: string;
-	insertedSkill: boolean;
-	userText: string;
-	skillBlock?: string;
-	skills: SkillEntry[];
 }
 
 interface SkillCreationAnswers {
@@ -339,18 +317,6 @@ function detectExtensionInstallScope(cwd: string): ExtensionInstallScope {
 		// Fall through to global for unusual loaders.
 	}
 	return "global";
-}
-
-function settingsPathForScope(scope: ExtensionInstallScope, cwd: string): string {
-	return scope === "global" ? join(userPiDir(), "settings.json") : projectSettingsPath(cwd);
-}
-
-async function ensureSkillCommandsHidden(scope: ExtensionInstallScope, cwd: string): Promise<boolean> {
-	const file = readJsonObject(settingsPathForScope(scope, cwd));
-	if (file.json.enableSkillCommands === false) return false;
-	file.json.enableSkillCommands = false;
-	writeJsonFile(file);
-	return true;
 }
 
 function setStartupHideEnabled(enabled: boolean): void {
@@ -750,100 +716,13 @@ async function createSkillFromAnswers(ctx: ExtensionContext, answers: SkillCreat
 	return await saveCreatedSkill(ctx, answers, draft);
 }
 
-function escapeXmlAttr(value: string): string {
-	return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+function buildNativeSkillCommand(skillName: string, args = ""): string {
+	const trimmedArgs = args.trim();
+	return `/skill:${skillName}${trimmedArgs ? ` ${trimmedArgs}` : ""}`;
 }
 
-function buildSkillMarker(skillName: string): string {
-	return `${SKILL_MARKER_PREFIX}${skillName}`;
-}
-
-function insertSkillMarker(ctx: ExtensionContext, skill: SkillEntry): void {
-	ctx.ui.pasteToEditor(`${buildSkillMarker(skill.name)}\n`);
-}
-
-function getMarkedSkillName(line: string): string | null {
-	const trimmed = line.trim();
-	if (!trimmed.startsWith(SKILL_MARKER_PREFIX)) return null;
-	const name = trimmed.slice(SKILL_MARKER_PREFIX.length).trim();
-	return name.length > 0 ? name : null;
-}
-
-function isPotentialSkillMarkerLine(line: string): boolean {
-	const trimmed = line.trim().toLowerCase();
-	return SKILL_MARKER_FRAGMENTS.some((fragment) => trimmed.startsWith(fragment));
-}
-
-function isCompleteSkillMarkerLine(line: string, registry: SkillRegistry): boolean {
-	const trimmed = line.trim();
-	const skillName = getMarkedSkillName(trimmed);
-	return Boolean(skillName && trimmed === buildSkillMarker(skillName) && registry.byName.has(skillName));
-}
-
-function removeIncompleteSkillMarkerLines(text: string, registry: SkillRegistry): { changed: boolean; text: string } {
-	const lines = text.split(/\r?\n/);
-	let changed = false;
-	const kept = lines.filter((line) => {
-		if (isCompleteSkillMarkerLine(line, registry)) return true;
-		if (line.trim().startsWith(SKILL_MARKER_PREFIX) || isPotentialSkillMarkerLine(line)) {
-			changed = true;
-			return false;
-		}
-		return true;
-	});
-	return { changed, text: kept.join("\n") };
-}
-
-function buildSingleSkillBlock(skill: SkillEntry): string {
-	const relativeHint = skill.baseDir ? `References are relative to ${skill.baseDir}.\n\n` : "";
-	return `<skill name="${escapeXmlAttr(skill.name)}" location="${escapeXmlAttr(skill.path)}">\n${relativeHint}${skill.content}\n</skill>`;
-}
-
-function buildMultiSkillBlock(skills: SkillEntry[]): string {
-	const combinedName = skills.map((skill) => skill.name).join(", ");
-	const combinedContent = skills.map((skill) => {
-		const relativeHint = skill.baseDir ? `References are relative to ${skill.baseDir}.\n\n` : "";
-		return `## ${skill.name}\n\n${relativeHint}${skill.content}`;
-	}).join("\n\n---\n\n");
-	return `<skill name="${escapeXmlAttr(combinedName)}" location="multiple">\n${combinedContent}\n</skill>`;
-}
-
-function hasSkillMarker(text: string): boolean {
-	return text.split(/\r?\n/).some((line) => line.includes(SKILL_MARKER_PREFIX) || isPotentialSkillMarkerLine(line));
-}
-
-function expandSkillMarkers(text: string, registry: SkillRegistry): SkillMarkerExpansion {
-	const lines = text.split(/\r?\n/);
-	const selectedSkills: SkillEntry[] = [];
-	const remainingLines: string[] = [];
-	let changed = false;
-	for (const line of lines) {
-		const skillName = getMarkedSkillName(line);
-		if (skillName) {
-			const skill = registry.byName.get(skillName);
-			changed = true;
-			if (skill) selectedSkills.push(skill);
-			continue;
-		}
-		if (isPotentialSkillMarkerLine(line)) {
-			changed = true;
-			continue;
-		}
-		remainingLines.push(line);
-	}
-	const userText = remainingLines.join("\n").trim();
-	if (selectedSkills.length === 0) {
-		return { changed, text: changed ? userText : text, insertedSkill: false, userText, skills: [] };
-	}
-	const skillBlock = selectedSkills.length === 1 ? buildSingleSkillBlock(selectedSkills[0]!) : buildMultiSkillBlock(selectedSkills);
-	return {
-		changed: true,
-		text: userText || `Use selected skill${selectedSkills.length === 1 ? "" : "s"}: ${selectedSkills.map((skill) => skill.name).join(", ")}.`,
-		insertedSkill: true,
-		userText,
-		skillBlock,
-		skills: selectedSkills,
-	};
+function insertNativeSkillCommand(ctx: ExtensionContext, skill: SkillEntry): void {
+	ctx.ui.pasteToEditor(`${buildNativeSkillCommand(skill.name)}\n`);
 }
 
 function scopeLabel(skill: SkillEntry): string {
@@ -900,6 +779,12 @@ function skillSelectedLine(theme: Theme, line: string, width: number): string {
 	return theme.bg("selectedBg", padAnsi(line, width));
 }
 
+function skillKeyHints(theme: Theme, hints: Array<[key: string, description: string]>): string {
+	return hints
+		.map(([key, description]) => `${ansiYellow(key)} ${theme.fg("dim", description)}`)
+		.join(theme.fg("dim", " • "));
+}
+
 function frameLine(theme: Theme, line: string, innerWidth: number): string {
 	const clipped = truncateToWidth(inlineLine(line), innerWidth, theme.fg("dim", "..."));
 	return `${theme.fg("borderAccent", "┃ ")}${padAnsi(clipped, innerWidth)}${theme.fg("borderAccent", " ┃")}`;
@@ -916,15 +801,18 @@ function fitFrameBody(theme: Theme, lines: string[], fixedInnerRows?: number): s
 	return lines;
 }
 
-function renderFrame(theme: Theme, width: number, lines: string[], fixedInnerRows?: number, title = ""): string[] {
+function renderFrame(theme: Theme, width: number, lines: string[], fixedInnerRows?: number, title = "", right = ""): string[] {
 	const body = fitFrameBody(theme, lines, fixedInnerRows);
 	if (width < 6) return body.map((line) => truncateToWidth(inlineLine(line), width, ""));
 	const innerWidth = Math.max(1, width - 4);
 	const top = () => {
-		if (!title) return theme.fg("borderAccent", `┏${"━".repeat(innerWidth + 2)}┓`);
-		const titlePlain = ` ${truncateToWidth(title, Math.max(1, innerWidth), "…")} `;
-		const fill = Math.max(1, innerWidth + 2 - visibleWidth(titlePlain));
-		return `${theme.fg("borderAccent", "┏")}${ansiGreen(titlePlain)}${theme.fg("borderAccent", "━".repeat(fill))}${theme.fg("borderAccent", "┓")}`;
+		const contentWidth = innerWidth + 2;
+		if (!title && !right) return theme.fg("borderAccent", `┏${"━".repeat(contentWidth)}┓`);
+		const rightPlain = right ? ` ${right} ` : "";
+		const titleBudget = Math.max(1, contentWidth - visibleWidth(rightPlain) - 1);
+		const titlePlain = title ? ` ${truncateToWidth(title, Math.max(1, titleBudget - 2), "…")} ` : "";
+		const fill = Math.max(1, contentWidth - visibleWidth(titlePlain) - visibleWidth(rightPlain));
+		return `${theme.fg("borderAccent", "┏")}${titlePlain ? ansiGreen(titlePlain) : ""}${theme.fg("borderAccent", "━".repeat(fill))}${rightPlain ? theme.fg("dim", rightPlain) : ""}${theme.fg("borderAccent", "┓")}`;
 	};
 	return [
 		top(),
@@ -978,16 +866,6 @@ class ListLineText implements Component {
 	invalidate(): void {}
 }
 
-function renderLoadedSkillsSummary(details: PendingSkillContext["details"] | undefined, theme: Theme): Component {
-	const names = Array.isArray(details?.names) ? details.names.filter((name): name is string => typeof name === "string" && name.length > 0) : [];
-	const count = typeof details?.count === "number" && Number.isFinite(details.count) ? details.count : names.length;
-	const label = count === 1 ? names[0] ?? "skill" : `${count || names.length || 1} skills`;
-	const shownNames = names.length > 0 ? names.slice(0, 3).join(", ") : label;
-	const overflow = names.length > 3 ? ` +${names.length - 3}` : "";
-	const descriptor = count === 1 ? `${shownNames} loaded` : `${shownNames}${overflow} loaded`;
-	return new SingleLineText(`${theme.fg("accent", "● ")}${theme.fg("toolTitle", "skills")} ${theme.fg("muted", descriptor)}`);
-}
-
 class PrefixedEditor implements Component {
 	constructor(private readonly editor: Editor, private readonly prefix = "> ") {}
 	render(width: number): string[] {
@@ -999,7 +877,7 @@ class PrefixedEditor implements Component {
 }
 
 class SearchInputLine implements Component {
-	constructor(private readonly input: Input, private readonly theme: Theme, private readonly prefix = " > ") {}
+	constructor(private readonly input: Input, private readonly theme: Theme, private readonly prefix = " ") {}
 	render(width: number): string[] {
 		const inputWidth = Math.max(1, width - visibleWidth(this.prefix));
 		const line = truncateToWidth(`${this.prefix}${this.input.render(inputWidth)[0] ?? ""}`, width, "");
@@ -1039,10 +917,13 @@ class ScrollableSkillPreview implements Component {
 	}
 	private footer(innerWidth: number, visibleHeight: number, totalLines: number): string {
 		const maxScroll = Math.max(0, totalLines - visibleHeight);
-		const scroll = maxScroll > 0 ? ` • ${this.scrollOffset + 1}-${Math.min(totalLines, this.scrollOffset + visibleHeight)}/${totalLines}` : "";
-		const own = isDeletableSkill(this.skill) ? " • ctrl+e edit • ctrl+r rename • backspace delete" : "";
-		const insert = this.skill.enabled ? "enter insert • " : "";
-		return truncateToWidth(this.theme.fg("dim", `↑/↓ scroll • ${insert}ctrl+x enable/disable${own} • esc back${scroll}`), innerWidth, this.theme.fg("dim", "..."));
+		const scroll = maxScroll > 0 ? this.theme.fg("dim", ` • ${this.scrollOffset + 1}-${Math.min(totalLines, this.scrollOffset + visibleHeight)}/${totalLines}`) : "";
+		const hints: Array<[string, string]> = [["↑↓", "scroll"]];
+		if (this.skill.enabled) hints.push(["enter", "insert"]);
+		hints.push(["ctrl+x", "enable/disable"]);
+		if (isDeletableSkill(this.skill)) hints.push(["ctrl+e", "edit"], ["ctrl+r", "rename"], ["backspace", "delete"]);
+		hints.push(["esc", "back"]);
+		return truncateToWidth(`${skillKeyHints(this.theme, hints)}${scroll}`, innerWidth, this.theme.fg("dim", "..."));
 	}
 	render(width: number): string[] {
 		if (width < 8) return [];
@@ -1112,7 +993,7 @@ class SkillEditorView implements Component, Focusable {
 		const staticLineCount = lines.length + 3;
 		const editorBlockLines = Math.max(7, targetInnerLines - staticLineCount);
 		this.virtualRows = this.rowsForVisibleEditorLines(Math.max(5, editorBlockLines - 2));
-		lines.push("", ...this.editor.render(innerWidth), "", truncateToWidth(this.theme.fg("dim", "ctrl+s save • esc back"), innerWidth, this.theme.fg("dim", "...")));
+		lines.push("", ...this.editor.render(innerWidth), "", truncateToWidth(skillKeyHints(this.theme, [["ctrl+s", "save"], ["esc", "back"]]), innerWidth, this.theme.fg("dim", "...")));
 		while (lines.length < targetInnerLines) lines.splice(Math.max(0, lines.length - 1), 0, "");
 		return renderFrame(this.theme, width, lines.slice(0, targetInnerLines));
 	}
@@ -1378,8 +1259,6 @@ class SkillsManagerDialog implements Focusable {
 		const root = new Container();
 		const enabledCount = this.registry.allSkills.filter((skill) => skill.enabled).length;
 		const totalCount = this.registry.allSkills.length;
-		root.addChild(new Text(this.theme.fg("dim", `${enabledCount}/${totalCount} enabled`), 1, 0));
-		root.addChild(new Spacer(1));
 		root.addChild(new SearchInputLine(this.browseInput, this.theme));
 		root.addChild(new Spacer(1));
 		const list = new Container();
@@ -1430,11 +1309,11 @@ class SkillsManagerDialog implements Focusable {
 		root.addChild(list);
 		root.addChild(new Spacer(1));
 		const selected = this.getSelectedSkill();
-		const actions = ["↑↓ select"];
-		if (!selected) actions.push("enter create", "esc close");
-		else { if (selected.enabled) actions.push("enter insert"); actions.push("tab preview", "ctrl+x enable/disable"); if (!this.browseQuery && isDeletableSkill(selected)) actions.push("backspace delete"); actions.push("esc close"); }
-		root.addChild(new Text(actions.map((action) => action.replace(/^(enter|tab|ctrl\+x|backspace|esc|↑↓)/, (key) => ansiYellow(key))).join(this.theme.fg("dim", " • ")), 1, 0));
-		return renderFrame(this.theme, width, root.render(innerWidth), undefined, "Skills Manager");
+		const actions: Array<[string, string]> = [["↑↓", "select"]];
+		if (!selected) actions.push(["enter", "create"], ["esc", "close"]);
+		else { if (selected.enabled) actions.push(["enter", "insert"]); actions.push(["tab", "preview"], ["ctrl+x", "enable/disable"]); if (!this.browseQuery && isDeletableSkill(selected)) actions.push(["backspace", "delete"]); actions.push(["esc", "close"]); }
+		root.addChild(new Text(skillKeyHints(this.theme, actions), 1, 0));
+		return renderFrame(this.theme, width, root.render(innerWidth), undefined, "Skills Manager", `${enabledCount}/${totalCount} enabled`);
 	}
 
 	private renderCreate(width: number): string[] {
@@ -1454,25 +1333,29 @@ class SkillsManagerDialog implements Focusable {
 		}
 		if (this.createError) { root.addChild(new Spacer(1)); root.addChild(new Text(this.theme.fg("error", this.createError), 1, 0)); }
 		root.addChild(new Spacer(1));
-		const footer = step.id === "description" ? "enter next • ctrl+j newline • alt+← back • alt+→ next • esc cancel" : step.id === "location" ? "↑↓ choose • enter create • alt+← back • esc cancel" : "enter next • alt+← back • alt+→ next • esc cancel";
-		root.addChild(new Text(this.theme.fg("dim", footer), 1, 0));
+		const footer = step.id === "description"
+			? skillKeyHints(this.theme, [["enter", "next"], ["ctrl+j", "newline"], ["alt+←", "back"], ["alt+→", "next"], ["esc", "cancel"]])
+			: step.id === "location"
+				? skillKeyHints(this.theme, [["↑↓", "choose"], ["enter", "create"], ["alt+←", "back"], ["esc", "cancel"]])
+				: skillKeyHints(this.theme, [["enter", "next"], ["alt+←", "back"], ["alt+→", "next"], ["esc", "cancel"]]);
+		root.addChild(new Text(footer, 1, 0));
 		return renderFrame(this.theme, width, root.render(innerWidth));
 	}
 	private renderRenameDialog(width: number): string[] {
 		const lines = [skillEntityTitle(this.theme, "Rename skill"), "", this.theme.fg("dim", "Enter new skill name (lowercase letters, numbers, hyphens)"), "", ...this.renameInput.render(Math.max(1, Math.min(width - 4, 64)))];
 		if (this.renameError) lines.push("", toneText(this.theme, "error", this.renameError));
-		lines.push("", this.theme.fg("dim", "enter save • esc cancel"));
+		lines.push("", skillKeyHints(this.theme, [["enter", "save"], ["esc", "cancel"]]));
 		return renderCenteredDialog(this.theme, width, lines);
 	}
 	private renderDeleteDialog(width: number): string[] {
 		const skill = this.deleteSkillPath ? this.registry.allSkills.find((entry) => entry.path === this.deleteSkillPath) : undefined;
 		const innerWidth = Math.max(1, Math.min(width - 4, 64));
 		const message = skill ? `Delete ${skill.name}? This removes ${skillStorageTarget(skill)} and cannot be undone.` : "Delete this skill?";
-		return renderCenteredDialog(this.theme, width, [skillEntityTitle(this.theme, "Delete skill"), "", ...wrapTextWithAnsi(message, innerWidth), "", this.theme.fg("dim", "enter delete • esc cancel")]);
+		return renderCenteredDialog(this.theme, width, [skillEntityTitle(this.theme, "Delete skill"), "", ...wrapTextWithAnsi(message, innerWidth), "", skillKeyHints(this.theme, [["enter", "delete"], ["esc", "cancel"]])]);
 	}
 	private renderGeneratingDialog(width: number): string[] {
 		const modelLabel = this.ctx.model?.id ?? "fallback template";
-		return renderCenteredDialog(this.theme, width, [skillEntityTitle(this.theme, "Generating skill"), "", this.theme.fg("dim", `Using ${modelLabel} to draft SKILL.md.`), this.theme.fg("dim", "The preview opens when generation finishes."), "", this.theme.fg("dim", "esc cancel")]);
+		return renderCenteredDialog(this.theme, width, [skillEntityTitle(this.theme, "Generating skill"), "", this.theme.fg("dim", `Using ${modelLabel} to draft SKILL.md.`), this.theme.fg("dim", "The preview opens when generation finishes."), "", skillKeyHints(this.theme, [["esc", "cancel"]])]);
 	}
 
 	handleInput(data: string): void {
@@ -1551,32 +1434,21 @@ export default function skillsManager(pi: ExtensionAPI): void {
 	setStartupHideEnabled(settingBoolean("enabled", true) && settingBoolean("hideStartupSkillsBlock", true));
 
 	let registry: SkillRegistry = EMPTY_REGISTRY;
-	let currentCwd: string | undefined;
-	let hideCheckedForCwd: string | undefined;
-	let pendingReload = false;
-	let terminalInputUnsubscribe: (() => void) | undefined;
-	let cleanupTimer: ReturnType<typeof setTimeout> | undefined;
-	const pendingSkillContexts: PendingSkillContext[] = [];
 	const enabledAtLoad = settingBoolean("enabled", true);
 
-	const skillsArgumentCompletions = (prefix: string) => {
+	const recoveryArgumentCompletions = (prefix: string) => {
 		const query = prefix.trimStart().toLowerCase();
-		const items = enabledAtLoad
-			? [
-				{ value: "enable", label: "enable", description: "Confirm the skills manager is enabled" },
-				{ value: "disable", label: "disable", description: "Disable the skills manager after reload" },
-			]
-			: [{ value: "enable", label: "enable", description: "Re-enable the skills manager" }];
-		const filtered = items.filter((item) => item.value.startsWith(query));
+		const recoveryItems = [{ value: "enable", label: "enable", description: "Re-enable the skills manager" }];
+		const filtered = recoveryItems.filter((item) => item.value.startsWith(query));
 		return filtered.length > 0 ? filtered : null;
 	};
 	if (!enabledAtLoad) {
-		pi.registerCommand("skills", {
+		pi.registerCommand("skill", {
 			description: "Skills manager recovery command.",
-			getArgumentCompletions: skillsArgumentCompletions,
+			getArgumentCompletions: recoveryArgumentCompletions,
 			handler: async (args, ctx) => {
 				if (args.trim().toLowerCase() !== "enable") {
-					ctx.ui.notify("Skills Manager is disabled. Run /skills enable, then /reload.", "warning");
+					ctx.ui.notify("Skills Manager is disabled. Run /skill enable, then /reload.", "warning");
 					return;
 				}
 				updatePackageConfig(ctx.cwd, { enabled: true });
@@ -1589,63 +1461,25 @@ export default function skillsManager(pi: ExtensionAPI): void {
 
 	async function refreshRegistry(cwd: string): Promise<SkillRegistry> {
 		registry = await loadSkillRegistry(cwd);
-		currentCwd = cwd;
 		return registry;
-	}
-
-	async function maybeHideBuiltinSkillCommands(ctx: ExtensionContext): Promise<boolean> {
-		if (!settingBoolean("hideNativeSkillCommands", true, ctx.cwd)) return false;
-		if (hideCheckedForCwd === ctx.cwd) return false;
-		hideCheckedForCwd = ctx.cwd;
-		const changed = await ensureSkillCommandsHidden(detectExtensionInstallScope(ctx.cwd), ctx.cwd);
-		if (!changed) return false;
-		pendingReload = true;
-		ctx.ui.notify("Skills Manager hid native /skill:* commands. Reloading Pi resources...", "info");
-		const reload = (ctx as ExtensionContext & { reload?: () => Promise<void> }).reload;
-		if (typeof reload === "function") {
-			await reload.call(ctx);
-			return true;
-		}
-		return false;
-	}
-
-	function scheduleIncompleteMarkerCleanup(ctx: ExtensionContext): void {
-		if (!ctx.hasUI || !settingBoolean("cleanupIncompleteMarkers", true, ctx.cwd)) return;
-		if (cleanupTimer) clearTimeout(cleanupTimer);
-		cleanupTimer = setTimeout(() => {
-			const currentText = ctx.ui.getEditorText();
-			const sanitized = removeIncompleteSkillMarkerLines(currentText, registry);
-			if (sanitized.changed) ctx.ui.setEditorText(sanitized.text);
-		}, 0);
 	}
 
 	async function prepareSession(ctx: ExtensionContext): Promise<boolean> {
 		setStartupHideEnabled(settingBoolean("enabled", true, ctx.cwd) && settingBoolean("hideStartupSkillsBlock", true, ctx.cwd));
-		const reloaded = await maybeHideBuiltinSkillCommands(ctx);
-		if (reloaded) return true;
 		try {
 			await refreshRegistry(ctx.cwd);
 		} catch (error) {
 			registry = EMPTY_REGISTRY;
 			console.error("pi-skills-manager: failed to load skills registry", error);
 		}
-		terminalInputUnsubscribe?.();
-		const onTerminalInput = (ctx.ui as unknown as { onTerminalInput?: (handler: () => undefined) => () => void }).onTerminalInput;
-		if (ctx.hasUI && typeof onTerminalInput === "function") {
-			terminalInputUnsubscribe = onTerminalInput.call(ctx.ui, () => { scheduleIncompleteMarkerCleanup(ctx); return undefined; });
-		}
 		return false;
 	}
 
-	pi.registerMessageRenderer(SKILL_CONTEXT_MESSAGE_TYPE, (message: any, _options: any, theme: Theme) => {
-		return renderLoadedSkillsSummary(message?.details as PendingSkillContext["details"] | undefined, theme);
-	});
-
-	pi.registerCommand("skills", {
-		description: "Pi skills browser and editor.",
-		getArgumentCompletions: skillsArgumentCompletions,
+	pi.registerCommand("skill", {
+		description: "Pi skills manager view. Native skills remain /skill:name.",
 		handler: async (args, ctx) => {
-			const trimmed = args.trim().toLowerCase();
+			const rawArgs = args.trim();
+			const trimmed = rawArgs.toLowerCase();
 			if (trimmed === "enable") {
 				updatePackageConfig(ctx.cwd, { enabled: true });
 				ctx.ui.notify("Skills Manager already enabled.", "info");
@@ -1656,13 +1490,12 @@ export default function skillsManager(pi: ExtensionAPI): void {
 				ctx.ui.notify("Skills Manager disabled. Run /reload to unload commands/hooks.", "info");
 				return;
 			}
-			if (pendingReload) {
-				pendingReload = false;
-				await ctx.reload();
+			if (rawArgs) {
+				ctx.ui.notify("Use /skill:name for native skill invocation, or /skill with no arguments for the manager.", "warning");
 				return;
 			}
 			if (!ctx.hasUI) {
-				ctx.ui.notify("/skills requires interactive mode", "warning");
+				ctx.ui.notify("/skill manager requires interactive mode", "warning");
 				return;
 			}
 			try {
@@ -1678,53 +1511,9 @@ export default function skillsManager(pi: ExtensionAPI): void {
 				onToggle: async (skill, enabled) => await setSkillEnabled(ctx.cwd, skill, enabled),
 				onRefresh: async () => await refreshRegistry(ctx.cwd),
 			});
-			if (selection) insertSkillMarker(ctx, selection);
+			if (selection) insertNativeSkillCommand(ctx, selection);
 		},
 	});
 
 	pi.on("session_start", async (_event, ctx) => { await prepareSession(ctx); });
-	pi.on("session_shutdown", async () => {
-		terminalInputUnsubscribe?.();
-		terminalInputUnsubscribe = undefined;
-		pendingSkillContexts.length = 0;
-		if (cleanupTimer) { clearTimeout(cleanupTimer); cleanupTimer = undefined; }
-	});
-	pi.on("before_agent_start", async () => {
-		const pending = pendingSkillContexts.shift();
-		if (!pending) return;
-		return {
-			message: {
-				customType: SKILL_CONTEXT_MESSAGE_TYPE,
-				content: pending.content,
-				display: true,
-				details: pending.details,
-			},
-		};
-	});
-	pi.on("input", async (event, ctx): Promise<InputEventResult | void> => {
-		if (event.source === "extension") return { action: "continue" };
-		if (!settingBoolean("enabled", true, ctx.cwd)) return { action: "continue" };
-		if (!hasSkillMarker(event.text)) return { action: "continue" };
-		if (!currentCwd || currentCwd !== ctx.cwd || registry.allSkills.length === 0) {
-			try { await refreshRegistry(ctx.cwd); }
-			catch (error) { console.error("pi-skills-manager: failed to refresh registry for input transform", error); return { action: "continue" }; }
-		}
-		const expanded = expandSkillMarkers(event.text, registry);
-		if (!expanded.changed) return { action: "continue" };
-		if (!expanded.insertedSkill && expanded.text.trim().length === 0) {
-			ctx.ui.notify("Incomplete skill marker removed", "info");
-			return { action: "handled" };
-		}
-		if (expanded.insertedSkill && expanded.skillBlock) {
-			pendingSkillContexts.push({
-				content: expanded.skillBlock,
-				details: {
-					count: expanded.skills.length,
-					names: expanded.skills.map((skill) => skill.name),
-					locations: expanded.skills.map((skill) => skill.path),
-				},
-			});
-		}
-		return { action: "transform", text: expanded.text };
-	});
 }

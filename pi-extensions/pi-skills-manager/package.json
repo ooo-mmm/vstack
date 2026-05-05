@@ -1,7 +1,7 @@
 {
   "name": "pi-skills-manager",
   "version": "0.1.0",
-  "description": "Polished Pi skills manager with a dedicated /skills menu for browsing, previewing, inserting, creating, editing, renaming, deleting, and toggling skills.",
+  "description": "Polished Pi skills manager with a dedicated /skill menu for browsing, previewing, inserting, creating, editing, renaming, deleting, and toggling skills while preserving native /skill:name invocation.",
   "license": "MIT",
   "keywords": [
     "pi-package",
@@ -22,20 +22,10 @@
         {
           "key": "enabled",
           "label": "Enable skills manager",
-          "description": "Register /skills, marker expansion, startup skill-list hiding, and skills management UI. If disabled, /skills enable remains available as a recovery command.",
+          "description": "Register the /skill manager view, startup skill-list hiding, and skills management UI. If disabled, /skill enable remains available as a recovery command. Native /skill:name commands stay controlled by Pi's Skill commands setting.",
           "type": "boolean",
           "default": true,
           "category": "General",
-          "apply": "reload",
-          "requiresReload": true
-        },
-        {
-          "key": "hideNativeSkillCommands",
-          "label": "Hide native /skill commands",
-          "description": "Write enableSkillCommands=false to the matching Pi settings scope so the main slash menu stays clean and /skills becomes the skill entrypoint.",
-          "type": "boolean",
-          "default": true,
-          "category": "Integration",
           "apply": "reload",
           "requiresReload": true
         },
@@ -48,15 +38,6 @@
           "category": "Integration",
           "apply": "reload",
           "requiresReload": true
-        },
-        {
-          "key": "cleanupIncompleteMarkers",
-          "label": "Clean incomplete markers",
-          "description": "Remove partial [skill] marker fragments from the editor after aborted menu insertions when Pi exposes terminal-input hooks.",
-          "type": "boolean",
-          "default": true,
-          "category": "Editor",
-          "apply": "live"
         },
         {
           "key": "aiGenerationEnabled",

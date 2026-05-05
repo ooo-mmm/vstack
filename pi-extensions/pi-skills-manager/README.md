@@ -2,25 +2,24 @@
 
 ![Skills manager preview](./assets/skills-manager-preview.png)
 
-Dedicated Pi skills manager for vstack packages. It replaces a crowded slash menu full of `/skill:*` entries with one `/skills` workflow for browsing, previewing, inserting, creating, editing, renaming, deleting, and enabling/disabling skills.
+Dedicated Pi skills manager for vstack packages. It provides one `/skill` manager view for browsing, previewing, creating, editing, renaming, deleting, and enabling/disabling skills while preserving Pi's native `/skill:<name>` invocation and autocomplete behavior.
 
 ## Commands
 
 | Command | Action |
 | --- | --- |
-| `/skills` | Open the skills manager overlay. |
-| `/skills disable` | Disable the manager feature toggle; run `/reload` to unload hooks/commands. |
-| `/skills enable` | Recovery command when disabled; enables the manager and reloads. |
-
-Arguments support autocomplete.
+| `/skill` | Open the skills manager overlay. |
+| `/skill disable` | Disable the manager feature toggle; run `/reload` to unload hooks/commands. |
+| `/skill enable` | Recovery command when disabled; enables the manager and reloads. |
+| `/skill:<name>` | Native Pi skill invocation; handled by Pi, not this manager. |
 
 ## What it does
 
-- Hides native `/skill:<name>` commands by writing `enableSkillCommands: false` to the matching Pi settings scope.
+- Leaves Pi's top-level `enableSkillCommands` setting alone so native `/skill:<name>` commands and autocomplete keep working.
 - Hides Pi's default startup `[Skills]` block so skill discovery lives in the manager.
 - Shows project/global skills separately from package/library skills.
 - Searches by name, description, source, scope, and path.
-- Inserts enabled skills into the editor as `[skill] <name>` markers; on submit, markers become a compact `● skills ... loaded` chat row while full `<skill>` content is injected into model context.
+- Inserts enabled skills into the editor as native `/skill:<name>` commands.
 - Previews frontmatter and rendered skill content.
 - Toggles skills on/off through Pi settings filters; run `/reload` after toggles to fully apply prompt/resource changes.
 - Creates new project/global skills with the current model and thinking level, falling back to a deterministic template if model auth is unavailable.
@@ -32,7 +31,7 @@ Browse mode:
 
 - Type to search.
 - `↑/↓` selects.
-- `Enter` inserts an enabled skill, or starts **Create new skill** from the first row.
+- `Enter` inserts an enabled native `/skill:<name>` command, or starts **Create new skill** from the first row.
 - `Tab` previews the selected skill.
 - `Ctrl+X` enables/disables the selected skill.
 - `Backspace` deletes your own selected skill when the search box is empty.
@@ -41,7 +40,7 @@ Browse mode:
 Preview mode:
 
 - `↑/↓`, `PageUp/PageDown`, `Home/End` scroll.
-- `Enter` inserts an enabled skill.
+- `Enter` inserts an enabled native `/skill:<name>` command.
 - `Ctrl+X` enables/disables.
 - `Ctrl+E` edits, `Ctrl+R` renames, and `Backspace`/`Delete` deletes your own skills.
 - `Esc` or `Tab` returns to browse.
@@ -59,16 +58,14 @@ Create flow:
 Settings are exposed through `pi-extension-manager` under **Skills Manager**:
 
 - `enabled`
-- `hideNativeSkillCommands`
 - `hideStartupSkillsBlock`
-- `cleanupIncompleteMarkers`
 - `aiGenerationEnabled`
 - `defaultCreateLocation`
 - `popupWidth`, `popupMaxHeight`, `listRows`
 
 ## Notes
 
-This package intentionally mutates Pi's top-level `enableSkillCommands` setting when `hideNativeSkillCommands` is enabled. Other vstack-specific settings live under `vstack.extensionManager.config.pi-skills-manager`.
+Native skill command registration is controlled by Pi's own `enableSkillCommands` setting (`/settings` → **Skill commands**). This manager does not change that setting.
 
 ## Attribution
 

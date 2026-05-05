@@ -127,6 +127,16 @@
           "requiresReload": true
         },
         {
+          "key": "compactSkillMessages",
+          "label": "Compact skill invocation messages",
+          "description": "Render native /skill:name invocation rows with the same compact bullet/chrome style as tool output instead of Pi's padded skill box.",
+          "type": "boolean",
+          "default": true,
+          "category": "Messages",
+          "apply": "reload",
+          "requiresReload": true
+        },
+        {
           "key": "alignAssistantMessages",
           "label": "Align assistant messages",
           "description": "Remove Pi's default one-column left padding from assistant text and hidden Thinking labels so they line up with tool output.",

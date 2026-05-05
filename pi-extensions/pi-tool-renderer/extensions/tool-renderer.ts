@@ -1,4 +1,4 @@
-import { CompactionSummaryMessageComponent, getLanguageFromPath, getMarkdownTheme, highlightCode, ToolExecutionComponent, type ExtensionAPI, type ExtensionContext } from "@mariozechner/pi-coding-agent";
+import { CompactionSummaryMessageComponent, getLanguageFromPath, getMarkdownTheme, highlightCode, keyText, ToolExecutionComponent, type ExtensionAPI, type ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { Container, Loader, Markdown, Text, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@mariozechner/pi-tui";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -11,6 +11,7 @@ const ASSISTANT_MESSAGE_PATCH_SYMBOL = Symbol.for("vstack.pi-tool-renderer.assis
 const TOOL_EXECUTION_RENDERER_PATCH_SYMBOL = Symbol.for("vstack.pi-tool-renderer.tool-execution-renderer-patch.v2");
 const TOOL_CHROME_PATCH_SYMBOL = Symbol.for("vstack.pi-tool-renderer.tool-chrome-patch");
 const COMPACTION_SUMMARY_RENDERER_PATCH_SYMBOL = Symbol.for("vstack.pi-tool-renderer.compaction-summary-renderer-patch");
+const SKILL_INVOCATION_RENDERER_PATCH_SYMBOL = Symbol.for("vstack.pi-tool-renderer.skill-invocation-renderer-patch");
 const MARKDOWN_CODE_BLOCK_PATCH_SYMBOL = Symbol.for("vstack.pi-tool-renderer.markdown-code-block-patch");
 const WORKING_LOADER_ALIGNMENT_PATCH_SYMBOL = Symbol.for("vstack.pi-tool-renderer.working-loader-alignment-patch");
 
@@ -383,6 +384,64 @@ function installCompactionSummaryRenderer(pi: ExtensionAPI, Component: any): voi
 		if (prototype[COMPACTION_SUMMARY_RENDERER_PATCH_SYMBOL] === state) {
 			prototype.updateDisplay = state!.originalUpdateDisplay as unknown;
 			delete prototype[COMPACTION_SUMMARY_RENDERER_PATCH_SYMBOL];
+		}
+		state!.activeCtx = undefined;
+	});
+}
+
+interface SkillInvocationPatchState {
+	activeCtx?: ExtensionContext;
+	originalUpdateDisplay: () => void;
+}
+
+function installSkillInvocationRenderer(pi: ExtensionAPI, Component: any): void {
+	const prototype = Component?.prototype as Record<PropertyKey, unknown> | undefined;
+	if (!prototype || typeof prototype.updateDisplay !== "function") return;
+
+	let state = prototype[SKILL_INVOCATION_RENDERER_PATCH_SYMBOL] as SkillInvocationPatchState | undefined;
+	if (!state) {
+		state = {
+			originalUpdateDisplay: prototype.updateDisplay as () => void,
+		};
+		prototype[SKILL_INVOCATION_RENDERER_PATCH_SYMBOL] = state;
+		prototype.updateDisplay = function compactSkillInvocationDisplay(this: any): void {
+			const ctx = state?.activeCtx;
+			const cwd = ctx?.cwd ?? process.cwd();
+			if (!settingBoolean("compactSkillMessages", true, cwd)) {
+				state!.originalUpdateDisplay.call(this);
+				return;
+			}
+
+			const th = ctx?.ui?.theme ?? FALLBACK_THEME;
+			const skillBlock = this?.skillBlock ?? {};
+			const name = typeof skillBlock.name === "string" && skillBlock.name.trim() ? skillBlock.name.trim() : "skill";
+			const content = typeof skillBlock.content === "string" ? skillBlock.content : "";
+			const expanded = Boolean(this?.expanded);
+
+			this.paddingX = 0;
+			this.paddingY = 0;
+			this.setBgFn?.(undefined);
+			this.clear?.();
+
+			const hint = expanded ? "" : th.fg("dim", ` · ${keyText("app.tools.expand")} expand`);
+			this.addChild?.(new Text(`${stackPrefix(th)}${toolLabel(th, "Skill ")}${th.fg("accent", name)}${hint}`, 0, 0));
+
+			if (expanded) {
+				this.addChild?.(new Text(`${treeConnector(th, "└", cwd)}${th.fg("muted", "Content")}`, 0, 0));
+				this.addChild?.(new Markdown(`**${name}**\n\n${content}`, 0, 0, this?.markdownTheme ?? getMarkdownTheme(), {
+					color: (text: string) => th.fg("customMessageText", text),
+				}));
+			}
+		};
+	}
+
+	pi.on("session_start", (_event: any, ctx: ExtensionContext) => {
+		state!.activeCtx = ctx;
+	});
+	pi.on("session_shutdown", () => {
+		if (prototype[SKILL_INVOCATION_RENDERER_PATCH_SYMBOL] === state) {
+			prototype.updateDisplay = state!.originalUpdateDisplay as unknown;
+			delete prototype[SKILL_INVOCATION_RENDERER_PATCH_SYMBOL];
 		}
 		state!.activeCtx = undefined;
 	});
@@ -3015,6 +3074,7 @@ export default async function toolRenderer(pi: ExtensionAPI): Promise<void> {
 	const agent = await import("@mariozechner/pi-coding-agent");
 	installUserMessageRenderer(pi, agent.UserMessageComponent);
 	installAssistantMessageRenderer(pi, agent.AssistantMessageComponent);
+	installSkillInvocationRenderer(pi, (agent as any).SkillInvocationMessageComponent);
 	const cwd = process.cwd();
 	registerRead(pi, agent, cwd);
 	registerBash(pi, agent, cwd);
