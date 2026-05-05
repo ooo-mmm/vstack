@@ -74,7 +74,7 @@ Every run prints a summary with scope (`PROJECT (...)` vs `GLOBAL (...)`), metho
 | `vstack refresh` | all | Reinstall locked items from current source |
 | `vstack update-pi` | all | Update Pi packages by version (npm sources or vstack repos) |
 | `vstack update` | n/a | Self-update the CLI binary |
-| `vstack init <name>` | n/a | Scaffold a new agent + skill template |
+| `vstack init <name> --kind <agent\|skill\|hook>` | n/a | Scaffold a new template in a vstack source repo |
 
 All scope-aware commands accept `--scope project|global|all`. `-g`/`--global` is the shorthand for `--scope global` and stays supported. When both are passed, `--scope` wins.
 

@@ -1,77 +1,115 @@
-use anyhow::Result;
+//! `vstack init` — scaffold new agent / skill / hook files in a vstack source repo.
+//!
+//! This is a maintainer tool: it writes to `./agents/`, `./skills/`, or
+//! `./hooks/` in the current directory, expecting that directory to be (or
+//! become) a vstack source repo. End users iterating in their own project
+//! don't need this — they consume packages, they don't author them.
+
+use anyhow::{bail, Result};
 use std::path::Path;
 
-pub fn run(name: Option<&str>) -> Result<()> {
-    let name = match name {
-        Some(n) => n.to_string(),
-        None => {
-            eprintln!("Usage: vstack init <name>");
-            return Ok(());
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind {
+    Agent,
+    Skill,
+    Hook,
+}
+
+impl Kind {
+    fn parse(s: &str) -> Result<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "agent" | "agents" | "a" => Ok(Kind::Agent),
+            "skill" | "skills" | "s" => Ok(Kind::Skill),
+            "hook" | "hooks" | "h" => Ok(Kind::Hook),
+            other => bail!("unknown kind '{other}': expected agent | skill | hook"),
         }
+    }
+}
+
+pub fn run(name: Option<&str>, kind: Option<&str>) -> Result<()> {
+    let Some(name) = name else {
+        eprintln!(
+            "Usage: vstack init <name> --kind <agent|skill|hook>\n\
+             \n\
+             Examples:\n\
+               vstack init my-agent --kind agent\n\
+               vstack init my-skill --kind skill\n\
+               vstack init my-hook  --kind hook\n"
+        );
+        return Ok(());
     };
-
-    // Ask what to create
-    eprintln!("Creating new item: {name}\n");
-
-    let agent_path = Path::new("agents").join(format!("{name}.md"));
-    let skill_dir = Path::new("skills").join(&name);
-
-    if agent_path.exists() {
-        eprintln!("Agent already exists: {}", agent_path.display());
-    } else {
-        // Create agent template
-        std::fs::create_dir_all("agents")?;
-        let template = format!(
-            r#"---
-name: {name}
-description: TODO - describe when to use this agent
-model: sonnet
-role: engineer
-color: green
----
-
-# {title}
-
-TODO - describe what this agent does.
-
-## Capabilities
-
-- TODO
-
-## Guidelines
-
-- TODO
-"#,
-            name = name,
-            title = title_case(&name),
+    let Some(kind) = kind else {
+        eprintln!(
+            "Missing --kind. Pass one of: agent, skill, hook.\n\
+             \n\
+             Example: vstack init {name} --kind agent\n"
         );
-        std::fs::write(&agent_path, template)?;
-        eprintln!("Created agent: {}", agent_path.display());
+        bail!("init requires --kind");
+    };
+    let kind = Kind::parse(kind)?;
+
+    if name.contains('/') || name.starts_with('-') {
+        bail!("invalid name '{name}': must not contain '/' or start with '-'");
     }
 
-    if skill_dir.exists() {
-        eprintln!("Skill directory already exists: {}", skill_dir.display());
-    } else {
-        // Create skill template
-        std::fs::create_dir_all(&skill_dir)?;
-        let skill_md = format!(
-            r#"---
-name: {name}
-description: TODO - describe this skill
-license: MIT
----
-
-# {title}
-
-TODO - skill instructions.
-"#,
-            name = name,
-            title = title_case(&name),
-        );
-        std::fs::write(skill_dir.join("SKILL.md"), skill_md)?;
-        eprintln!("Created skill: {}/SKILL.md", skill_dir.display());
+    match kind {
+        Kind::Agent => init_agent(name),
+        Kind::Skill => init_skill(name),
+        Kind::Hook => init_hook(name),
     }
+}
 
+fn init_agent(name: &str) -> Result<()> {
+    let path = Path::new("agents").join(format!("{name}.md"));
+    if path.exists() {
+        eprintln!("Agent already exists: {}", path.display());
+        return Ok(());
+    }
+    std::fs::create_dir_all("agents")?;
+    let body = format!(
+        "---\nname: {name}\ndescription: TODO — describe when to use this agent\nmodel: sonnet\nrole: engineer\ncolor: green\n---\n\n# {title}\n\nTODO — describe what this agent does.\n\n## Capabilities\n\n- TODO\n\n## Guidelines\n\n- TODO\n",
+        title = title_case(name),
+    );
+    std::fs::write(&path, body)?;
+    eprintln!("Created agent: {}", path.display());
+    Ok(())
+}
+
+fn init_skill(name: &str) -> Result<()> {
+    let dir = Path::new("skills").join(name);
+    if dir.exists() {
+        eprintln!("Skill directory already exists: {}", dir.display());
+        return Ok(());
+    }
+    std::fs::create_dir_all(&dir)?;
+    let body = format!(
+        "---\nname: {name}\ndescription: TODO — describe this skill\nlicense: MIT\n---\n\n# {title}\n\nTODO — skill instructions.\n",
+        title = title_case(name),
+    );
+    std::fs::write(dir.join("SKILL.md"), body)?;
+    eprintln!("Created skill: {}/SKILL.md", dir.display());
+    Ok(())
+}
+
+fn init_hook(name: &str) -> Result<()> {
+    let path = Path::new("hooks").join(format!("{name}.sh"));
+    if path.exists() {
+        eprintln!("Hook already exists: {}", path.display());
+        return Ok(());
+    }
+    std::fs::create_dir_all("hooks")?;
+    let body = format!(
+        "#!/usr/bin/env bash\n# ---\n# name: {name}\n# event: PreToolUse       # PreToolUse | PostToolUse | PostCompact | TaskCompleted\n# matcher: Bash           # Bash | Edit|Write | (empty for all)\n# description: TODO — describe what this hook does and when it fires\n# safety: TODO — explain what risk this hook prevents\n# ---\n\nset -euo pipefail\n\nINPUT=$(cat)\n\n# TODO — implement hook logic. Read tool input from $INPUT (JSON), exit 0 to\n# allow the tool call, exit non-zero with a message on stderr to block it.\n\nexit 0\n",
+    );
+    std::fs::write(&path, body)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&path)?.permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&path, perms)?;
+    }
+    eprintln!("Created hook: {}", path.display());
     Ok(())
 }
 
@@ -86,4 +124,44 @@ fn title_case(s: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_kind_aliases() {
+        assert_eq!(Kind::parse("agent").unwrap(), Kind::Agent);
+        assert_eq!(Kind::parse("a").unwrap(), Kind::Agent);
+        assert_eq!(Kind::parse("AGENTS").unwrap(), Kind::Agent);
+        assert_eq!(Kind::parse("skill").unwrap(), Kind::Skill);
+        assert_eq!(Kind::parse("hook").unwrap(), Kind::Hook);
+        assert!(Kind::parse("widget").is_err());
+    }
+
+    #[test]
+    fn title_case_handles_hyphens() {
+        assert_eq!(title_case("foo-bar"), "Foo Bar");
+        assert_eq!(title_case("rust"), "Rust");
+        assert_eq!(title_case(""), "");
+    }
+
+    #[test]
+    fn run_without_kind_errors() {
+        let result = run(Some("foo"), None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn run_without_name_returns_help() {
+        // Returns Ok(()) after printing usage, by design.
+        assert!(run(None, None).is_ok());
+    }
+
+    #[test]
+    fn run_rejects_invalid_names() {
+        assert!(run(Some("foo/bar"), Some("agent")).is_err());
+        assert!(run(Some("-foo"), Some("agent")).is_err());
+    }
 }

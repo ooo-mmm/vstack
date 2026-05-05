@@ -181,8 +181,14 @@ enum Commands {
         scope: Option<String>,
     },
 
-    /// Scaffold a new skill or agent template
-    Init { name: Option<String> },
+    /// Scaffold a new agent, skill, or hook template in a vstack source repo.
+    /// Run from the repo root; writes to ./agents/, ./skills/, or ./hooks/.
+    Init {
+        name: Option<String>,
+        /// What to scaffold: agent | skill | hook
+        #[arg(long)]
+        kind: Option<String>,
+    },
 }
 
 fn main() -> Result<()> {
@@ -244,7 +250,9 @@ fn main() -> Result<()> {
             commands::refresh::run(scope)
         }
         Some(Commands::UpdatePi { check, scope }) => commands::update_pi::run(check, scope),
-        Some(Commands::Init { name }) => commands::init::run(name.as_deref()),
+        Some(Commands::Init { name, kind }) => {
+            commands::init::run(name.as_deref(), kind.as_deref())
+        }
         // No subcommand → default to add
         None => commands::add::run(
             cli.source,
