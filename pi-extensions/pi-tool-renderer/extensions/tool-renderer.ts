@@ -517,6 +517,14 @@ function toolRule(theme: any, text: string): string {
 	}
 }
 
+function borderMuted(theme: any, text: string): string {
+	try {
+		return theme.fg("borderMuted", text);
+	} catch {
+		return toolRule(theme, text);
+	}
+}
+
 type TreeBranch = "├" | "└" | "│";
 
 function treeStyle(cwd?: string): "unicode" | "ascii" {
@@ -1283,16 +1291,18 @@ function shouldUseSplitDiff(diff: StructuredDiff, rows: StructuredDiffLine[], wi
 function renderSplitDiff(diff: StructuredDiff, rows: StructuredDiffLine[], width: number, theme: any, path?: string, cwd?: string): string[] {
 	const maxNum = Math.max(1, ...diff.lines.map((line) => Math.max(line.oldNum ?? 0, line.newNum ?? 0)));
 	const numWidth = Math.max(2, String(maxNum).length);
-	const divider = toolRule(theme, "│");
+	const divider = borderMuted(theme, "│");
 	const half = Math.max(24, Math.floor((width - visibleLength(divider)) / 2));
-	const rule = `${toolRule(theme, "─".repeat(half))}${divider}${toolRule(theme, "─".repeat(half))}`;
-	const out = [rule];
+	const ruleSegment = (glyph: string) => borderMuted(theme, glyph.repeat(half));
+	const topRule = `${ruleSegment("─")}${borderMuted(theme, "┬")}${ruleSegment("─")}`;
+	const bottomRule = `${ruleSegment("─")}${borderMuted(theme, "┴")}${ruleSegment("─")}`;
+	const out = [topRule];
 	for (const pair of pairDiffRows(rows)) {
 		const leftRanges = pair.left && pair.right ? lineWordRanges(pair.left, pair.right, cwd) : [];
 		const rightRanges = pair.left && pair.right ? lineWordRanges(pair.right, pair.left, cwd) : [];
 		out.push(`${renderDiffHalf(pair.left, "old", half, numWidth, theme, path ?? diff.path, cwd, leftRanges)}${divider}${renderDiffHalf(pair.right, "new", half, numWidth, theme, path ?? diff.path, cwd, rightRanges)}`);
 	}
-	out.push(rule);
+	out.push(bottomRule);
 	return out;
 }
 
@@ -2578,6 +2588,10 @@ function mutedHorizontalRule(theme: any, width: number): string {
 	}
 }
 
+function shouldOmitBottomToolChromeRule(core: string[]): boolean {
+	return core.some((line) => /─+┴─+/.test(stripAnsi(line ?? "")));
+}
+
 function installToolChromePatch(): void {
 	const proto = Container?.prototype as any;
 	if (!proto || proto[TOOL_CHROME_PATCH_SYMBOL]) return;
@@ -2598,7 +2612,7 @@ function installToolChromePatch(): void {
 		if (mode === "transparent") return core;
 		const activeTheme = activeToolChromeCtx?.hasUI ? activeToolChromeCtx.ui.theme : undefined;
 		const rule = mutedHorizontalRule(activeTheme, width);
-		return [rule, ...core, rule];
+		return shouldOmitBottomToolChromeRule(core) ? [rule, ...core] : [rule, ...core, rule];
 	};
 	proto[TOOL_CHROME_PATCH_SYMBOL] = true;
 }
