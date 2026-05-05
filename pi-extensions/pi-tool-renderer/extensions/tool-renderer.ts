@@ -112,7 +112,7 @@ function renderUserMessageBorder(lines: string[], width: number, theme: any): st
 	const marker = (text: string) => ansiRed(text);
 	const topBorder = () => {
 		if (innerWidth < 5) return border("━".repeat(innerWidth));
-		const left = "━━ ";
+		const left = "━ ";
 		const right = ` ${"━".repeat(Math.max(0, innerWidth - visibleWidth(left) - 2))}`;
 		return `${border(left)}${marker("π")}${border(right)}`;
 	};
