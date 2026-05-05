@@ -108,6 +108,15 @@
           "apply": "live"
         },
         {
+          "key": "userMessageTrailingBlankLine",
+          "label": "User message trailing blank line",
+          "description": "Add one blank line after rendered user messages so the next assistant/tool output has breathing room.",
+          "type": "boolean",
+          "default": true,
+          "category": "Messages",
+          "apply": "live"
+        },
+        {
           "key": "compactCompactionMessages",
           "label": "Compact compaction summaries",
           "description": "Render compaction summary rows with the same compact bullet/chrome style as tool output instead of Pi's padded message box.",

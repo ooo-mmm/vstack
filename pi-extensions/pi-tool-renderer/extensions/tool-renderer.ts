@@ -131,6 +131,11 @@ function renderUserMessageBorder(lines: string[], width: number, theme: any): st
 	];
 }
 
+function appendUserMessageBreak(lines: string[], width: number, cwd?: string): string[] {
+	if (lines.length === 0 || !settingBoolean("userMessageTrailingBlankLine", true, cwd)) return lines;
+	return [...lines, " ".repeat(Math.max(0, width))];
+}
+
 function lineCount(text: string): number {
 	if (!text) return 0;
 	return text.split(/\r?\n/).length;
@@ -230,8 +235,8 @@ function installUserMessageRenderer(pi: ExtensionAPI, UserMessageComponent: any)
 		prototype.render = function compactUserMessageRender(this: any, width: number): string[] {
 			const box = this?.contentBox;
 			const ctx = state?.activeCtx;
+			const cwd = ctx?.cwd ?? process.cwd();
 			if (box && ctx?.hasUI) {
-				const cwd = ctx.cwd ?? process.cwd();
 				const compact = settingBoolean("compactUserMessages", true, cwd);
 				const paddingY = compact ? 0 : 1;
 				const boxState = compact ? `${paddingY}:border:ansi-green:text:pi-red:left` : `${paddingY}:background:userMessageBg`;
@@ -258,11 +263,11 @@ function installUserMessageRenderer(pi: ExtensionAPI, UserMessageComponent: any)
 				if (compact && width >= 4) {
 					const theme = ctx.ui?.theme ?? FALLBACK_THEME;
 					const lines = state!.originalRender.call(this, Math.max(1, width - 2));
-					return renderUserMessageBorder(lines, width, theme);
+					return appendUserMessageBreak(renderUserMessageBorder(lines, width, theme), width, cwd);
 				}
 			}
 
-			return state!.originalRender.call(this, width);
+			return appendUserMessageBreak(state!.originalRender.call(this, width), width, cwd);
 		};
 	}
 
