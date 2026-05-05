@@ -2356,11 +2356,23 @@ function renderGenericToolResult(name: string, result: any, { expanded, isPartia
 function installToolExecutionRendererPatch(pi: ExtensionAPI): void {
 	const proto = ToolExecutionComponent?.prototype as any;
 	if (!proto) return;
-	const existing = proto[TOOL_EXECUTION_RENDERER_PATCH_SYMBOL] as { originalGetCallRenderer?: unknown; originalGetResultRenderer?: unknown } | undefined;
+	const existing = proto[TOOL_EXECUTION_RENDERER_PATCH_SYMBOL] as { originalGetCallRenderer?: unknown; originalGetRenderShell?: unknown; originalGetResultRenderer?: unknown; originalHasRendererDefinition?: unknown } | undefined;
 	const originalGetCallRenderer = existing?.originalGetCallRenderer ?? proto.getCallRenderer;
 	const originalGetResultRenderer = existing?.originalGetResultRenderer ?? proto.getResultRenderer;
-	if (typeof originalGetCallRenderer !== "function" || typeof originalGetResultRenderer !== "function") return;
-	const state = { originalGetCallRenderer, originalGetResultRenderer };
+	const originalHasRendererDefinition = existing?.originalHasRendererDefinition ?? proto.hasRendererDefinition;
+	const originalGetRenderShell = existing?.originalGetRenderShell ?? proto.getRenderShell;
+	if (typeof originalGetCallRenderer !== "function" || typeof originalGetResultRenderer !== "function" || typeof originalHasRendererDefinition !== "function" || typeof originalGetRenderShell !== "function") return;
+	const state = { originalGetCallRenderer, originalGetRenderShell, originalGetResultRenderer, originalHasRendererDefinition };
+	proto.hasRendererDefinition = function patchedHasRendererDefinition(this: any) {
+		const toolName = typeof this?.toolName === "string" ? this.toolName : "";
+		if (toolName === "ScheduleWakeup" && settingBoolean("genericToolRenderers", true)) return true;
+		return originalHasRendererDefinition.call(this);
+	};
+	proto.getRenderShell = function patchedGetRenderShell(this: any) {
+		const toolName = typeof this?.toolName === "string" ? this.toolName : "";
+		if (toolName === "ScheduleWakeup" && settingBoolean("genericToolRenderers", true)) return "self";
+		return originalGetRenderShell.call(this);
+	};
 	proto.getCallRenderer = function patchedGetCallRenderer(this: any) {
 		const toolName = typeof this?.toolName === "string" ? this.toolName : "";
 		if (toolName === "ScheduleWakeup" && settingBoolean("genericToolRenderers", true)) {
@@ -2390,6 +2402,8 @@ function installToolExecutionRendererPatch(pi: ExtensionAPI): void {
 	proto[TOOL_EXECUTION_RENDERER_PATCH_SYMBOL] = state;
 	pi.on("session_shutdown", () => {
 		if (proto[TOOL_EXECUTION_RENDERER_PATCH_SYMBOL] !== state) return;
+		proto.hasRendererDefinition = originalHasRendererDefinition;
+		proto.getRenderShell = originalGetRenderShell;
 		proto.getCallRenderer = originalGetCallRenderer;
 		proto.getResultRenderer = originalGetResultRenderer;
 		delete proto[TOOL_EXECUTION_RENDERER_PATCH_SYMBOL];
