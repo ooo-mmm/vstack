@@ -4642,46 +4642,15 @@ export default function (pi: ExtensionAPI) {
 				const treeText = details.results
 					.map((r, index) => {
 						const prefix = index === details.results.length - 1 ? "└" : "├";
-						const name = padAnsi(theme.fg("accent", theme.bold(r.agent)), nameWidth);
+						const name = padAnsi(theme.fg("success", theme.bold(r.agent)), nameWidth);
 						return `${subagentBranch(theme, prefix, cwd)}${name}${rowTaskPreview(r, 100)}${truncationBadge(r)}`;
 					})
 					.join("\n");
 
-				if (expanded && !isRunning) {
-					const lines = [headerText];
-					for (const [index, r] of details.results.entries()) {
-						const isLast = index === details.results.length - 1;
-						const branch = isLast ? "└" : "├";
-						const stem = subagentStem(theme, isLast, cwd);
-						const task = oneLinePreview(r.task, 140);
-						const displayItems = getDisplayItems(r.messages);
-						const toolCalls = displayItems.filter((item) => item.type === "toolCall");
-						const finalOutput = getFinalOutput(r.messages).trim();
-
-						lines.push(
-							`${subagentBranch(theme, branch, cwd)}${theme.fg("accent", theme.bold(r.agent))}${task ? theme.fg("dim", ` · ${task}`) : ""}${truncationBadge(r)}`,
-						);
-						lines.push(`${stem}${theme.fg("muted", "Tools")}`);
-						if (toolCalls.length > 0) {
-							for (const item of toolCalls) lines.push(`${stem}${formatToolCall(item.name, item.args, theme.fg.bind(theme))}`);
-						} else {
-							lines.push(`${stem}${theme.fg("muted", "(none)")}`);
-						}
-						lines.push(`${stem}${theme.fg("muted", "Final")}`);
-						if (finalOutput) {
-							if (finalOutputLooksLikeToolEcho(finalOutput, toolCalls)) lines.push(`${stem}${finalResponseSuppressedLine(theme)}`);
-							else for (const line of finalOutput.split(/\r?\n/)) lines.push(`${stem}${line}`);
-						} else {
-							lines.push(`${stem}${theme.fg("muted", "(no final response)")}`);
-						}
-						const outputPath = fullOutputLine(r);
-						if (outputPath) lines.push(`${stem}${outputPath}`);
-						const transcript = transcriptLine(r);
-						if (transcript) lines.push(`${stem}${transcript}`);
-					}
-					return wrappedText(lines.join("\n"));
-				}
-
+				// Always render the simple tree, expanded or not. The previous expanded
+				// branch dumped per-agent Tools/Final/Transcript blocks that duplicated
+				// the data the dashboard and subagent-completion messages already show.
+				void isRunning;
 				return wrappedText(`${headerText}\n${treeText}`);
 			}
 
