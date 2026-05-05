@@ -552,8 +552,13 @@ function readCallText(args: any, theme: any): string {
 
 function bashCallText(args: any, theme: any, cwd?: string): string {
 	const max = Math.max(20, Math.floor(settingNumber("commandPreviewChars", 96, cwd)));
-	const command = args?.command && args.command.length > max ? `${args.command.slice(0, max - 1)}…` : args?.command;
-	return `${toolLabel(theme, "Bash $ ")}${theme.fg("accent", command ?? "")}`;
+	const rawCommand = typeof args?.command === "string" ? args.command : "";
+	const command = rawCommand.length > max ? `${rawCommand.slice(0, max - 1)}…` : rawCommand;
+	const commandLines = command.split(/\r?\n/);
+	const [firstLine = "", ...continuationLines] = commandLines;
+	const styledFirstLine = theme.fg("accent", firstLine);
+	const styledContinuation = continuationLines.map((line) => theme.fg("accent", line)).join("\n");
+	return `${toolLabel(theme, "Bash $ ")}${styledFirstLine}${styledContinuation ? `\n${styledContinuation}` : ""}`;
 }
 
 function isGitDiffCommand(command: unknown): boolean {
