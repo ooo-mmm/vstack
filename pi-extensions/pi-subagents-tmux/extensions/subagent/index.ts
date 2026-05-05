@@ -262,6 +262,47 @@ function formatShortcutHint(shortcut: string): string {
 		.join("+");
 }
 
+async function parseTranscriptUsage(transcriptPath: string | undefined): Promise<{ usage: UsageStats; model?: string } | undefined> {
+	if (!transcriptPath) return undefined;
+	let content: string;
+	try {
+		content = await fs.promises.readFile(transcriptPath, "utf-8");
+	} catch {
+		return undefined;
+	}
+	const total: UsageStats = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 };
+	let model: string | undefined;
+	for (const line of content.split(/\r?\n/)) {
+		if (!line.trim()) continue;
+		let event: any;
+		try {
+			event = JSON.parse(line);
+		} catch {
+			continue;
+		}
+		if (!model && typeof event?.modelId === "string") model = event.modelId;
+		if (!model && typeof event?.message?.model === "string") model = event.message.model;
+		const usage = event?.usage ?? event?.message?.usage;
+		if (!usage || typeof usage !== "object") continue;
+		total.input += Number(usage.input ?? usage.input_tokens ?? 0) || 0;
+		total.output += Number(usage.output ?? usage.output_tokens ?? 0) || 0;
+		total.cacheRead += Number(usage.cacheRead ?? usage.cache_read_input_tokens ?? 0) || 0;
+		total.cacheWrite += Number(usage.cacheWrite ?? usage.cache_creation_input_tokens ?? 0) || 0;
+		const cost = usage.cost;
+		if (typeof cost === "number") total.cost += cost;
+		else if (cost && typeof cost === "object") {
+			total.cost +=
+				(Number((cost as Record<string, unknown>).input) || 0) +
+				(Number((cost as Record<string, unknown>).output) || 0) +
+				(Number((cost as Record<string, unknown>).cacheRead ?? (cost as Record<string, unknown>).cache_read) || 0) +
+				(Number((cost as Record<string, unknown>).cacheWrite ?? (cost as Record<string, unknown>).cache_write) || 0);
+		}
+		total.turns = (total.turns ?? 0) + 1;
+	}
+	if ((total.turns ?? 0) === 0 && total.input === 0 && total.output === 0) return undefined;
+	return { usage: total, model };
+}
+
 function formatUsageStats(
 	usage: {
 		input: number;
@@ -1148,6 +1189,8 @@ interface SubagentDashboardItem {
 	taskId: string;
 	transcriptPath?: string;
 	updatedAt: string;
+	usage?: UsageStats;
+	model?: string;
 }
 
 interface SubagentDashboardState {
@@ -1885,8 +1928,26 @@ function renderDashboardWidgetLines(state: SubagentDashboardState, theme: Theme,
 	].filter(Boolean);
 	const title = `${theme.fg("customMessageLabel", theme.bold("Subagents"))} ${theme.fg("muted", headerParts.join(" · "))}${hint}`;
 	const lines = [title];
+	const aggregateDashboardUsage = (entries: SubagentDashboardItem[]): UsageStats | undefined => {
+		const total: UsageStats = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 };
+		let any = false;
+		for (const entry of entries) {
+			if (!entry.usage) continue;
+			any = true;
+			total.input += entry.usage.input || 0;
+			total.output += entry.usage.output || 0;
+			total.cacheRead += entry.usage.cacheRead || 0;
+			total.cacheWrite += entry.usage.cacheWrite || 0;
+			total.cost += entry.usage.cost || 0;
+			total.turns = (total.turns ?? 0) + (entry.usage.turns ?? 0);
+		}
+		return any ? total : undefined;
+	};
 	if (running === 0 && state.mode === "compact") {
-		lines.push(`${subagentBranch(theme, "└", cwd)}${theme.fg("success", "done")} ${theme.fg("dim", dashboardTranscriptLabel(items, cwd))}`);
+		const aggregated = aggregateDashboardUsage(items);
+		const usageStr = aggregated ? formatUsageStats(aggregated) : "";
+		const tail = usageStr ? ` ${theme.fg("dim", `· ${usageStr}`)}` : "";
+		lines.push(`${subagentBranch(theme, "└", cwd)}${theme.fg("success", "done")} ${theme.fg("dim", dashboardTranscriptLabel(items, cwd))}${tail}`);
 		return dashboardFrame(lines.map((line) => truncateToWidth(line, Math.max(1, width - 4), "")), Math.max(1, width), theme);
 	}
 	const maxItems = state.mode === "compact" || state.collapsed ? 1 : state.mode === "normal" ? Math.min(3, dashboardMaxItems(cwd)) : dashboardMaxItems(cwd);
@@ -1897,13 +1958,21 @@ function renderDashboardWidgetLines(state: SubagentDashboardState, theme: Theme,
 		const name = padAnsi(theme.fg("accent", theme.bold(item.agent)), nameWidth);
 		const where = theme.fg("dim", item.kind);
 		const bridge = item.bridge ? theme.fg("success", " · bridge") : "";
-		lines.push(`${branch}${dashboardStatusIcon(item.status, theme)} ${name}  ${dashboardStatusText(item, theme)} ${where}${bridge}`);
+		const usageStr = item.usage ? formatUsageStats(item.usage) : "";
+		const usageTail = usageStr ? `  ${theme.fg("dim", usageStr)}` : "";
+		lines.push(`${branch}${dashboardStatusIcon(item.status, theme)} ${name}  ${dashboardStatusText(item, theme)} ${where}${bridge}${usageTail}`);
 		if (state.mode === "expanded" && !state.collapsed && item.message) {
 			lines.push(`${subagentStem(theme, index === shown.length - 1 && items.length <= shown.length, cwd)}${theme.fg("toolOutput", oneLinePreview(item.message, Math.max(48, width - 16)))}`);
 		}
 	}
 	const hidden = items.length - shown.length;
 	if (hidden > 0) lines.push(`${subagentBranch(theme, "└", cwd)}${theme.fg("muted", `… ${hidden} more · /agents toggle`)}`);
+	if (state.mode === "expanded" && !state.collapsed) {
+		const aggregated = aggregateDashboardUsage(items);
+		if (aggregated) {
+			lines.push(`${subagentBranch(theme, "└", cwd)}${theme.fg("dim", `Total: ${formatUsageStats(aggregated)}`)}`);
+		}
+	}
 	return dashboardFrame(lines.map((line) => truncateToWidth(line, Math.max(1, width - 4), "")), Math.max(1, width), theme);
 }
 
@@ -3321,6 +3390,9 @@ export default function (pi: ExtensionAPI) {
 		const agent = typeof event.agent === "string" ? event.agent : undefined;
 		if (!taskId || !agent) return;
 		const existing = dashboardState.items[taskId];
+		const transcriptPath = typeof event.transcriptPath === "string" ? event.transcriptPath : existing?.transcriptPath;
+		const eventUsage = (event.usage as UsageStats | undefined) ?? undefined;
+		const eventModel = typeof event.model === "string" ? event.model : undefined;
 		updateDashboard({
 			agent,
 			artifacts: true,
@@ -3333,9 +3405,21 @@ export default function (pi: ExtensionAPI) {
 			status,
 			task: existing?.task ?? (typeof event.task === "string" ? event.task : undefined),
 			taskId,
-			transcriptPath: typeof event.transcriptPath === "string" ? event.transcriptPath : existing?.transcriptPath,
+			transcriptPath,
 			updatedAt: new Date().toISOString(),
+			usage: eventUsage ?? existing?.usage,
+			model: eventModel ?? existing?.model,
 		});
+		// Pane completions never carry usage in their event payload; parse the
+		// transcript jsonl asynchronously and patch the dashboard once we have it.
+		if (!eventUsage && transcriptPath) {
+			parseTranscriptUsage(transcriptPath)
+				.then((parsed) => {
+					if (!parsed) return;
+					patchDashboard(taskId, { usage: parsed.usage, model: parsed.model });
+				})
+				.catch(() => undefined);
+		}
 	};
 
 	pi.events.on("subagents:completed", (payload: unknown) => completeDashboardFromEvent(payload, "completed"));
@@ -3479,6 +3563,14 @@ export default function (pi: ExtensionAPI) {
 					transcriptPath: record.transcriptPath,
 					updatedAt: record.completedAt ?? record.createdAt,
 				});
+				if (record.transcriptPath && (record.status === "completed" || record.status === "failed" || record.status === "blocked")) {
+					const capturedTaskId = record.taskId;
+					parseTranscriptUsage(record.transcriptPath)
+						.then((parsed) => {
+							if (parsed) patchDashboard(capturedTaskId, { usage: parsed.usage, model: parsed.model });
+						})
+						.catch(() => undefined);
+				}
 			}
 		} catch {
 			// Dashboard is best-effort; registry lookup may fail before first pane task.
