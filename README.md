@@ -55,40 +55,6 @@ cargo install --git https://github.com/vanillagreencom/vstack.git vstack
 vstack add vanillagreencom/vstack
 ```
 
-Useful commands:
-
-```bash
-# Interactive install (TUI)
-vstack add vanillagreencom/vstack
-
-# Install from the current repo if you're inside a package source
-vstack add
-
-# Install all packages to all detected harnesses
-vstack add vanillagreencom/vstack --all
-
-# Global install
-vstack add vanillagreencom/vstack --all --global
-
-# Filter what gets installed (each kind narrows independently)
-vstack add vanillagreencom/vstack --harness claude-code,opencode -y          # specific harnesses
-vstack add vanillagreencom/vstack --skill rust-safety,perf-zero-alloc -y     # specific skills
-vstack add vanillagreencom/vstack --agent rust,tpm -y                        # specific agents
-vstack add vanillagreencom/vstack --hook block-bare-cd -y                    # specific hooks
-
-# Regenerate agents/skills after editing vstack.toml
-vstack refresh
-
-# Update the CLI binary
-vstack update              # skips if version matches
-vstack update --force      # always rebuilds from source
-
-# Inspect / remove
-vstack list
-vstack check
-vstack remove rust-safety
-```
-
 ## Project-Local Config
 
 Two config files live at the project root:
