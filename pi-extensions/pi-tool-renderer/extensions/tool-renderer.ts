@@ -2316,7 +2316,7 @@ function renderScheduleWakeupResult(result: any, { expanded, isPartial }: any, t
 		? theme.fg("error", notFound ? "x not found" : "x error")
 		: theme.fg("success", "done");
 	let text = `${stackPrefix(theme)}${toolLabel(theme, "Schedule Wakeup ")}${summarizeScheduleWakeupCall(args, theme)}${theme.fg("dim", " · ")}${status}`;
-	if (!expanded) return makeTruncatedLines(`${text}${theme.fg("dim", " · Ctrl+O")}`);
+	if (!expanded) return makeTruncatedLines(`${text}${theme.fg("dim", " · Ctrl+O to expand")}`);
 	const json = JSON.stringify(args, null, 2).split(/\r?\n/);
 	text += `\n${treeConnector(theme, raw ? "├" : "└", context?.cwd)}${theme.fg("muted", "args")}`;
 	text += `\n${json.map((line) => `${treeStem(theme, raw ? "├" : "└", context?.cwd)}${theme.fg("dim", clipLine(line, context?.cwd))}`).join("\n")}`;
