@@ -1455,7 +1455,7 @@ function buildDelegation(agent: AgentConfig, task: string, outboxFile: string, t
 		"",
 		compactTask,
 		"",
-		"When done, call complete_subagent with status, summary, filesChanged, validation, and optional notes, then print one brief final message and go idle.",
+		"When done, first print one brief final message describing what you produced. Then call complete_subagent with status, summary, filesChanged, validation, and optional notes, and go idle.",
 		`If complete_subagent is unavailable, write exactly one JSON object to ${outboxFile} using this schema: ${schema}`,
 		"Do not complete before the work is actually done.",
 	].join("\n");
@@ -3335,18 +3335,17 @@ export default function (pi: ExtensionAPI) {
 				details: { agent: childAgentName, taskId, status: params.status, outboxFile },
 			};
 		},
-		renderCall(args, theme, context) {
-			const status = args?.status ?? "completed";
-			const prefix = !context?.executionStarted || context?.isPartial ? theme.fg("accent", "● ") : theme.fg(context?.isError ? "error" : "success", "● ");
-			return new Text(`${prefix}${theme.fg("toolTitle", theme.bold("Complete subagent"))}${theme.fg("muted", ` · ${status}`)}`, 0, 0);
+		renderCall(_args, _theme, _context) {
+			return new Container();
 		},
 		renderResult(result, { expanded }, theme, context) {
 			const raw = result.content?.find?.((part: any) => part?.type === "text")?.text ?? "";
 			const details = result.details as { agent?: string; taskId?: string; status?: string; outboxFile?: string } | undefined;
 			if (context?.isError) return new Text(`${theme.fg("error", "✗")} ${theme.fg("toolTitle", "Subagent completion failed")}\n${theme.fg("muted", raw)}`, 0, 0);
-			if (expanded && details?.outboxFile) return new Text(`${theme.fg("success", "✓")} ${theme.fg("toolTitle", theme.bold("Subagent completion written"))}\n${theme.fg("dim", `Outbox: ${compactPath(details.outboxFile)}`)}`, 0, 0);
-			const agent = details?.agent ? ` ${details.agent}` : "";
-			return new Text(`${theme.fg("success", "✓")} ${theme.fg("toolTitle", theme.bold(`completed${agent}`))}`, 0, 0);
+			const agentLabel = details?.agent ? `${details.agent.charAt(0).toUpperCase()}${details.agent.slice(1)}` : "Subagent";
+			const headline = `${theme.fg("success", "✓")} ${theme.fg("toolTitle", theme.bold(`${agentLabel} complete`))}${theme.fg("muted", " · now waiting")}`;
+			if (expanded && details?.outboxFile) return new Text(`${headline}\n${theme.fg("dim", `Outbox: ${compactPath(details.outboxFile)}`)}`, 0, 0);
+			return new Text(headline, 0, 0);
 		},
 	});
 
