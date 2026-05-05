@@ -893,6 +893,7 @@ interface ManagerUiState {
 	scopeFilter: string;
 	showAudit: boolean;
 	showResources: boolean;
+	editing?: { buffer: string; itemId: string; settingKey: string };
 }
 
 function makeInitialUiState(initialTab: TopTab): ManagerUiState {
@@ -921,7 +922,7 @@ async function openManager(pi: ExtensionAPI, ctx: ExtensionCommandContext | Exte
 	while (true) {
 		const inventory = buildInventory(pi, ctx as ExtensionContext);
 		const action = await ctx.ui.custom<ManagerAction>(
-			(tui, theme, _keybindings, done) => createManagerComponent(pi, inventory, ui, theme, () => tui.requestRender(), () => managerLayout(tui.terminal.rows), done),
+			(tui, theme, _keybindings, done) => createManagerComponent(pi, ctx, inventory, ui, theme, () => tui.requestRender(), () => managerLayout(tui.terminal.rows), done),
 			{ overlay: true, overlayOptions: { anchor: "center", maxHeight: DEFAULT_MAX_HEIGHT, width: DEFAULT_WIDTH_PERCENT } },
 		);
 
@@ -1124,6 +1125,7 @@ function toggleProvider(pi: ExtensionAPI, ctx: ExtensionCommandContext | Extensi
 
 function createManagerComponent(
 	pi: ExtensionAPI,
+	ctx: ExtensionCommandContext | ExtensionContext,
 	inventory: Inventory,
 	ui: ManagerUiState,
 	theme: Theme,
@@ -1181,7 +1183,54 @@ function createManagerComponent(
 		requestRender();
 	}
 
+	function saveInlineEdit(): void {
+		const editing = ui.editing;
+		if (!editing) return;
+		const item = inventory.items.find((candidate) => candidate.id === editing.itemId);
+		const schema = item?.settingsSchema?.find((candidate) => candidate.key === editing.settingKey);
+		if (!item || !schema) {
+			ui.editing = undefined;
+			requestRender();
+			return;
+		}
+		try {
+			const value = parseSettingInput(schema, editing.buffer);
+			setConfigValue(inventory, item, schema, value);
+			const extensionId = selectedPackageForSetting(item) ?? item.displayName;
+			pi.events.emit(SETTINGS_EVENT, { extensionId, key: schema.key, value });
+			const apply = schema.apply ?? (schema.requiresReload ? "reload" : "live");
+			if (apply !== "live") ctx.ui.notify(applyMessage(schema), apply === "restart" ? "warning" : "info");
+			ui.editing = undefined;
+			requestRender();
+		} catch (error) {
+			ctx.ui.notify(stringifyError(error), "error");
+		}
+	}
+
 	function handleInput(data: string): void {
+		if (ui.editing) {
+			if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
+				ui.editing = undefined;
+				requestRender();
+				return;
+			}
+			if (matchesKey(data, "enter") || matchesKey(data, "return")) return saveInlineEdit();
+			if (matchesKey(data, "backspace")) {
+				ui.editing.buffer = ui.editing.buffer.slice(0, -1);
+				requestRender();
+				return;
+			}
+			if (matchesKey(data, "ctrl+u")) {
+				ui.editing.buffer = "";
+				requestRender();
+				return;
+			}
+			if (isPlainSearchInput(data)) {
+				ui.editing.buffer += data;
+				requestRender();
+			}
+			return;
+		}
 		if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) return done({ type: "close" });
 		if (matchesKey(data, "tab")) {
 			switchTab(1);
@@ -1330,7 +1379,9 @@ function createManagerComponent(
 				if (schema.type === "boolean" || schema.type === "enum") {
 					return done({ type: "set-setting", itemId: selected.id, settingKey: schema.key, value: nextSettingValue(schema, current) });
 				}
-				return done({ type: "edit-setting", itemId: selected.id, settingKey: schema.key });
+				ui.editing = { buffer: stringifySettingValue(current ?? schema.default ?? ""), itemId: selected.id, settingKey: schema.key };
+				requestRender();
+				return;
 			}
 			return done({ type: "toggle-item", itemId: selected.id });
 		}
@@ -1344,7 +1395,9 @@ function createManagerComponent(
 		let lines: string[] = [];
 		lines.push(renderTabBar(topTabs, ui.topTab, bodyWidth, theme));
 		lines.push("");
-		lines.push(ui.showAudit
+		lines.push(ui.editing
+			? `${theme.fg("dim", "editing value · ")}${ansiYellow("enter")} ${theme.fg("dim", "save · ")}${ansiYellow("esc")} ${theme.fg("dim", "cancel · ")}${ansiYellow("backspace")} ${theme.fg("dim", "delete · ")}${ansiYellow("ctrl+u")} ${theme.fg("dim", "clear")}`
+			: ui.showAudit
 			? `${theme.fg("dim", "diagnostics · ")}${ansiYellow("↑↓")} ${theme.fg("dim", "scroll · ")}${ansiYellow("PgUp/PgDn")} ${theme.fg("dim", "scroll · ")}${ansiYellow("Alt+A")} ${theme.fg("dim", "back · ")}${ansiYellow("esc")} ${theme.fg("dim", "close")}`
 			: `${ansiYellow("tab")} ${theme.fg("dim", "switch tabs · ")}${ansiYellow("↑↓")} ${theme.fg("dim", "navigate · ")}${ansiYellow("enter")} ${theme.fg("dim", "toggle/edit · ")}${ansiYellow("delete")} ${theme.fg("dim", "reset setting · ")}${ansiYellow("ctrl+x")} ${theme.fg("dim", "reset extension · ")}${ansiYellow("Alt+A")} ${theme.fg("dim", "diagnostics · ")}${ansiYellow("esc")} ${theme.fg("dim", "close")}`);
 		lines.push("");
@@ -1603,12 +1656,13 @@ function renderInspector(inventory: Inventory, item: InventoryItem | undefined, 
 		const selected = index === ui.settingSelected;
 		const config = getConfigValue(inventory, extensionId, schema);
 		const marker = " ";
-		const value = formatSettingValue(schema, config.value);
-		const valueText = theme.fg(config.explicit ? "success" : selected ? "text" : "muted", value);
+		const isEditing = ui.editing?.itemId === item.id && ui.editing?.settingKey === schema.key;
+		const value = isEditing ? `${ui.editing?.buffer ?? ""}█` : formatSettingValue(schema, config.value);
+		const valueText = theme.fg(isEditing ? "accent" : config.explicit ? "success" : selected ? "text" : "muted", value);
 		const label = selected ? theme.fg("text", schema.label ?? schema.key) : schema.label ?? schema.key;
 		const row = truncateToWidth(`${marker}${label}: ${valueText}`, width, "…");
 		settingLines.push(selected ? managerSelectedLine(theme, row, width) : row);
-		if (selected && schema.description) settingLines.push(`  ${theme.fg("muted", truncateToWidth(schema.description, Math.max(1, width - 2), "…"))}`);
+		if (selected && !isEditing && schema.description) settingLines.push(`  ${theme.fg("muted", truncateToWidth(schema.description, Math.max(1, width - 2), "…"))}`);
 	}
 	const hidden = Math.max(0, schemas.length - (ui.settingScroll + maxVisibleSettings));
 	if (hidden > 0) settingLines.push(theme.fg("dim", `↓ ${hidden} more setting(s)`));
