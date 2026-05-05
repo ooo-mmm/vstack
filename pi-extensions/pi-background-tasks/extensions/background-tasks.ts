@@ -639,7 +639,7 @@ function bgTreeGlyph(branch: TreeBranch, cwd?: string): string {
 }
 
 function bgTree(theme: Theme, branch: TreeBranch = "├", cwd?: string): string {
-	return theme.fg("borderMuted", bgTreeGlyph(branch, cwd));
+	return theme.fg("muted", bgTreeGlyph(branch, cwd));
 }
 
 function bgToolLabel(theme: Theme, label: string): string {
