@@ -1827,6 +1827,14 @@ function emitSubagentEvent(pi: ExtensionAPI, event: string, payload: Record<stri
 	}
 }
 
+function dashboardStatusFor(rawStatus: PaneTaskStatus | "running" | "waiting", kind: DashboardKind): SubagentDashboardStatus {
+	// Persistent panes return to idle after each task; surface 'completed' as
+	// 'waiting' so the dashboard reads the pane state correctly. Oneshots keep
+	// 'completed' since their pane exits with the task.
+	if (rawStatus === "completed" && kind === "pane") return "waiting";
+	return rawStatus;
+}
+
 function dashboardStatusIcon(status: SubagentDashboardItem["status"], theme: Theme): string {
 	if (status === "completed") return theme.fg("success", ICONS.check);
 	if (status === "failed") return theme.fg("error", ICONS.times);
@@ -3440,10 +3448,7 @@ export default function (pi: ExtensionAPI) {
 		const eventUsage = (event.usage as UsageStats | undefined) ?? undefined;
 		const eventModel = typeof event.model === "string" ? event.model : undefined;
 		const kind = existing?.kind ?? (event.mode === "oneshot" ? "oneshot" : "pane");
-		// Persistent panes return to idle after each task; surface them as
-		// 'waiting' instead of 'done' so the dashboard reads accurately - the
-		// pane is alive and ready for the next delegation.
-		const effectiveStatus: SubagentDashboardStatus = status === "completed" && kind === "pane" ? "waiting" : status;
+		const effectiveStatus = dashboardStatusFor(status, kind);
 		updateDashboard({
 			agent,
 			artifacts: true,
@@ -3602,15 +3607,16 @@ export default function (pi: ExtensionAPI) {
 			const records = await readTaskRegistry(runtimeRoot);
 			for (const record of Object.values(records)) {
 				if (!record.taskId || !record.agent) continue;
+				const rehydrateKind: DashboardKind = record.paneId ? "pane" : "oneshot";
 				updateDashboard({
 					agent: record.agent,
 					artifacts: Boolean(record.completionArchivePath || record.outboxFile || record.transcriptPath),
 					completedAt: record.completedAt,
-					kind: record.paneId ? "pane" : "oneshot",
+					kind: rehydrateKind,
 					message: record.summary || record.task,
 					paneId: record.paneId,
 					startedAt: record.createdAt,
-					status: record.status === "queued" ? "queued" : record.status,
+					status: dashboardStatusFor(record.status, rehydrateKind),
 					task: record.task,
 					taskId: record.taskId,
 					transcriptPath: record.transcriptPath,
@@ -3920,15 +3926,16 @@ export default function (pi: ExtensionAPI) {
 				const selector = params.taskId ? `taskId ${params.taskId}` : `agent ${params.agent}`;
 				return { content: [{ type: "text", text: `No persistent subagent task record found for ${selector}.` }], details: { agent: params.agent, taskId: params.taskId } satisfies GetSubagentResultDetails, isError: true };
 			}
+			const recordKind: DashboardKind = record.paneId ? "pane" : "oneshot";
 			updateDashboard({
 				agent: record.agent,
 				artifacts: Boolean(record.completionArchivePath || record.outboxFile || record.transcriptPath),
 				completedAt: record.completedAt,
-				kind: record.paneId ? "pane" : "oneshot",
+				kind: recordKind,
 				message: record.summary || record.task,
 				paneId: record.paneId,
 				startedAt: record.createdAt,
-				status: record.status,
+				status: dashboardStatusFor(record.status, recordKind),
 				task: record.task,
 				taskId: record.taskId,
 				transcriptPath: record.transcriptPath,
@@ -3974,15 +3981,16 @@ export default function (pi: ExtensionAPI) {
 			}
 			if (!agentName) return { content: [{ type: "text", text: "Provide either agent or taskId." }], isError: true };
 			if (params.taskId && record) {
+				const steerKind: DashboardKind = record.paneId ? "pane" : "oneshot";
 				updateDashboard({
 					agent: record.agent,
 					artifacts: Boolean(record.completionArchivePath || record.outboxFile || record.transcriptPath),
 					completedAt: record.completedAt,
-					kind: record.paneId ? "pane" : "oneshot",
+					kind: steerKind,
 					message: record.summary || record.task,
 					paneId: record.paneId,
 					startedAt: record.createdAt,
-					status: record.status,
+					status: dashboardStatusFor(record.status, steerKind),
 					task: record.task,
 					taskId: record.taskId,
 					transcriptPath: record.transcriptPath,
