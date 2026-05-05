@@ -425,10 +425,13 @@ All vstack Pi packages declare `vstack.extensionManager.settings` metadata, incl
 
 #### `pi-web-tools`
 
-- **Purpose:** Owns `web_search` provider toggles, OpenAI-native web_search rewrite, Exa search/fetch/answer/similar/code tools, and Exa deep research reports.
+- **Purpose:** First-party Pi web stack: provider-toggled `web_search`, Exa deep research, and content extraction with smart fallbacks for blocked pages, GitHub repos, scanned PDFs, YouTube/local video, and code context.
+- **Search providers:** Exa (search + Deep Search), Perplexity Sonar, Gemini API (Google Search grounding), Gemini Web (Firefox/Zen/Chrome/Edge cookie auth on Linux/macOS/Windows), and OpenAI native web_search rewrite for OpenAI/Codex models.
+- **Fetch fallbacks:** HTTP extraction with Wikipedia-style chrome stripping; Jina Reader auto-fallback on blocked/cookie-walled pages and 403/429/5xx; GitHub URLs clone shallow into `~/.pi/agent/cache/github/<owner>__<repo>` (size-gated, 24h refresh) and serve repo root / blob / tree from cache; URL + local PDF text via `pdftotext` with vision OCR fallback (rasterizes scanned pages with `pdftoppm` and returns image content blocks for the host LLM); YouTube + local video understanding via Gemini Web/API with auto-applied transcript-mode prompt directive when the caller asks for transcripts/lyrics/captions.
+- **Code search:** `code_search` defaults to the Exa Code `/context` endpoint and falls back to classic Exa search with code-focused domain hints; renderer surfaces token + source counts and parsed source URLs (Ctrl+O to expand).
 - **Commands/tools:** `/web-tools doctor`, `/web-tools provider ...`; `web_search`, `web_fetch`, `web_research`, `web_answer`, `web_find_similar`, `code_search`, `get_web_content`.
-- **Settings:** default provider, enabled providers, OpenAI external web access, Exa deep research, advanced/compatibility tools, curator/content staged toggles.
-- **More:** [pi-extensions/pi-web-tools/README.md](pi-extensions/pi-web-tools/README.md).
+- **Key settings:** default provider, enabled providers, OpenAI external web access, Exa deep research + per-mode overrides, advanced/compatibility tools, `htmlExtraction.jinaFallback`, `pdfOcr.{enabled,maxPages,dpi}`, `githubClone.{enabled,maxRepoSizeMB,cloneTimeoutSeconds,cacheMaxAgeHours}`, `browserCookieAccess` + `browserCookies.preferredBrowser`, `video.enabled`. Curator UI is staged for a follow-up phase.
+- **More:** [pi-extensions/pi-web-tools/README.md](pi-extensions/pi-web-tools/README.md), [pi-extensions/pi-web-tools/EXA.md](pi-extensions/pi-web-tools/EXA.md).
 
 #### `pi-output-policy`
 
