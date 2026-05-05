@@ -8,6 +8,7 @@ const INSTALL_SYMBOL = Symbol.for("vstack.pi-tool-renderer.installed");
 const USER_MESSAGE_PATCH_SYMBOL = Symbol.for("vstack.pi-tool-renderer.user-message-patch");
 const USER_MESSAGE_BOX_STATE_SYMBOL = Symbol.for("vstack.pi-tool-renderer.user-message-box-state");
 const ASSISTANT_MESSAGE_PATCH_SYMBOL = Symbol.for("vstack.pi-tool-renderer.assistant-message-patch");
+const CUSTOM_MESSAGE_SPACING_PATCH_SYMBOL = Symbol.for("vstack.pi-tool-renderer.custom-message-spacing-patch");
 const TOOL_EXECUTION_RENDERER_PATCH_SYMBOL = Symbol.for("vstack.pi-tool-renderer.tool-execution-renderer-patch.v2");
 const TOOL_CHROME_PATCH_SYMBOL = Symbol.for("vstack.pi-tool-renderer.tool-chrome-patch");
 const COMPACTION_SUMMARY_RENDERER_PATCH_SYMBOL = Symbol.for("vstack.pi-tool-renderer.compaction-summary-renderer-patch");
@@ -403,6 +404,33 @@ interface SkillInvocationPatchState {
 	originalUpdateDisplay: () => void;
 }
 
+interface CustomMessageSpacingPatchState {
+	originalRender: (width: number) => string[];
+}
+
+function installCustomMessageSpacingPatch(pi: ExtensionAPI, CustomMessageComponent: any): void {
+	const prototype = CustomMessageComponent?.prototype as Record<PropertyKey, unknown> | undefined;
+	if (!prototype || typeof prototype.render !== "function") return;
+
+	let state = prototype[CUSTOM_MESSAGE_SPACING_PATCH_SYMBOL] as CustomMessageSpacingPatchState | undefined;
+	if (!state) {
+		state = { originalRender: prototype.render as (width: number) => string[] };
+		prototype[CUSTOM_MESSAGE_SPACING_PATCH_SYMBOL] = state;
+		prototype.render = function compactRuledCustomMessageRender(this: any, width: number): string[] {
+			const rendered = state!.originalRender.call(this, width);
+			if (!Array.isArray(rendered) || rendered.length === 0) return rendered;
+			return trimOuterBlankLinesAroundRules(rendered);
+		};
+	}
+
+	pi.on("session_shutdown", () => {
+		if (prototype[CUSTOM_MESSAGE_SPACING_PATCH_SYMBOL] === state) {
+			prototype.render = state!.originalRender as unknown;
+			delete prototype[CUSTOM_MESSAGE_SPACING_PATCH_SYMBOL];
+		}
+	});
+}
+
 function installSkillInvocationRenderer(pi: ExtensionAPI, Component: any): void {
 	const prototype = Component?.prototype as Record<PropertyKey, unknown> | undefined;
 	if (!prototype || typeof prototype.updateDisplay !== "function") return;
@@ -763,6 +791,17 @@ function trimOuterBlankLines(lines: string[]): string[] {
 	let end = lines.length - 1;
 	while (end >= start && isBlankRenderLine(lines[end])) end--;
 	return start > end ? [] : lines.slice(start, end + 1);
+}
+
+function isHorizontalRuleLine(line: string | undefined): boolean {
+	const stripped = stripAnsi(line ?? "").trim();
+	return stripped.length > 0 && /^[─━-]+$/.test(stripped);
+}
+
+function trimOuterBlankLinesAroundRules(lines: string[]): string[] {
+	const trimmed = trimOuterBlankLines(lines);
+	if (trimmed.length < 3) return lines;
+	return isHorizontalRuleLine(trimmed[0]) && isHorizontalRuleLine(trimmed[trimmed.length - 1]) ? trimmed : lines;
 }
 
 function visibleLength(text: string): number {
@@ -3123,6 +3162,7 @@ export default async function toolRenderer(pi: ExtensionAPI): Promise<void> {
 	const agent = await import("@mariozechner/pi-coding-agent");
 	installUserMessageRenderer(pi, agent.UserMessageComponent);
 	installAssistantMessageRenderer(pi, agent.AssistantMessageComponent);
+	installCustomMessageSpacingPatch(pi, (agent as any).CustomMessageComponent);
 	installSkillInvocationRenderer(pi, (agent as any).SkillInvocationMessageComponent);
 	const cwd = process.cwd();
 	registerRead(pi, agent, cwd);
