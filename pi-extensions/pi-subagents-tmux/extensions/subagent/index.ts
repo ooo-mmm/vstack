@@ -352,11 +352,14 @@ function formatUsageStatsForDashboard(usage: {
 	// Slim form for the inline dashboard widget: drop cacheRead/cacheWrite
 	// (cluttery and most users do not act on them) and replace the 'turn'
 	// word with a small refresh glyph so each row stays compact when many
-	// agents are listed.
+	// agents are listed. Input/output tokens travel together so they share a
+	// single bullet group ('↑7 ↓342') rather than getting split by '·'.
 	const parts: string[] = [];
 	if (usage.turns) parts.push(`${ICONS.refresh} ${usage.turns}`);
-	if (usage.input) parts.push(`↑${formatTokens(usage.input)}`);
-	if (usage.output) parts.push(`↓${formatTokens(usage.output)}`);
+	const tokenBits: string[] = [];
+	if (usage.input) tokenBits.push(`↑${formatTokens(usage.input)}`);
+	if (usage.output) tokenBits.push(`↓${formatTokens(usage.output)}`);
+	if (tokenBits.length > 0) parts.push(tokenBits.join(" "));
 	if (usage.cost) parts.push(`$${usage.cost.toFixed(4)}`);
 	return parts;
 }
