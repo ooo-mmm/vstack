@@ -312,6 +312,7 @@ function installAssistantMessageRenderer(pi: ExtensionAPI, AssistantMessageCompo
 		prototype.render = function spacedAssistantRender(this: any, width: number): string[] {
 			const rendered = state!.originalRender.call(this, width);
 			if (!Array.isArray(rendered) || rendered.length === 0 || this?.hasToolCalls) return rendered;
+			if (isThinkingOnlyAssistantMessage(this?.lastMessage)) return trimThinkingOnlyAssistantLines(rendered);
 			const end = trimTrailingBlankLines(rendered);
 			if (end.length === 0) return rendered;
 			return [...end, " ".repeat(Math.max(0, width))];
@@ -730,7 +731,7 @@ function readOnlyCallText(toolName: string, args: any, theme: any, cwd?: string)
 	return `${toolLabel(theme, `${toolName} `)}${theme.fg("accent", clipLine(String(query), cwd))}`;
 }
 
-const ANSI_RE = /\x1b\[[0-9;]*m/g;
+const ANSI_RE = /\x1b(?:\[[0-9;]*m|\]133;[ABC]\x07)/g;
 const ANSI_PRESENT_RE = /\x1b\[[0-9;]*m/;
 const DIFF_SPLIT_MIN_WIDTH = 132;
 const DIFF_SPLIT_MIN_CODE_WIDTH = 24;
@@ -790,6 +791,24 @@ function trimOuterBlankLines(lines: string[]): string[] {
 	let end = lines.length - 1;
 	while (end >= start && isBlankRenderLine(lines[end])) end--;
 	return start > end ? [] : lines.slice(start, end + 1);
+}
+
+function isThinkingOnlyAssistantMessage(message: any): boolean {
+	const content = Array.isArray(message?.content) ? message.content : [];
+	let hasThinking = false;
+	for (const item of content) {
+		if (item?.type === "text" && typeof item.text === "string" && item.text.trim()) return false;
+		if (item?.type === "thinking" && typeof item.thinking === "string" && item.thinking.trim()) hasThinking = true;
+	}
+	return hasThinking;
+}
+
+function trimThinkingOnlyAssistantLines(lines: string[]): string[] {
+	const trimmed = trimOuterBlankLines(lines);
+	if (trimmed.length === 0) return lines;
+	const zoneStart = "\x1b]133;A\x07";
+	if (lines[0]?.includes(zoneStart) && !trimmed[0]?.includes(zoneStart)) trimmed[0] = `${zoneStart}${trimmed[0] ?? ""}`;
+	return trimmed;
 }
 
 function isHorizontalRuleLine(line: string | undefined): boolean {

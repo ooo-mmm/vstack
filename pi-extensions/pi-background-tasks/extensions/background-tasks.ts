@@ -14,7 +14,7 @@ import {
 	type ExtensionContext,
 	type Theme,
 } from "@mariozechner/pi-coding-agent";
-import { matchesKey, Text, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
+import { type Component, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@mariozechner/pi-tui";
 import { Type } from "typebox";
 import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
@@ -724,8 +724,39 @@ function makeToolResult(text: string, details: Record<string, unknown> = {}): Ag
 	return { content: [{ type: "text", text }], details };
 }
 
-function renderBackgroundMessage(text: string, theme: Theme): Text {
-	return new Text(text, 1, 0, (segment: string) => theme.bg("customMessageBg", segment));
+function backgroundRule(theme: Theme, width: number): string {
+	const rule = "─".repeat(Math.max(1, width));
+	for (const token of ["borderMuted", "muted"] as const) {
+		try {
+			const styled = theme.fg(token, rule);
+			if (styled !== rule) return styled;
+		} catch {
+			// Try the next token/fallback below.
+		}
+	}
+	return `\x1b[90m${rule}\x1b[39m`;
+}
+
+function wrapAnsiLines(text: string, width: number): string[] {
+	const targetWidth = Math.max(1, width);
+	return text.split(/\r?\n/).flatMap((line) => {
+		const wrapped = wrapTextWithAnsi(line, targetWidth);
+		return wrapped.length > 0 ? wrapped : [""];
+	});
+}
+
+function renderRuledBackgroundMessage(text: string, theme: Theme): Component {
+	return {
+		invalidate() {},
+		render(width: number): string[] {
+			const rule = backgroundRule(theme, width);
+			return [rule, ...wrapAnsiLines(text, width), rule];
+		},
+	};
+}
+
+function renderBackgroundMessage(text: string, theme: Theme): Component {
+	return renderRuledBackgroundMessage(text, theme);
 }
 
 function isBackgroundTaskEventDetails(value: unknown): value is BackgroundTaskEventDetails {
@@ -742,7 +773,7 @@ function renderTaskEventMessage(
 	message: { content?: unknown; details?: unknown },
 	expanded: boolean,
 	theme: Theme,
-): Text {
+): Component {
 	if (!isBackgroundTaskEventDetails(message.details)) {
 		return renderBackgroundMessage(String(message.content ?? "Background task update"), theme);
 	}
@@ -750,22 +781,22 @@ function renderTaskEventMessage(
 	const details = message.details;
 	const task = latestSnapshot(details.task) ?? details.task;
 	if (!expanded) {
-		const prefix = details.eventType === "exit" ? theme.fg("success", "✓") : theme.fg("accent", "●");
-		const label = details.eventType === "exit" ? "Background task finished" : "Background task output";
-		return new Text(
-			`${prefix} ${theme.fg("toolTitle", theme.bold(label))} ${theme.fg("accent", task.id)}${theme.fg(
-				"dim",
-				` · ${compactText(taskDisplayName(task), 64)} · Ctrl+O details`,
-			)}`,
-			0,
-			0,
+		const prefix = details.eventType === "exit" ? theme.fg("success", "●") : theme.fg("accent", "●");
+		const label = details.eventType === "exit"
+			? `${theme.fg("toolTitle", theme.bold("Background task "))}${theme.fg("success", "finished")}`
+			: theme.fg("toolTitle", theme.bold("Background task output"));
+		return renderRuledBackgroundMessage(
+			`${prefix} ${label} ${theme.fg("accent", task.id)}${theme.fg("dim", ` · ${compactText(taskDisplayName(task), 64)} · Ctrl+O details`)}`,
+			theme,
 		);
 	}
 
-	const headingLabel = details.eventType === "exit" ? "Background task finished " : "Background task output ";
-	const headingIcon = details.eventType === "exit" ? theme.fg("success", "✓") : theme.fg("accent", "●");
+	const headingLabel = details.eventType === "exit"
+		? `${theme.fg("toolTitle", theme.bold("Background task "))}${theme.fg("success", "finished ")}`
+		: bgToolLabel(theme, "Background task output ");
+	const headingIcon = details.eventType === "exit" ? theme.fg("success", "●") : theme.fg("accent", "●");
 	const lines = [
-		`${headingIcon} ${bgToolLabel(theme, headingLabel)}${theme.fg("accent", task.id)}${theme.fg(
+		`${headingIcon} ${headingLabel}${theme.fg("accent", task.id)}${theme.fg(
 			"dim",
 			` · ${compactText(taskDisplayName(task), 72)}`,
 		)}`,
@@ -779,7 +810,7 @@ function renderTaskEventMessage(
 	if (output.hidden > 0) lines.push(`${bgTree(theme, "│")}${theme.fg("muted", `… ${output.hidden} older line(s); full log: ${task.logFile}`)}`);
 	lines.push(...(output.lines.length ? output.lines : ["(no output yet)"]).map((line) => `${bgTree(theme, "│")}${theme.fg("dim", line)}`));
 	if (output.total >= outputLineLimit()) lines.push(`${bgTree(theme, "└")}${theme.fg("muted", `Full background log: ${task.logFile}`)}`);
-	return new Text(lines.join("\n"), 0, 0);
+	return renderRuledBackgroundMessage(lines.join("\n"), theme);
 }
 
 function bgToolAction(args: any, details: any): string {
