@@ -1,6 +1,124 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+
+/// One entry in `<scope>/.vstack-source.json`. Records where a package was
+/// copied from so update detection can compare installed vs source versions.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceIndexEntry {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_repo: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_commit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub installed_at: Option<u64>,
+}
+
+pub type SourceIndex = BTreeMap<String, SourceIndexEntry>;
+
+/// Read the source index for the chosen scope. Missing file is treated as
+/// empty. Parse failures return an error so the user can fix the file rather
+/// than silently lose tracking data.
+pub fn read_source_index(global: bool) -> Result<SourceIndex> {
+    let path = crate::config::pi_source_index_path(global);
+    if !path.exists() {
+        return Ok(SourceIndex::new());
+    }
+    let raw = std::fs::read_to_string(&path)
+        .with_context(|| format!("reading {}", path.display()))?;
+    let parsed: SourceIndex = serde_json::from_str(&raw)
+        .with_context(|| format!("parsing {}", path.display()))?;
+    Ok(parsed)
+}
+
+/// Persist the source index for the chosen scope, creating parent dirs as
+/// needed. Empty index removes the file so we don't leave dangling state.
+pub fn write_source_index(global: bool, index: &SourceIndex) -> Result<()> {
+    let path = crate::config::pi_source_index_path(global);
+    if index.is_empty() {
+        if path.exists() {
+            std::fs::remove_file(&path)?;
+        }
+        return Ok(());
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let pretty = serde_json::to_string_pretty(index)?;
+    std::fs::write(&path, pretty)?;
+    Ok(())
+}
+
+/// Inspect a Pi `settings.json` packages array and return the entries that
+/// resolve to npm specifiers (`npm:<name>` or `npm:<name>@<version>`).
+/// Returns the bare package name (without version tag).
+pub fn list_npm_packages(global: bool) -> Result<Vec<String>> {
+    let settings_path = crate::config::pi_settings_path(global);
+    if !settings_path.exists() {
+        return Ok(Vec::new());
+    }
+    let raw = std::fs::read_to_string(&settings_path)
+        .with_context(|| format!("reading {}", settings_path.display()))?;
+    let parsed: serde_json::Value = serde_json::from_str(&raw)
+        .with_context(|| format!("parsing {}", settings_path.display()))?;
+    let packages = parsed
+        .get("packages")
+        .and_then(|p| p.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let mut out = Vec::new();
+    for entry in packages {
+        if let Some(s) = entry.as_str()
+            && let Some(rest) = s.strip_prefix("npm:")
+        {
+            // Strip version tag (`pkg@1.2.3` or `@scope/pkg@1.2.3`).
+            let bare = if let Some(rest_no_scope) = rest.strip_prefix('@') {
+                // Scoped: keep `@scope/pkg`, drop trailing `@<version>` if any.
+                match rest_no_scope.find('@') {
+                    Some(idx) => format!("@{}", &rest_no_scope[..idx]),
+                    None => format!("@{}", rest_no_scope),
+                }
+            } else {
+                rest.split('@').next().unwrap_or(rest).to_string()
+            };
+            if !bare.is_empty() {
+                out.push(bare);
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// List vstack-copied packages installed in the chosen scope by reading the
+/// packages directory. These are directories with a `package.json` (npm-style)
+/// that vstack copied from a source repo.
+pub fn list_installed_vstack_packages(global: bool) -> Vec<String> {
+    let dir = crate::config::pi_packages_dir(global);
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let mut names = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        if !path.join("package.json").exists() {
+            continue;
+        }
+        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+            names.push(name.to_string());
+        }
+    }
+    names.sort();
+    names
+}
 
 /// A Pi package discovered under `pi-extensions/<name>/`.
 ///
@@ -260,8 +378,81 @@ pub fn install_pi_extension(ext: &PiExtension, global: bool) -> Result<Option<Pa
     copy_dir(&ext.source_dir, &dest)?;
     install_bin_links(ext, &dest, global)?;
     register_in_pi_settings(&ext.name, &dest, global)?;
+    let _ = update_source_index(ext, global);
 
     Ok(Some(dest))
+}
+
+/// Walk up from a package's source dir to find the vstack repo root.
+/// Identified by presence of a top-level `pi-extensions/` sibling and a
+/// `Cargo.toml` or `.git` marker. Returns None if not found.
+fn find_vstack_repo_root(source_dir: &Path) -> Option<PathBuf> {
+    let mut dir = source_dir.to_path_buf();
+    while dir.pop() {
+        if dir.join("pi-extensions").is_dir()
+            && (dir.join("Cargo.toml").exists() || dir.join(".git").exists() || dir.join("vstack.toml").exists())
+        {
+            return Some(dir);
+        }
+    }
+    None
+}
+
+/// Read current HEAD sha of a git repo (best-effort, optional).
+fn read_git_head(repo: &Path) -> Option<String> {
+    let out = std::process::Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(repo)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let s = String::from_utf8(out.stdout).ok()?.trim().to_string();
+    if s.is_empty() { None } else { Some(s) }
+}
+
+/// Append/replace this package's entry in the scope's `.vstack-source.json`.
+/// Records the source repo path, source version at install time, and a git
+/// sha if available so the extension manager can detect updates.
+fn update_source_index(ext: &PiExtension, global: bool) -> Result<()> {
+    // Tolerate a corrupt index here so install never fails on tracking data.
+    let mut index = read_source_index(global).unwrap_or_default();
+    let repo_root = find_vstack_repo_root(&ext.source_dir);
+    let repo_str = repo_root
+        .as_ref()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|| ext.source_dir.to_string_lossy().to_string());
+    let sha = repo_root.as_deref().and_then(read_git_head);
+    let installed_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .ok();
+
+    index.insert(
+        ext.name.clone(),
+        SourceIndexEntry {
+            source_repo: Some(repo_str),
+            source_path: Some(ext.source_dir.to_string_lossy().to_string()),
+            source_version: ext.version.clone(),
+            source_commit: sha,
+            installed_at,
+        },
+    );
+    write_source_index(global, &index)
+}
+
+/// Drop a package's entry from the scope's source index. Best-effort: a
+/// missing index file or missing entry is fine.
+fn remove_from_source_index(name: &str, global: bool) -> Result<()> {
+    let mut index = match read_source_index(global) {
+        Ok(idx) => idx,
+        Err(_) => return Ok(()),
+    };
+    if index.remove(name).is_none() {
+        return Ok(());
+    }
+    write_source_index(global, &index)
 }
 
 /// Remove a Pi package, its bin symlinks, and its settings entry.
@@ -292,6 +483,7 @@ pub fn remove_pi_extension(name: &str, global: bool) -> Result<Vec<PathBuf>> {
     if unregister_from_pi_settings(name, &dest, global)? {
         removed.push(crate::config::pi_settings_path(global));
     }
+    let _ = remove_from_source_index(name, global);
     Ok(removed)
 }
 
@@ -645,26 +837,7 @@ mod tests {
         ));
     }
 
-    /// Mutex guarding `PI_CODING_AGENT_DIR` for tests that mutate it.
-    static PI_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    fn with_pi_dir<R>(pi_dir: &Path, body: impl FnOnce() -> R) -> R {
-        let guard = PI_ENV_LOCK.lock().unwrap();
-        let prev = std::env::var_os("PI_CODING_AGENT_DIR");
-        unsafe {
-            std::env::set_var("PI_CODING_AGENT_DIR", pi_dir);
-        }
-        let result = body();
-        unsafe {
-            if let Some(prev) = prev {
-                std::env::set_var("PI_CODING_AGENT_DIR", prev);
-            } else {
-                std::env::remove_var("PI_CODING_AGENT_DIR");
-            }
-        }
-        drop(guard);
-        result
-    }
+    use crate::test_util::with_pi_dir;
 
     fn write_mini_source(dir: &Path, name: &str) {
         std::fs::create_dir_all(dir.join("extensions")).unwrap();

@@ -141,7 +141,32 @@ interface InventoryItem {
 	settingsSchema?: SettingsSchema[];
 	brokenError?: string;
 	metadata?: Record<string, unknown>;
+	installedVersion?: string;
+	latestVersion?: string;
+	updateAvailable?: boolean;
+	updateSource?: "vstack" | "npm";
+	updateCommand?: string;
 }
+
+interface SourceIndexEntry {
+	sourceRepo?: string;
+	sourcePath?: string;
+	sourceVersion?: string;
+	sourceCommit?: string;
+	installedAt?: number;
+}
+
+type SourceIndex = Record<string, SourceIndexEntry>;
+
+interface NpmCacheEntry {
+	version: string;
+	checkedAt: number;
+}
+
+type NpmCache = Record<string, NpmCacheEntry>;
+
+const NPM_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+let npmCheckInFlight = false;
 
 interface Inventory {
 	items: InventoryItem[];
@@ -359,6 +384,154 @@ function defaultWriteScope(item: InventoryItem | undefined, files: SettingsFile[
 	return files.some((file) => file.scope === "project" && file.exists) ? "project" : "user";
 }
 
+function loadSourceIndex(settingsFiles: SettingsFile[]): SourceIndex {
+	const merged: SourceIndex = {};
+	for (const file of settingsFiles) {
+		const path = join(file.baseDir, ".vstack-source.json");
+		if (!existsSync(path)) continue;
+		try {
+			const parsed = JSON.parse(readFileSync(path, "utf8"));
+			if (parsed && typeof parsed === "object") {
+				for (const [name, entry] of Object.entries(parsed)) {
+					if (entry && typeof entry === "object") merged[name] = entry as SourceIndexEntry;
+				}
+			}
+		} catch {}
+	}
+	return merged;
+}
+
+function npmCachePath(): string {
+	return join(homedir(), ".pi", "agent", ".vstack-update-cache.json");
+}
+
+function loadNpmCache(): NpmCache {
+	const path = npmCachePath();
+	if (!existsSync(path)) return {};
+	try {
+		const parsed = JSON.parse(readFileSync(path, "utf8"));
+		return parsed && typeof parsed === "object" ? parsed : {};
+	} catch {
+		return {};
+	}
+}
+
+function saveNpmCache(cache: NpmCache): void {
+	const path = npmCachePath();
+	try {
+		mkdirSync(dirname(path), { recursive: true });
+		writeFileSync(path, JSON.stringify(cache, null, 2));
+	} catch {}
+}
+
+function parseSemver(v: string | undefined): number[] | undefined {
+	if (!v) return undefined;
+	const clean = v.replace(/^v/, "").split(/[-+]/)[0];
+	const parts = clean.split(".").map((p) => Number.parseInt(p, 10));
+	if (parts.some((n) => Number.isNaN(n))) return undefined;
+	while (parts.length < 3) parts.push(0);
+	return parts;
+}
+
+function isNewer(latest: string | undefined, current: string | undefined): boolean {
+	const a = parseSemver(latest);
+	const b = parseSemver(current);
+	if (!a || !b) return false;
+	for (let i = 0; i < Math.max(a.length, b.length); i++) {
+		const x = a[i] ?? 0;
+		const y = b[i] ?? 0;
+		if (x > y) return true;
+		if (x < y) return false;
+	}
+	return false;
+}
+
+function readSourceRepoVersion(repoRoot: string, packageName: string): string | undefined {
+	const manifestPath = join(repoRoot, "pi-extensions", packageName, "package.json");
+	if (!existsSync(manifestPath)) return undefined;
+	try {
+		const parsed = JSON.parse(readFileSync(manifestPath, "utf8"));
+		return typeof parsed?.version === "string" ? parsed.version : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+function npmPackageNameFromSource(source: string): string | undefined {
+	if (!source.startsWith("npm:")) return undefined;
+	const rest = source.slice("npm:".length);
+	if (!rest) return undefined;
+	const withoutTag = rest.startsWith("@")
+		? rest.split("@").slice(0, 2).join("@")
+		: rest.split("@")[0];
+	return withoutTag || undefined;
+}
+
+function fetchNpmLatest(name: string): Promise<string | undefined> {
+	return new Promise((resolve) => {
+		try {
+			const https = require("node:https") as typeof import("node:https");
+			const encoded = encodeURIComponent(name).replace(/%40/g, "@").replace(/%2F/g, "/");
+			const req = https.request(
+				{
+					host: "registry.npmjs.org",
+					path: `/${encoded}/latest`,
+					headers: { accept: "application/json", "user-agent": "vstack-extension-manager" },
+					timeout: 4000,
+				},
+				(res) => {
+					if ((res.statusCode ?? 0) >= 400) {
+						res.resume();
+						resolve(undefined);
+						return;
+					}
+					let body = "";
+					res.setEncoding("utf8");
+					res.on("data", (chunk) => { body += chunk; });
+					res.on("end", () => {
+						try {
+							const parsed = JSON.parse(body);
+							resolve(typeof parsed?.version === "string" ? parsed.version : undefined);
+						} catch {
+							resolve(undefined);
+						}
+					});
+				},
+			);
+			req.on("error", () => resolve(undefined));
+			req.on("timeout", () => { req.destroy(); resolve(undefined); });
+			req.end();
+		} catch {
+			resolve(undefined);
+		}
+	});
+}
+
+function kickNpmUpdateCheck(packages: { name: string; npmName: string }[], onUpdate: () => void): void {
+	if (npmCheckInFlight || packages.length === 0) return;
+	const cache = loadNpmCache();
+	const now = Date.now();
+	const stale = packages.filter((p) => {
+		const entry = cache[p.npmName];
+		return !entry || now - entry.checkedAt > NPM_CACHE_TTL_MS;
+	});
+	if (stale.length === 0) return;
+	npmCheckInFlight = true;
+	void (async () => {
+		let changed = false;
+		for (const p of stale) {
+			const latest = await fetchNpmLatest(p.npmName);
+			if (latest) {
+				cache[p.npmName] = { version: latest, checkedAt: Date.now() };
+				changed = true;
+			}
+		}
+		if (changed) saveNpmCache(cache);
+		npmCheckInFlight = false;
+		try { onUpdate(); } catch {}
+	})();
+}
+
 function readPackageManifest(dir: string): { manifest?: PackageManifest; error?: string } {
 	try {
 		const path = join(dir, "package.json");
@@ -567,6 +740,42 @@ function buildInventory(pi: ExtensionAPI, ctx: ExtensionContext): Inventory {
 		items.push(...collectAutoExtensions(file.baseDir, file.scope));
 	}
 
+	const sourceIndex = loadSourceIndex(settingsFiles);
+	const npmCache = loadNpmCache();
+	for (const item of items) {
+		if (item.kind !== "package" || !item.packageName) continue;
+		const manifestPath = item.packageDir ? join(item.packageDir, "package.json") : undefined;
+		let installedVersion: string | undefined;
+		if (manifestPath && existsSync(manifestPath)) {
+			try {
+				const parsed = JSON.parse(readFileSync(manifestPath, "utf8"));
+				if (typeof parsed?.version === "string") installedVersion = parsed.version;
+			} catch {}
+		}
+		item.installedVersion = installedVersion;
+
+		const sourceEntry = sourceIndex[item.packageName];
+		if (sourceEntry?.sourceRepo) {
+			const latest = readSourceRepoVersion(sourceEntry.sourceRepo, item.packageName);
+			if (latest) {
+				item.latestVersion = latest;
+				item.updateSource = "vstack";
+				item.updateAvailable = isNewer(latest, installedVersion);
+				const scopeFlag = item.scope === "user" ? " --global" : "";
+				item.updateCommand = `vstack add ${sourceEntry.sourceRepo}${scopeFlag} --harness pi -y`;
+				continue;
+			}
+		}
+
+		const npmName = npmPackageNameFromSource(item.sourceName) ?? (item.sourceName.startsWith("npm:") ? item.packageName : undefined);
+		if (npmName && npmCache[npmName]) {
+			item.latestVersion = npmCache[npmName].version;
+			item.updateSource = "npm";
+			item.updateAvailable = isNewer(npmCache[npmName].version, installedVersion);
+			item.updateCommand = `npm install -g ${npmName}@latest`;
+		}
+	}
+
 	for (const command of safeCommands(pi)) {
 		const sourceInfo = command.sourceInfo ?? {};
 		const scope = normalizeScope(sourceInfo.scope);
@@ -608,6 +817,16 @@ function buildInventory(pi: ExtensionAPI, ctx: ExtensionContext): Inventory {
 	applyDisableState(items, managerState);
 	items.sort(compareInventoryItems);
 	return { auditLines, items, managerState, packages: items.filter((item) => item.kind === "package"), settingsFiles };
+}
+
+export function npmCandidatesFromInventory(inventory: Inventory): { name: string; npmName: string }[] {
+	const out: { name: string; npmName: string }[] = [];
+	for (const item of inventory.items) {
+		if (item.kind !== "package" || !item.packageName) continue;
+		const npmName = npmPackageNameFromSource(item.sourceName);
+		if (npmName) out.push({ name: item.packageName, npmName });
+	}
+	return out;
 }
 
 function formatPackageAudit(item: InventoryItem, manifest: PackageManifest): string {
@@ -1577,7 +1796,8 @@ function renderList(items: InventoryItem[], ui: ManagerUiState, width: number, t
 		const stateIcon = item.state === "active" ? theme.fg("success", "●") : item.state === "disabled" ? theme.fg("warning", "○") : item.state === "shadowed" ? theme.fg(selected ? "text" : "dim", "◌") : theme.fg("error", "×");
 		const name = selected ? theme.fg("text", listDisplayName(item, ui)) : listDisplayName(item, ui);
 		const meta = managerMutedForSelection(theme, ` ${kindLabel(item.kind)} · ${item.scope}`, selected);
-		const row = truncateToWidth(`${marker}${stateIcon} ${name}${meta}`, width, "…");
+		const updateBadge = item.updateAvailable && item.latestVersion ? ` ${ansiYellow(`↑ ${item.latestVersion}`)}` : "";
+		const row = truncateToWidth(`${marker}${stateIcon} ${name}${meta}${updateBadge}`, width, "…");
 		lines.push(selected ? managerSelectedLine(theme, row, width) : row);
 	}
 	const hidden = Math.max(0, items.length - (ui.scroll + listRows));
@@ -1619,6 +1839,20 @@ function renderInspector(inventory: Inventory, item: InventoryItem | undefined, 
 		`${theme.fg("muted", "Source")}: ${compactPath(item.sourcePath)}`,
 		`${theme.fg("muted", "State")}: ${item.stateReason}`,
 	];
+	if (item.installedVersion || item.latestVersion) {
+		const current = item.installedVersion ?? "unknown";
+		if (item.updateAvailable && item.latestVersion) {
+			const src = item.updateSource === "npm" ? "npm" : "vstack source";
+			detailLines.push(`${theme.fg("muted", "Version")}: ${current} ${ansiYellow(`↑ ${item.latestVersion}`)} ${theme.fg("dim", `(${src})`)}`);
+			if (item.updateCommand) {
+				detailLines.push(`${theme.fg("muted", "Update")}: ${ansiYellow(item.updateCommand)}`);
+			}
+		} else if (item.latestVersion) {
+			detailLines.push(`${theme.fg("muted", "Version")}: ${current} ${theme.fg("dim", `(latest ${item.latestVersion})`)}`);
+		} else {
+			detailLines.push(`${theme.fg("muted", "Version")}: ${current}`);
+		}
+	}
 	if (item.trigger) detailLines.push(`${theme.fg("muted", "Trigger")}: ${item.trigger}`);
 	if (item.shadowedBy) detailLines.push(`${theme.fg("muted", "Shadowed by")}: ${item.shadowedBy}`);
 	if (item.brokenError) detailLines.push(`${theme.fg("error", "Error")}: ${item.brokenError}`);
@@ -2126,6 +2360,33 @@ export default function extensionManager(pi: ExtensionAPI): void {
 		if (disabledTools.size > 0) {
 			const active = safeActiveTools(pi).filter((tool) => !disabledTools.has(tool));
 			pi.setActiveTools?.(active);
+		}
+
+		const hasUI = (ctx as { hasUI?: boolean }).hasUI;
+		const configEnabled = inventory.managerState.config[MANAGER_ID]?.notifyOnUpdates;
+		const notifyEnabled = configEnabled !== false;
+		const pkgs = inventory.items.filter((item) => item.kind === "package" && item.state !== "shadowed");
+
+		const npmCandidates = npmCandidatesFromInventory(inventory);
+		if (npmCandidates.length > 0) {
+			kickNpmUpdateCheck(npmCandidates, () => {});
+		}
+
+		if (hasUI && notifyEnabled) {
+			const withUpdates = pkgs.filter((item) => item.updateAvailable);
+			if (withUpdates.length > 0) {
+				let message: string;
+				if (withUpdates.length === 1) {
+					const p = withUpdates[0];
+					const cmd = p.updateCommand ?? "";
+					message = `${p.packageName}: update available ${p.installedVersion ?? "?"} → ${p.latestVersion}${cmd ? `. Run: ${cmd}` : ""}`;
+				} else {
+					const names = withUpdates.slice(0, 3).map((p) => `${p.packageName} → ${p.latestVersion}`).join(", ");
+					const suffix = withUpdates.length > 3 ? `, +${withUpdates.length - 3} more` : "";
+					message = `${withUpdates.length} extension updates available: ${names}${suffix}. Run /extensions for update commands.`;
+				}
+				(ctx as ExtensionContext).ui?.notify(message, "warning");
+			}
 		}
 	});
 }

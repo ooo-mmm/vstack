@@ -10,6 +10,8 @@ mod installer;
 mod mapping;
 mod pi_extension;
 mod project_config;
+#[cfg(test)]
+mod test_util;
 mod resolve;
 mod skill;
 mod tui;
@@ -133,6 +135,18 @@ enum Commands {
         global: bool,
     },
 
+    /// Update installed Pi extensions from their source repos and npm.
+    /// Walks the per-scope source index plus settings.json npm: entries,
+    /// reports stale packages, and (without --check) reinstalls them.
+    UpdatePi {
+        /// Show plan only; do not modify anything.
+        #[arg(short, long)]
+        check: bool,
+        /// Restrict to one scope: all (default), global, project.
+        #[arg(long)]
+        scope: Option<String>,
+    },
+
     /// Scaffold a new skill or agent template
     Init { name: Option<String> },
 }
@@ -157,6 +171,7 @@ fn main() -> Result<()> {
         Some(Commands::Check) => commands::check::run(),
         Some(Commands::Update { force }) => commands::update::run(force),
         Some(Commands::Refresh { global }) => commands::refresh::run(global),
+        Some(Commands::UpdatePi { check, scope }) => commands::update_pi::run(check, scope),
         Some(Commands::Init { name }) => commands::init::run(name.as_deref()),
         // No subcommand → default to add
         None => commands::add::run(

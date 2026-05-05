@@ -400,6 +400,17 @@ pub fn pi_bin_dir(global: bool) -> PathBuf {
     }
 }
 
+/// Source index file: per-scope JSON tracking which vstack repo each
+/// installed package was copied from, so the extension manager can detect
+/// when source-side versions advance and prompt the user to update.
+pub fn pi_source_index_path(global: bool) -> PathBuf {
+    if global {
+        pi_global_dir().join(".vstack-source.json")
+    } else {
+        pi_project_dir().join(".vstack-source.json")
+    }
+}
+
 /// Find the project root by walking up from CWD.
 /// Looks for `.vstack-lock.json` or harness config dirs.
 pub fn project_root() -> PathBuf {

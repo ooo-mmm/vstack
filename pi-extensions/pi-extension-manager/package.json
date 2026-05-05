@@ -50,6 +50,15 @@
           "default": "project",
           "category": "Persistence",
           "apply": "live"
+        },
+        {
+          "key": "notifyOnUpdates",
+          "label": "Notify on extension updates",
+          "description": "At session start, post a one-line notification listing extensions with newer versions available from their vstack source repo or npm registry.",
+          "type": "boolean",
+          "default": true,
+          "category": "Updates",
+          "apply": "live"
         }
       ]
     }

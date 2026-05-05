@@ -179,10 +179,22 @@ trading-design = "Focus on dark theme with green/red accent colors for this proj
 
 All skill content lives in `skills/<name>/SKILL.md` — there are no separate `rules/` directories or per-skill `AGENTS.md` files. To add or modify a rule, edit the relevant section directly in SKILL.md.
 
+## Updating Pi Extensions
+
+`vstack update-pi` walks the per-scope source index (`<scope>/.vstack-source.json`, written on install) plus `npm:` entries in pi `settings.json`, compares installed versions against source-side `pi-extensions/<name>/package.json` (vstack) or `npm view <name> version` (npm), and reinstalls only the stale ones. Different packages may come from different vstack repos — they are grouped by `(scope, sourceRepo)` and reinstalled independently. Stale index entries (referenced package no longer installed) are dropped.
+
+```bash
+vstack update-pi --check                 # plan only
+vstack update-pi                         # apply updates across all scopes
+vstack update-pi --scope global          # restrict to user scope
+```
+
+The pi-extension-manager extension reads the same source index plus a 24h-cached npm registry lookup, surfaces an `↑ X.Y.Z` badge in the inventory, and posts a one-line warning at session start when updates are available (toggle: `pi-extension-manager.notifyOnUpdates`).
+
 ## Build & Test
 
 ```bash
 cd cli && cargo build                    # build
-cd cli && cargo test                     # 91 unit tests
+cd cli && cargo test                     # unit + integration tests
 cd cli && cargo run -- add .. --all -y   # integration test against this repo
 ```
