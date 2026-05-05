@@ -11,7 +11,7 @@ const TOOL_EXECUTION_RENDERER_PATCH_SYMBOL = Symbol.for("vstack.pi-tool-renderer
 const TOOL_CHROME_PATCH_SYMBOL = Symbol.for("vstack.pi-tool-renderer.tool-chrome-patch");
 const COMPACTION_SUMMARY_RENDERER_PATCH_SYMBOL = Symbol.for("vstack.pi-tool-renderer.compaction-summary-renderer-patch");
 
-const USER_MESSAGE_BG_TOKENS = new Set(["selectedBg", "userMessageBg", "customMessageBg", "toolPendingBg", "toolSuccessBg", "toolErrorBg"]);
+const USER_MESSAGE_BORDER_TOKENS = new Set(["selectedBg", "userMessageBg", "customMessageBg", "toolPendingBg", "toolSuccessBg", "toolErrorBg"]);
 
 type VstackConfig = Record<string, unknown>;
 
@@ -74,9 +74,33 @@ function settingEnum<T extends string>(key: string, allowed: readonly T[], fallb
 	return typeof value === "string" && (allowed as readonly string[]).includes(value) ? (value as T) : fallback;
 }
 
-function userMessageBackgroundToken(cwd?: string): string {
+function userMessageBorderToken(cwd?: string): string {
 	const token = settingString("userMessageBackground", "customMessageBg", cwd);
-	return USER_MESSAGE_BG_TOKENS.has(token) ? token : "customMessageBg";
+	return USER_MESSAGE_BORDER_TOKENS.has(token) ? token : "customMessageBg";
+}
+
+function userMessageBorder(theme: any, token: string, text: string): string {
+	try {
+		return theme.fg(token as any, text);
+	} catch {
+		return theme.fg("borderAccent", text);
+	}
+}
+
+function renderUserMessageBorder(lines: string[], width: number, theme: any, token: string): string[] {
+	if (lines.length === 0 || width < 4) return lines;
+	const innerWidth = Math.max(1, width - 2);
+	const border = (text: string) => userMessageBorder(theme, token, text);
+	const fitLine = (line: string) => {
+		const clipped = truncateToWidth(line, innerWidth, "");
+		return clipped + " ".repeat(Math.max(0, innerWidth - visibleWidth(clipped)));
+	};
+
+	return [
+		`${border("┏")}${border("━".repeat(innerWidth))}${border("┓")}`,
+		...lines.map((line) => `${border("┃")}${fitLine(line)}${border("┃")}`),
+		`${border("┗")}${border("━".repeat(innerWidth))}${border("┛")}`,
+	];
 }
 
 function lineCount(text: string): number {
@@ -182,22 +206,32 @@ function installUserMessageRenderer(pi: ExtensionAPI, UserMessageComponent: any)
 				const cwd = ctx.cwd ?? process.cwd();
 				const compact = settingBoolean("compactUserMessages", true, cwd);
 				const paddingY = compact ? 0 : 1;
-				const backgroundToken = compact ? userMessageBackgroundToken(cwd) : "userMessageBg";
-				const boxState = `${paddingY}:${backgroundToken}`;
+				const borderToken = compact ? userMessageBorderToken(cwd) : "userMessageBg";
+				const boxState = compact ? `${paddingY}:border:${borderToken}` : `${paddingY}:background:${borderToken}`;
 
 				if (box[USER_MESSAGE_BOX_STATE_SYMBOL] !== boxState) {
 					box.paddingY = paddingY;
-					box.setBgFn?.((content: string) => {
-						const theme = state?.activeCtx?.ui?.theme;
-						if (!theme?.bg) return content;
-						try {
-							return theme.bg(backgroundToken as any, content);
-						} catch {
-							return theme.bg("userMessageBg", content);
-						}
-					});
+					if (compact) {
+						box.setBgFn?.(undefined);
+					} else {
+						box.setBgFn?.((content: string) => {
+							const theme = state?.activeCtx?.ui?.theme;
+							if (!theme?.bg) return content;
+							try {
+								return theme.bg(borderToken as any, content);
+							} catch {
+								return theme.bg("userMessageBg", content);
+							}
+						});
+					}
 					box.invalidateCache?.();
 					box[USER_MESSAGE_BOX_STATE_SYMBOL] = boxState;
+				}
+
+				if (compact && width >= 4) {
+					const theme = ctx.ui?.theme;
+					const lines = state!.originalRender.call(this, Math.max(1, width - 2));
+					return theme?.fg ? renderUserMessageBorder(lines, width, theme, borderToken) : lines;
 				}
 			}
 
