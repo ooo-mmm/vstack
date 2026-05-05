@@ -421,7 +421,7 @@ function permissionGatePrompt(matched: string, command: string, cwd?: string): s
 	].join("\n");
 }
 
-const THINKING_LABEL_DEFAULT = "󰍛";
+const THINKING_LABEL_DEFAULT = "";
 
 const lastNotificationAt = new Map<string, number>();
 const lastQuestionNotificationAt = new Map<string, number>();
