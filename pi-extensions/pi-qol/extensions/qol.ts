@@ -24,6 +24,7 @@ const THINKING_TIMER_STORE_SYMBOL = Symbol.for("vstack.pi-qol.thinking-timer.sto
 const THINKING_TIMER_PATCH_SYMBOL = Symbol.for("vstack.pi-qol.thinking-timer.patch");
 const SESSION_SEARCH_PENDING_SYMBOL = Symbol.for("vstack.pi-qol.session-search.pending-context");
 const PENDING_QUEUE_THEME_PATCH_SYMBOL = Symbol.for("vstack.pi-qol.pending-queue.theme-patch");
+const STATUS_TEXT_ALIGNMENT_PATCH_SYMBOL = Symbol.for("vstack.pi-qol.status-text-alignment-patch");
 const QUESTION_OPENED_EVENT = "vstack:pi-questions:opened";
 const QUESTION_NOTIFY_DEDUP_MS = 2000;
 const DEFAULT_NOTIFICATION_TITLE = "Pi";
@@ -2397,6 +2398,32 @@ function pendingQueueLine(text: string): string {
 	return ansiGreen(`| ${text}`);
 }
 
+function isQueuedMessageStatusText(text: string): boolean {
+	const plain = stripAnsi(text);
+	return /^Restored \d+ queued messages? to editor$/.test(plain) || plain === "No queued messages to restore";
+}
+
+function installStatusTextAlignmentPatch(): void {
+	const proto = Text.prototype as unknown as Record<PropertyKey, any>;
+	if (proto[STATUS_TEXT_ALIGNMENT_PATCH_SYMBOL]) return;
+	const originalRender = proto.render;
+	if (typeof originalRender !== "function") return;
+	proto[STATUS_TEXT_ALIGNMENT_PATCH_SYMBOL] = true;
+	proto.render = function patchedQolStatusTextRender(this: any, width: number): string[] {
+		const text = typeof this?.text === "string" ? this.text : "";
+		if (!isQueuedMessageStatusText(text)) return originalRender.call(this, width);
+		const originalPaddingX = this.paddingX;
+		try {
+			this.paddingX = 0;
+			this.invalidate?.();
+			return originalRender.call(this, width);
+		} finally {
+			this.paddingX = originalPaddingX;
+			this.invalidate?.();
+		}
+	};
+}
+
 function installPendingQueueThemePatch(ctx: ExtensionContext): void {
 	if (!ctx.hasUI) return;
 	const proto = Theme.prototype as unknown as Record<PropertyKey, unknown>;
@@ -3682,6 +3709,7 @@ export default function qol(pi: ExtensionAPI): void {
 	if (!settingBoolean("enabled", true)) return;
 
 	installThinkingTimerPatch();
+	installStatusTextAlignmentPatch();
 	const thinkingTimerStore: ThinkingTimerStore = {
 		enabled: false,
 		starts: new Map(),
