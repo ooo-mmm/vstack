@@ -245,16 +245,10 @@ Global install behavior:
 
 ### Pi notes
 
-vstack writes Pi agent frontmatter (`name`, `description`, `tools`, `model`, optional `pane: true`) plus the standard body sections (Required Skills, Hook Rules, Additional Instructions). Hooks have no native Pi runtime, so they surface as inline safety prose in the agent body.
-
-Pi has no built-in subagent mechanism, so installed `.pi/agents/*.md` files are inert until you also install a Pi extension that loads them. The `pi-subagents-tmux` package shipped in this repo provides that loader/delegation layer; `pi-session-bridge` is a separate TUI side-channel for external controllers.
-
-For Pi extensions, `vstack add`:
-- Copies the package into `<scope>/packages/<name>` (`~/.pi/agent` for `--global`, `<project>/.pi` otherwise).
-- Registers `./packages/<name>` in that scope's `settings.json` (preserves unrelated entries).
-- For each entry in the package's `package.json` `bin` map, creates a symlink at `<scope>/bin/<cli-name>` pointing at the installed binary. Pi auto-loads the package on next launch and the CLI is reachable as `<scope>/bin/<cli-name>` (add it to your `PATH` if you want bare-name invocation).
-
-Pi extensions are scope-exclusive — Pi loads packages from both global and project scopes simultaneously, so duplicate registration would crash startup. Installing the same extension at one scope when it already exists at the other is skipped with a clear notice; switch by removing first (`vstack remove [--global] <name>`) and re-adding at the desired scope. `vstack remove` cleans the package dir, `settings.json` entry, and any `bin` symlinks.
+- **Agents.** Pi has no built-in subagent mechanism, so `.pi/agents/*.md` files are inert until a loader extension is installed. `pi-subagents-tmux` provides that loader; `pi-session-bridge` is a separate TUI side-channel for external controllers.
+- **Hooks.** No native Pi hook runtime, so safety hook prose is appended to the agent body instead of running as commands.
+- **Extensions.** `vstack add` copies the package into `<scope>/packages/<name>`, registers `./packages/<name>` in that scope's `settings.json` (preserving unrelated entries), and symlinks each `package.json` `bin` entry to `<scope>/bin/<cli-name>`. Add `<scope>/bin` to `PATH` for bare-name invocation. `vstack remove` cleans all three.
+- **Extension scope is exclusive.** Pi loads global + project scopes simultaneously, so duplicate registration would crash startup. Installing into one scope when the other already has it is skipped with a notice — `vstack remove [--global]` first to switch.
 
 Windows note:
 
