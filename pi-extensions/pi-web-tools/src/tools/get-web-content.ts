@@ -31,6 +31,14 @@ function isStoredExcerpt(metadata: Record<string, unknown> | undefined): boolean
 	return ["search-result", "code-search-result", "answer-source", "similar-result"].includes(kind);
 }
 
+function sourceLabelFromMetadata(metadata: Record<string, unknown> | undefined): string | undefined {
+	const provider = String(metadata?.provider ?? "").trim().toLowerCase();
+	if (!provider) return undefined;
+	const chain = Array.isArray(metadata?.extractionChain) ? metadata!.extractionChain.map((x) => String(x).toLowerCase()) : [];
+	if (provider === "http" && chain.includes("jina")) return "http+jina";
+	return provider;
+}
+
 export function createGetWebContentToolDefinition(name = "get_web_content") {
 	return {
 		renderShell: "self" as const,
@@ -55,7 +63,7 @@ export function createGetWebContentToolDefinition(name = "get_web_content") {
 			}
 			const details = result?.details ?? {};
 			const metadata = details?.metadata as Record<string, unknown> | undefined;
-			const provider = metadata?.provider ?? "stored";
+			const provider = sourceLabelFromMetadata(metadata) ?? "stored";
 			const title = displayTitle({ title: details.title, url: details.url, id: details.id ?? context?.args?.id });
 			const contentLength = typeof details.contentLength === "number" ? details.contentLength : 0;
 			const maxCharacters = typeof details.maxCharacters === "number" ? details.maxCharacters : contentLength;

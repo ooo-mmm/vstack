@@ -107,6 +107,26 @@ test("web_fetch renderer shows concise preview shown/full metadata when preview-
 	assert.doesNotMatch(rendered, /GitHub\/Auto/);
 });
 
+test("web_fetch labels HTTP+Jina when extraction fell back through Jina", () => {
+	const tool = createWebFetchToolDefinition({} as any, () => ({}) as any);
+	const result = buildWebFetchToolResult([{
+		id: "web-jina",
+		title: "Recovered",
+		url: "https://blocked.example",
+		content: "recovered body",
+		createdAt: "2026-01-01T00:00:00.000Z",
+		metadata: { provider: "http", extractionChain: ["html-basic", "jina"] },
+	}], "http+jina");
+	const rendered = tool.renderResult(result, {}, theme, { args: { provider: "auto", url: "https://blocked.example" } }).render(200).join("\n");
+	assert.match(rendered, /Web Fetch \(HTTP\+Jina\)/);
+});
+
+test("get_web_content shows source HTTP+Jina when chain includes jina", () => {
+	const tool = createGetWebContentToolDefinition();
+	const rendered = tool.renderResult({ details: { id: "web-jina", title: "Recovered", url: "https://blocked.example", contentLength: 80, truncated: false, metadata: { provider: "http", extractionChain: ["html-basic", "jina"] } } }, {}, theme, { args: { id: "web-jina" } }).render(200).join("\n");
+	assert.match(rendered, /source HTTP\+Jina/);
+});
+
 test("web_fetch and get_web_content render URL leaf when provider returns blank title", () => {
 	const fetchTool = createWebFetchToolDefinition({} as any, () => ({}) as any);
 	const result = buildWebFetchToolResult([{

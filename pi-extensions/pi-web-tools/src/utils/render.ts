@@ -70,6 +70,9 @@ export function providerDisplayName(provider: unknown): string {
 	if (value === "openai-native") return "OpenAI Native";
 	if (value === "openai" || value === "openai-codex" || value === "codex") return "Codex";
 	if (value === "http") return "HTTP";
+	if (value === "jina") return "Jina";
+	if (value === "http+jina") return "HTTP+Jina";
+	if (value === "local") return "Local";
 	if (value === "mixed") return "Mixed";
 	if (value === "auto") return "Auto";
 	if (value === "session" || value === "stored") return "Session";

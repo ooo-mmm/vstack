@@ -88,10 +88,19 @@ function pendingFetchProviderForLabel(requested: unknown): string {
 	return String(requested ?? "auto").trim().toLowerCase() === "auto" ? "resolving…" : fetchProviderForLabel(requested);
 }
 
+function storedProviderLabel(item: any): string {
+	const provider = String(item?.metadata?.provider ?? "").trim().toLowerCase();
+	const chain = Array.isArray(item?.metadata?.extractionChain) ? item.metadata.extractionChain.map((x: unknown) => String(x).toLowerCase()) : [];
+	const usedJina = chain.includes("jina");
+	if (provider === "http" && usedJina) return "http+jina";
+	if (provider === "local") return "local";
+	return provider || "http";
+}
+
 function storedProvider(stored: any[]): string {
-	const providers = Array.from(new Set(stored.map((item) => String(item?.metadata?.provider ?? "").trim().toLowerCase()).filter(Boolean)));
-	if (providers.length === 0) return "http";
-	return providers.length === 1 ? providers[0]! : "mixed";
+	const labels = Array.from(new Set(stored.map(storedProviderLabel).filter(Boolean)));
+	if (labels.length === 0) return "http";
+	return labels.length === 1 ? labels[0]! : "mixed";
 }
 
 function previewLimit(params: WebFetchInput): number {
