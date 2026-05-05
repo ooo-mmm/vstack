@@ -1250,14 +1250,21 @@ function renderUnifiedLine(
 }
 
 function renderUnifiedDiff(diff: StructuredDiff, rows: StructuredDiffLine[], width: number, theme: any, path?: string, cwd?: string): string[] {
+	const tableWidth = Math.max(40, width);
 	const maxNum = Math.max(1, ...diff.lines.map((line) => Math.max(line.oldNum ?? 0, line.newNum ?? 0)));
 	const numWidth = Math.max(2, String(maxNum).length);
-	const out: string[] = [];
+	const leftBorder = borderMuted(theme, "│");
+	const rightBorder = borderMuted(theme, "│");
+	const cellWidth = Math.max(1, tableWidth - visibleLength(leftBorder) - visibleLength(rightBorder));
+	const contentWidth = Math.max(1, cellWidth - 2);
+	const ruleSegment = borderMuted(theme, "─".repeat(Math.max(1, cellWidth)));
+	const out: string[] = [`${borderMuted(theme, "┌")}${ruleSegment}${borderMuted(theme, "┐")}`];
+	const pushLine = (line: string) => out.push(`${leftBorder} ${padVisible(line, contentWidth)} ${rightBorder}`);
 	let index = 0;
 	while (index < rows.length) {
 		const line = rows[index]!;
 		if (line.type === "ctx" || line.type === "sep") {
-			out.push(renderUnifiedLine(line, width, numWidth, theme, path ?? diff.path, cwd));
+			pushLine(renderUnifiedLine(line, contentWidth, numWidth, theme, path ?? diff.path, cwd));
 			index++;
 			continue;
 		}
@@ -1269,10 +1276,11 @@ function renderUnifiedDiff(diff: StructuredDiff, rows: StructuredDiffLine[], wid
 		for (let i = 0; i < count; i++) {
 			const del = dels[i];
 			const add = adds[i];
-			if (del) out.push(renderUnifiedLine(del, width, numWidth, theme, path ?? diff.path, cwd, lineWordRanges(del, add ?? null, cwd)));
-			if (add) out.push(renderUnifiedLine(add, width, numWidth, theme, path ?? diff.path, cwd, lineWordRanges(add, del ?? null, cwd)));
+			if (del) pushLine(renderUnifiedLine(del, contentWidth, numWidth, theme, path ?? diff.path, cwd, lineWordRanges(del, add ?? null, cwd)));
+			if (add) pushLine(renderUnifiedLine(add, contentWidth, numWidth, theme, path ?? diff.path, cwd, lineWordRanges(add, del ?? null, cwd)));
 		}
 	}
+	out.push(`${borderMuted(theme, "└")}${ruleSegment}${borderMuted(theme, "┘")}`);
 	return out;
 }
 
@@ -2656,7 +2664,7 @@ function mutedHorizontalRule(theme: any, width: number): string {
 }
 
 function shouldOmitBottomToolChromeRule(core: string[]): boolean {
-	return core.some((line) => /─+┴─+/.test(stripAnsi(line ?? "")));
+	return core.some((line) => /└─+(?:┴─+)?┘/.test(stripAnsi(line ?? "")));
 }
 
 function installToolChromePatch(): void {
