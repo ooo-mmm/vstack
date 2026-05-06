@@ -542,7 +542,12 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
                     filter.iter().map(String::as_str).collect();
                 all_pi_extensions
                     .into_iter()
-                    .filter(|e| wanted.contains(e.name.as_str()))
+                    .filter(|e| {
+                        wanted.contains(e.name.as_str())
+                            || crate::pi_extension::legacy_names_for(&e.name)
+                                .iter()
+                                .any(|legacy| wanted.contains(legacy))
+                    })
                     .collect()
             }
             None if any_item_filter => Vec::new(),

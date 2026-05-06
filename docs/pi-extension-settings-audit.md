@@ -16,6 +16,12 @@ Settings persist under `vstack.extensionManager.config.<packageName>` in Pi `set
 - Useful settings: show/hide built-in tools, default save scope.
 - Apply semantics: inventory settings are live; command registration changes need reload/restart.
 
+### `pi-claude-bridge`
+
+- Toggle: `enabled` registers/unregisters the `claude-bridge/*` provider models after reload.
+- Useful settings: baseline AGENTS.md/skills forwarding, opt-in `APPEND_SYSTEM.md` forwarding, opt-in recognized `before_agent_start` prompt hook forwarding (`pi-agents-tmux`, `pi-task-panel`, `pi-caveman`), strict MCP config, explicit Claude executable path.
+- Apply semantics: provider enable/disable needs reload; prompt-context and Claude Code query options are read per turn.
+
 ### `pi-skills-manager`
 
 - Toggle: `enabled` registers/unregisters `/skill`, marker expansion, startup skill-list hiding, and skills management UI after reload; `/skill:enable` remains as recovery.

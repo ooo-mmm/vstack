@@ -328,6 +328,7 @@ All Pi packages declare `vstack.extensionManager.settings` metadata including an
 | Extension | Purpose |
 |---|---|
 | [`pi-extension-manager`](pi-extensions/pi-extension-manager/README.md) | Pi-styled extension inventory, full settings shell, and quick inline settings editor (`/extensions`). |
+| [`pi-claude-bridge`](pi-extensions/pi-claude-bridge/README.md) | Claude Code provider bridge (`claude-bridge/*`) with vstack-controlled Pi prompt-context forwarding. |
 | [`pi-skills-manager`](pi-extensions/pi-skills-manager/README.md) | Dedicated `/skill` shell for browsing, creating, editing, and toggling Pi skills; expands `[skill] <name>` markers before sending prompts. |
 | [`pi-background-tasks`](pi-extensions/pi-background-tasks/README.md) | Non-blocking shell tasks via `bg_task`/`bg_status` plus a `/bg` dashboard so long-running commands do not block the turn. |
 | [`pi-questions`](pi-extensions/pi-questions/README.md) | Structured multi-tab popup questions for the model with bridge-driven replies. |

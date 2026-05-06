@@ -244,6 +244,7 @@ const PI_EXTENSION_RENAMES: &[(&str, &[&str])] = &[
     ("@vanillagreen/pi-agents-tmux",         &["pi-agents-tmux", "pi-subagents-tmux", "pi-subagents"]),
     ("@vanillagreen/pi-background-tasks",    &["pi-background-tasks"]),
     ("@vanillagreen/pi-caveman",             &["pi-caveman"]),
+    ("@vanillagreen/pi-claude-bridge",       &["pi-claude-bridge"]),
     ("@vanillagreen/pi-codex-minimal-tools", &["pi-codex-minimal-tools"]),
     ("@vanillagreen/pi-extension-manager",   &["pi-extension-manager"]),
     ("@vanillagreen/pi-output-policy",       &["pi-output-policy"]),
@@ -822,6 +823,14 @@ mod tests {
         assert_eq!(
             legacy_names_for("@vanillagreen/pi-prompt-stash"),
             &["pi-prompt-stash", "prompt-stash"]
+        );
+    }
+
+    #[test]
+    fn claude_bridge_rename_has_legacy_name() {
+        assert_eq!(
+            legacy_names_for("@vanillagreen/pi-claude-bridge"),
+            &["pi-claude-bridge"]
         );
     }
 
