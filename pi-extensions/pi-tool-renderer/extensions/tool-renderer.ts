@@ -745,6 +745,9 @@ const DIFF_HIGHLIGHT_MAX_CHARS = 180_000;
 const DIFF_ADD_BG_TOKEN = "toolSuccessBg";
 const DIFF_DEL_BG_TOKEN = "toolErrorBg";
 const DIFF_WORD_BG_TOKEN = "selectedBg";
+const DIFF_ADD_BG_FALLBACK = "\x1b[48;2;24;58;38m";
+const DIFF_DEL_BG_FALLBACK = "\x1b[48;2;66;31;43m";
+const ANSI_BG_RESET = "\x1b[49m";
 const WORD_DIFF_CELL_LIMIT = 32_000;
 const WORD_DIFF_MIN_SIMILARITY = 0.2;
 
@@ -984,13 +987,33 @@ function maybeBg(theme: any, token: string, text: string, enabled: boolean): str
 	return enabled ? theme.bg(token, text) : text;
 }
 
+function ansiHasBackground(open: string): boolean {
+	for (const match of open.matchAll(/\x1b\[([0-9;:]*)m/g)) {
+		const params = match[1] || "0";
+		if (/(^|[;:])48([;:]|$)/.test(params)) return true;
+		if (/(^|[;:])(?:4[0-7]|10[0-7])([;:]|$)/.test(params)) return true;
+	}
+	return false;
+}
+
+function fallbackDiffBgOpen(token: string): string {
+	if (token === DIFF_ADD_BG_TOKEN) return DIFF_ADD_BG_FALLBACK;
+	if (token === DIFF_DEL_BG_TOKEN) return DIFF_DEL_BG_FALLBACK;
+	return "";
+}
+
 function bgParts(theme: any, token: string): { open: string; close: string } {
 	const marker = "\uE000";
 	try {
-		if (theme?.bg) return ansiPartsFromStyled(theme.bg(token, marker));
+		if (theme?.bg) {
+			const parts = ansiPartsFromStyled(theme.bg(token, marker));
+			if (ansiHasBackground(parts.open)) return parts;
+		}
 	} catch {
 		// Keep rendering readable if the active theme cannot provide this token.
 	}
+	const fallbackOpen = fallbackDiffBgOpen(token);
+	if (fallbackOpen) return { open: fallbackOpen, close: ANSI_BG_RESET };
 	return { open: "", close: "" };
 }
 
