@@ -2483,12 +2483,27 @@ function autoRenameEnabled(cwd?: string): boolean {
 	return settingBoolean("sessionAutoRename.enabled", true, cwd);
 }
 
+function autoRenameCtxAlive(ctx: ExtensionContext): boolean {
+	// Auto-rename runs from a deferred timer / async path, so the captured
+	// extension context can be invalidated mid-flight by newSession / fork /
+	// switchSession / reload. Touching ctx.hasUI on a stale ctx throws and
+	// kills the host pi process, which has surfaced as bg subagents 'failing'
+	// at exit code 1 even after their work completed cleanly. Treat any
+	// access error as 'no UI available' and silently skip the notification.
+	try {
+		return ctx.hasUI;
+	} catch {
+		return false;
+	}
+}
+
 function autoRenameDebug(ctx: ExtensionContext, message: string, level: "info" | "warning" | "error" = "info"): void {
-	if (ctx.hasUI && settingBoolean("sessionAutoRename.debug", false, ctx.cwd)) ctx.ui.notify(`[auto-rename] ${message}`, level);
+	if (!autoRenameCtxAlive(ctx)) return;
+	if (settingBoolean("sessionAutoRename.debug", false, ctx.cwd)) ctx.ui.notify(`[auto-rename] ${message}`, level);
 }
 
 function autoRenameNotify(ctx: ExtensionContext, message: string, level: "info" | "warning" | "error" = "info", force = false): void {
-	if (!ctx.hasUI) return;
+	if (!autoRenameCtxAlive(ctx)) return;
 	if (force || settingBoolean("sessionAutoRename.notify", false, ctx.cwd) || settingBoolean("sessionAutoRename.debug", false, ctx.cwd)) ctx.ui.notify(`[auto-rename] ${message}`, level);
 }
 
