@@ -1,6 +1,7 @@
 # pi-tool-renderer
 
-![Tool renderer compact tools](./assets/tool-renderer-compact-tools.png)
+![tool_batch composite result with Read/grep/Bash rows](assets/tool-batch.png)
+![Edit tool with side-by-side diff renderer](assets/edit-diff.png)
 
 Compact renderers for Pi tools, plus an optional `tool_batch` composite tool.
 
