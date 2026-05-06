@@ -33,6 +33,7 @@ const MANAGER_INNER_ROWS = 32;
 const QUICK_SETTINGS_INNER_ROWS = 30;
 const QUICK_SETTINGS_ROWS = 18;
 const VSTACK_MODAL_LOCK_SYMBOL = Symbol.for("vstack.pi.modal-lock");
+const VSTACK_OPEN_QUICK_SETTINGS_SYMBOL = Symbol.for("vstack.pi.extension-manager.open-quick-settings");
 const ANSI_GREEN_FG = "\x1b[32m";
 const ANSI_YELLOW_FG = "\x1b[33m";
 const ANSI_FG_RESET = "\x1b[39m";
@@ -2548,6 +2549,8 @@ export default function extensionManager(pi: ExtensionAPI): void {
 		getArgumentCompletions: (prefix: string) => activeCtx ? quickSettingsCompletions(pi, activeCtx, prefix) : null,
 		handler: async (args, ctx) => openQuickSettings(pi, ctx, args),
 	});
+
+	(globalThis as unknown as Record<PropertyKey, unknown>)[VSTACK_OPEN_QUICK_SETTINGS_SYMBOL] = async (ctx: ExtensionCommandContext | ExtensionContext, hint?: string) => openQuickSettings(pi, ctx, hint);
 
 
 	pi.on("session_start", (_event, ctx) => {

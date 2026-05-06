@@ -4444,11 +4444,11 @@ export default function qol(pi: ExtensionAPI): void {
 	}
 
 	const tryOpenExtensionManagerSettings = async (ctx: ExtensionCommandContext): Promise<boolean> => {
-		const commands = Array.isArray((pi as any).getCommands?.()) ? (pi as any).getCommands() : [];
-		const settings = commands.find((command: any) => command?.name === "extensions:settings" && typeof command?.handler === "function");
-		if (!settings) return false;
+		const host = globalThis as unknown as Record<PropertyKey, unknown>;
+		const openQuickSettings = host[Symbol.for("vstack.pi.extension-manager.open-quick-settings")];
+		if (typeof openQuickSettings !== "function") return false;
 		try {
-			await settings.handler("pi-qol", ctx);
+			await (openQuickSettings as (ctx: ExtensionCommandContext, hint?: string) => Promise<void>)(ctx, "pi-qol");
 			return true;
 		} catch {
 			return false;
