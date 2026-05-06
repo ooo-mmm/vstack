@@ -1054,6 +1054,47 @@ function sgrClearsBackground(code: string): boolean {
 	return params.some((value) => value === 0 || value === 49);
 }
 
+function stripSgrBackgroundParams(code: string): string {
+	const match = code.match(/^\x1b\[([0-9;:]*)m$/);
+	if (!match) return code;
+	const raw = match[1] ?? "";
+	if (!raw || raw.includes(":")) return code;
+	const params = raw.split(";");
+	const kept: string[] = [];
+	for (let index = 0; index < params.length; index++) {
+		const value = Number.parseInt(params[index] || "0", 10);
+		if (value === 48) {
+			const mode = Number.parseInt(params[index + 1] || "", 10);
+			if (mode === 5) {
+				index += 2;
+				continue;
+			}
+			if (mode === 2) {
+				index += 4;
+				continue;
+			}
+		}
+		if (value === 49 || (value >= 40 && value <= 47) || (value >= 100 && value <= 107)) continue;
+		kept.push(params[index] || "0");
+	}
+	return kept.length > 0 ? `\x1b[${kept.join(";")}m` : "";
+}
+
+function stripLeadingBackgroundLayer(line: string): string {
+	let offset = 0;
+	let out = "";
+	const leadingAnsiRe = /\x1b(?:\[([0-9;:]*)m|\]133;[ABC]\x07)/y;
+	while (offset < line.length) {
+		leadingAnsiRe.lastIndex = offset;
+		const match = leadingAnsiRe.exec(line);
+		if (!match) break;
+		const code = match[0];
+		out += code.startsWith("\x1b[") ? stripSgrBackgroundParams(code) : code;
+		offset = leadingAnsiRe.lastIndex;
+	}
+	return `${out}${line.slice(offset)}`;
+}
+
 function applyFullLineBg(theme: any, token: string, text: string, enabled: boolean): string {
 	if (!enabled) return text;
 	const { open, close } = bgParts(theme, token);
@@ -2877,23 +2918,9 @@ function installToolExecutionRendererPatch(pi: ExtensionAPI): void {
 	});
 }
 
-function applyToolChromeTheme(theme: any, cwd?: string): void {
+function prepareToolChromeTheme(theme: any, cwd?: string): void {
 	if (toolChromeMode(cwd) === "off") return;
 	captureDiffBackgroundTheme(theme);
-	const transparent = "\x1b[49m";
-	try {
-		if (theme?.bgColors instanceof Map) {
-			theme.bgColors.set("toolPendingBg", transparent);
-			theme.bgColors.set("toolSuccessBg", transparent);
-			theme.bgColors.set("toolErrorBg", transparent);
-		} else if (theme?.bgColors && typeof theme.bgColors === "object") {
-			theme.bgColors.toolPendingBg = transparent;
-			theme.bgColors.toolSuccessBg = transparent;
-			theme.bgColors.toolErrorBg = transparent;
-		}
-	} catch {
-		// Best-effort theme patch only.
-	}
 }
 
 let activeToolChromeCtx: ExtensionContext | undefined;
@@ -2932,7 +2959,7 @@ function installToolChromePatch(): void {
 		while (end >= start && stripAnsi(rendered[end] ?? "").trim().length === 0) end--;
 		if (start > end) return rendered;
 		const core = rendered.slice(start, end + 1).flatMap((line) => {
-			const wrapped = wrapTextWithAnsi(line, Math.max(1, width));
+			const wrapped = wrapTextWithAnsi(stripLeadingBackgroundLayer(line), Math.max(1, width));
 			return wrapped.length > 0 ? wrapped : [""];
 		});
 		if (mode === "transparent") return core;
@@ -2946,11 +2973,11 @@ function installToolChromePatch(): void {
 function registerToolChromeEvents(pi: ExtensionAPI): void {
 	pi.on("session_start", (_event, ctx) => {
 		activeToolChromeCtx = ctx;
-		if (ctx.hasUI) applyToolChromeTheme(ctx.ui.theme, ctx.cwd);
+		if (ctx.hasUI) prepareToolChromeTheme(ctx.ui.theme, ctx.cwd);
 	});
 	pi.on("turn_start", (_event, ctx) => {
 		activeToolChromeCtx = ctx;
-		if (ctx.hasUI) applyToolChromeTheme(ctx.ui.theme, ctx.cwd);
+		if (ctx.hasUI) prepareToolChromeTheme(ctx.ui.theme, ctx.cwd);
 	});
 	pi.on("session_shutdown", () => {
 		activeToolChromeCtx = undefined;
