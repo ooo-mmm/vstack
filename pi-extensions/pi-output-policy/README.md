@@ -1,6 +1,6 @@
 # pi-output-policy
 
-![Output policy truncation](./assets/output-policy-truncation.png)
+![Output Policy settings panel](assets/settings-panel.png)
 
 OMP-style large-output policy for Pi tool results.
 
