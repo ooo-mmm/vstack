@@ -1766,6 +1766,20 @@ interface PaneCompletionMessageDetails {
 	partial?: boolean;
 }
 
+interface AgentsCommandMessageDetails {
+	action?: string;
+	agent?: string;
+	count?: number;
+	error?: string;
+	inboxFile?: string;
+	outboxFile?: string;
+	sessionFile?: string;
+	status?: string;
+	taskId?: string;
+	transcriptPath?: string;
+	windowName?: string;
+}
+
 interface PaneTaskRecord {
 	taskId: string;
 	agent: string;
@@ -2491,6 +2505,82 @@ function framedMessage(content: string, theme: Theme): Component {
 			return [rule, ...wrapAnsiLines(content, width), rule];
 		},
 	};
+}
+
+function agentsCommandBullet(theme: Theme): string {
+	return theme.fg("accent", "● ");
+}
+
+function agentsCommandArtifactLine(theme: Theme, branch: "├" | "└", label: string, filePath: string | undefined, width: number): string {
+	const prefix = `${subagentBranch(theme, branch)}${theme.fg("muted", `${label} `)}`;
+	const maxChars = Math.max(24, width - visibleWidth(prefix) - 1);
+	return `${prefix}${theme.fg("toolOutput", compactPath(filePath, { maxChars }))}`;
+}
+
+function renderAgentsCommandMessage(message: { content: string; details?: unknown }, _options: unknown, theme: Theme): Component {
+	const details = message.details && typeof message.details === "object" ? (message.details as AgentsCommandMessageDetails) : undefined;
+	const action = details?.action;
+	const error = details?.error ?? (/^Error:\s*/.test(message.content) ? message.content.replace(/^Error:\s*/, "") : undefined);
+
+	if (error) {
+		return framedMessage(
+			[
+				`${theme.fg("error", ICONS.times)} ${theme.fg("toolTitle", theme.bold("/agents error"))}`,
+				`${subagentBranch(theme, "└")}${theme.fg("error", error)}`,
+			].join("\n"),
+			theme,
+		);
+	}
+
+	if (action === "send" && details?.agent) {
+		return {
+			invalidate() {},
+			render(width: number): string[] {
+				const rule = toolChromeRule(theme, width);
+				const taskSuffix = details.taskId ? `${theme.fg("dim", " · ")}${theme.fg("muted", shortTaskId(details.taskId))}` : "";
+				const lines = [
+					`${agentsCommandBullet(theme)}${theme.fg("toolTitle", theme.bold("/agents send "))}${ansiMagenta(theme.bold(details.agent!))}${theme.fg("dim", " · ")}${theme.fg("warning", "queued")}${taskSuffix}`,
+					agentsCommandArtifactLine(theme, "├", "inbox", details.inboxFile, width),
+					agentsCommandArtifactLine(theme, "├", "completion", details.outboxFile, width),
+					agentsCommandArtifactLine(theme, "└", "transcript", details.transcriptPath, width),
+				];
+				return [rule, ...lines.flatMap((line) => wrapAnsiLines(line, width)), rule];
+			},
+		};
+	}
+
+	if (action === "start" && details?.agent) {
+		return framedMessage(
+			[
+				`${agentsCommandBullet(theme)}${theme.fg("toolTitle", theme.bold("/agents start "))}${ansiMagenta(theme.bold(details.agent))}${theme.fg("dim", ` · ${details.windowName ?? "pane"}`)}`,
+				`${subagentBranch(theme, "└")}${theme.fg("muted", "session ")}${theme.fg("toolOutput", compactPath(details.sessionFile))}`,
+			].join("\n"),
+			theme,
+		);
+	}
+
+	if (action === "attach" && details?.agent) {
+		return framedMessage(`${agentsCommandBullet(theme)}${theme.fg("toolTitle", theme.bold("/agents attach "))}${ansiMagenta(theme.bold(details.agent))}`, theme);
+	}
+
+	if (action === "stop" && details?.agent) {
+		return framedMessage(`${theme.fg("success", ICONS.check)} ${theme.fg("toolTitle", theme.bold("/agents stop "))}${ansiMagenta(theme.bold(details.agent))}`, theme);
+	}
+
+	if (action === "collect") {
+		const count = Number.isFinite(Number(details?.count)) ? Number(details?.count) : undefined;
+		return framedMessage(`${agentsCommandBullet(theme)}${theme.fg("toolTitle", theme.bold("/agents collect "))}${theme.fg("success", `${count ?? 0} completion${count === 1 ? "" : "s"}`)}`, theme);
+	}
+
+	if (action === "toggle") {
+		return framedMessage(`${agentsCommandBullet(theme)}${theme.fg("toolTitle", theme.bold("/agents toggle "))}${theme.fg("success", details?.status ?? oneLinePreview(message.content, 80))}`, theme);
+	}
+
+	if (message.content.trim().startsWith("#") || message.content.includes("\n| ---")) {
+		return framedComponent(new Markdown(message.content, 0, 0, getMarkdownTheme()), theme);
+	}
+
+	return framedMessage(`${agentsCommandBullet(theme)}${theme.fg("toolTitle", theme.bold("/agents "))}${theme.fg("toolOutput", message.content)}`, theme);
 }
 
 function dashboardTranscriptLabel(items: SubagentDashboardItem[], cwd: string): string {
@@ -4033,12 +4123,12 @@ export default function (pi: ExtensionAPI) {
 		return null;
 	};
 
-	pi.registerMessageRenderer("subagent-agents", (message, _options, _theme) => {
-		return wrappedText(message.content);
+	pi.registerMessageRenderer("subagent-agents", (message, options, theme) => {
+		return renderAgentsCommandMessage(message as { content: string; details?: unknown }, options, theme);
 	});
 
-	pi.registerMessageRenderer("subagent-trace", (message, _options, _theme) => {
-		return new Markdown(message.content, 0, 0, getMarkdownTheme());
+	pi.registerMessageRenderer("subagent-trace", (message, _options, theme) => {
+		return framedComponent(new Markdown(message.content, 0, 0, getMarkdownTheme()), theme);
 	});
 
 	pi.registerMessageRenderer("subagent-completion", (message, options, theme) => {
@@ -4367,6 +4457,7 @@ export default function (pi: ExtensionAPI) {
 			const command = parts[0];
 			let scope: AgentScope = "project";
 			let content = "";
+			let messageDetails: AgentsCommandMessageDetails | undefined;
 
 			const parentModel = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined;
 			const parentThinkingLevel = pi.getThinkingLevel();
@@ -4397,6 +4488,7 @@ export default function (pi: ExtensionAPI) {
 						});
 					}
 					content = `Started/reused ${agent.name} (${pane.windowName}).\nSession: ${pane.sessionFile}`;
+					messageDetails = { action: "start", agent: agent.name, sessionFile: pane.sessionFile, windowName: pane.windowName };
 				} else if (command === "send") {
 					const agent = findAgent(parts[1]);
 					if (!agent) throw new Error(`Unknown agent: ${parts[1] ?? "(missing)"}`);
@@ -4405,6 +4497,7 @@ export default function (pi: ExtensionAPI) {
 					if (!task) throw new Error("Usage: /agents send <name> <task>");
 					const queued = await queuePersistentPaneTask(runtimeRoot, parentSessionId, ctx.cwd, agent, task, undefined, parentModel, parentThinkingLevel, pi);
 					content = `Queued task for ${agent.name}.\nArtifacts: inbox=${compactPath(queued.taskFile)} completion=${compactPath(queued.outboxFile)} transcript=${compactPath(queued.pane.sessionFile)}`;
+					messageDetails = { action: "send", agent: agent.name, inboxFile: queued.taskFile, outboxFile: queued.outboxFile, taskId: queued.taskId, transcriptPath: queued.pane.sessionFile };
 				} else if (command === "attach") {
 					const registry = await readPaneRegistry(runtimeRoot);
 					const entry = registry[parts[1] ?? ""];
@@ -4412,6 +4505,7 @@ export default function (pi: ExtensionAPI) {
 					const result = await tmux(["select-pane", "-t", entry.paneId]);
 					if (result.code !== 0) throw new Error(result.stderr || result.stdout || "tmux select-pane failed");
 					content = `Attached to ${entry.agent}.`;
+					messageDetails = { action: "attach", agent: entry.agent };
 				} else if (command === "stop") {
 					let stoppedAgent: string | undefined;
 					await updatePaneRegistry(runtimeRoot, async (registry) => {
@@ -4422,9 +4516,11 @@ export default function (pi: ExtensionAPI) {
 						delete registry[entry.agent];
 					});
 					content = `Stopped ${stoppedAgent}.`;
+					messageDetails = { action: "stop", agent: stoppedAgent };
 				} else if (command === "collect") {
 					const collected = await pollPaneCompletions(runtimeRoot, pi, false);
 					content = `Collected ${collected} subagent completion file${collected === 1 ? "" : "s"}.`;
+					messageDetails = { action: "collect", count: collected };
 				} else if (command === "status") {
 					const registry = await readPaneRegistry(runtimeRoot);
 					const lines = await Promise.all(
@@ -4434,6 +4530,7 @@ export default function (pi: ExtensionAPI) {
 						}),
 					);
 					content = [`# Persistent subagent panes`, "", lines.join("\n") || "No persistent panes registered."].join("\n");
+					messageDetails = { action: "status", count: lines.length };
 				} else if (command === "transcripts") {
 					const records = await readTaskRegistry(runtimeRoot);
 					if (ctx.hasUI) {
@@ -4458,6 +4555,7 @@ export default function (pi: ExtensionAPI) {
 					dashboardState.visible = !dashboardState.visible;
 					syncDashboard(ctx as ExtensionContext);
 					content = `Subagent dashboard ${dashboardState.visible ? `shown (${dashboardState.mode})` : "hidden"}.`;
+					messageDetails = { action: "toggle", status: dashboardState.visible ? `shown (${dashboardState.mode})` : "hidden" };
 				} else {
 					let showName: string | undefined;
 					if (command === "show") {
@@ -4496,6 +4594,7 @@ export default function (pi: ExtensionAPI) {
 							: `Unknown agent "${showName}" for scope "${scope}". Available: ${scopedDiscovery.agents
 									.map((agent) => agent.name)
 									.join(", ") || "none"}.`;
+						messageDetails = { action: "show", agent: showName };
 					} else {
 						const formatted = formatAgentList(scopedDiscovery.agents);
 						content = [
@@ -4513,13 +4612,16 @@ export default function (pi: ExtensionAPI) {
 							"",
 							"Commands: `/agents show <name>`, `/agents start <name>`, `/agents send <name> <task>`, `/agents attach <name>`, `/agents stop <name>`, `/agents status`, `/agents transcripts`, `/agents trace <ref>`, `/agents toggle`.",
 						].join("\n");
+						messageDetails = { action: "list", count: scopedDiscovery.agents.length };
 					}
 				}
 			} catch (error) {
-				content = `Error: ${error instanceof Error ? error.message : String(error)}`;
+				const message = error instanceof Error ? error.message : String(error);
+				content = `Error: ${message}`;
+				messageDetails = { action: "error", error: message };
 			}
 
-			pi.sendMessage({ customType: "subagent-agents", content, display: true });
+			pi.sendMessage({ customType: "subagent-agents", content, details: messageDetails, display: true });
 		},
 	});
 
