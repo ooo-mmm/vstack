@@ -9,7 +9,7 @@ For Pi extension UI changes:
 # Vstack Pi extension development workflow
 
 For any `pi-extensions/**` or Pi package behavior change:
-1. Validate changed files/package before finishing.
+1. Validate before finishing — confirm new code is reachable from where it's invoked. Cross-extension calls: `pi.getCommands()` is metadata only; bridge via `globalThis[Symbol.for("vstack.pi.<topic>")]` (see modal-lock, thinking-timer, question-service for examples). If you can't live-test in Pi, say so.
 2. Commit intended Pi package changes unless user says not to.
    - Stage only intended files; leave unrelated dirty files untouched and mention them.
    - If signing fails, retry with `--no-gpg-sign`.
