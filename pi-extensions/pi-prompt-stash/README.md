@@ -1,6 +1,6 @@
 # pi-prompt-stash
 
-![Prompt stash workflow](./assets/prompt-stash-workflow.gif)
+![Prompt Stash popup](assets/stash-popup.png)
 
 Per-session prompt stash history for Pi.
 
