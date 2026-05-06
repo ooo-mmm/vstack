@@ -78,6 +78,14 @@ struct Cli {
     /// Install all items to all harnesses
     #[arg(long)]
     all: bool,
+
+    /// Allow `--global --all` to clobber an existing non-empty global lock.
+    /// Without this, vstack refuses to dump the entire source catalog over
+    /// an existing global install, which is almost always a mistake (use
+    /// `vstack refresh -g` to re-sync, or filter with --pi-extension/--skill
+    /// /etc. to install one item).
+    #[arg(long)]
+    clobber: bool,
 }
 
 #[derive(Subcommand)]
@@ -108,6 +116,9 @@ enum Commands {
         yes: bool,
         #[arg(long)]
         all: bool,
+        /// Allow `--global --all` to clobber an existing non-empty global lock.
+        #[arg(long)]
+        clobber: bool,
     },
 
     /// Remove installed agents, skills, hooks, or Pi packages
@@ -225,6 +236,7 @@ fn main() -> Result<()> {
             copy,
             yes,
             all,
+            clobber,
         }) => commands::add::run(
             source,
             global,
@@ -236,6 +248,7 @@ fn main() -> Result<()> {
             copy,
             yes,
             all,
+            clobber,
         ),
         Some(Commands::Remove {
             names,
@@ -288,6 +301,7 @@ fn main() -> Result<()> {
             cli.copy,
             cli.yes,
             cli.all,
+            cli.clobber,
         ),
     }
 }

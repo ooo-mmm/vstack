@@ -354,6 +354,7 @@ fn resolve_source_for_app(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     source: Option<String>,
     global: bool,
@@ -365,6 +366,7 @@ pub fn run(
     copy: bool,
     yes: bool,
     all: bool,
+    clobber: bool,
 ) -> Result<()> {
     // Non-interactive global guard: `--global -y` (or `--global --harness ...
     // -y`) without an item filter would install the entire source catalog
@@ -394,6 +396,57 @@ Drop --global to install at project scope (default).
 "
         );
         anyhow::bail!("global install requires --all or an explicit item filter");
+    }
+
+    // Second-line guard: --global --all -y is allowed for fresh installs but
+    // refused when there's already a populated global lock. The clobber-the-
+    // entire-catalog incident on 2026-05-06 came from an agent reaching for
+    // --all to recover from a Pi-extension rename that broke `vstack refresh`.
+    // The right move in that case is `vstack refresh` (re-sync existing) or a
+    // narrow filter (add one specific item). --clobber is the explicit
+    // "yes, replace everything globally on purpose" override.
+    if global && all && non_interactive && !clobber {
+        let global_lock_path = config::lock_file_path(true);
+        let global_lock = config::LockFile::load(&global_lock_path).unwrap_or_default();
+        let existing = global_lock.entries.len();
+        if existing > 0 {
+            let breakdown = {
+                let mut a = 0;
+                let mut s = 0;
+                let mut h = 0;
+                let mut p = 0;
+                for entry in global_lock.entries.values() {
+                    match entry.kind {
+                        config::ItemKind::Agent => a += 1,
+                        config::ItemKind::Skill => s += 1,
+                        config::ItemKind::Hook => h += 1,
+                        config::ItemKind::PiExtension => p += 1,
+                    }
+                }
+                format!("{a} agent(s), {s} skill(s), {h} hook(s), {p} Pi package(s)")
+            };
+            eprintln!(
+"
+Refusing --global --all over an existing global install.
+
+Global scope already has {existing} item(s): {breakdown}.
+
+This pattern usually means an agent is trying to recover from a broken
+state by force-reinstalling everything. The recovery commands are:
+
+  vstack refresh -g                       # re-sync existing items from source
+  vstack refresh                          # both scopes
+  vstack add --global --pi-extension <name> --harness pi -y   # add one item
+  vstack remove <name> --scope global     # drop one item
+
+If you really do want to clobber the entire global catalog from this
+source (e.g. switching vstack repos, or starting clean), pass --clobber:
+
+  vstack add --global --all --clobber -y
+"
+            );
+            anyhow::bail!("--global --all refused on non-empty global lock; pass --clobber to override");
+        }
     }
 
     let mut registry =
@@ -980,6 +1033,7 @@ Drop --global to install at project scope (default).
                 copy,
                 yes,
                 all,
+                clobber,
             );
         }
     } else {
