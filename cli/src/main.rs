@@ -167,6 +167,25 @@ enum Commands {
         /// project | global | all (default: all)
         #[arg(long)]
         scope: Option<String>,
+        /// Print per-item hash old→new and changed/unchanged status.
+        #[arg(short, long)]
+        verbose: bool,
+    },
+
+    /// Verify the live install matches its source on disk: confirms the
+    /// lock hash still matches the source, and (for Pi packages) that the
+    /// installed package directory bytes match the source directory bytes.
+    /// Use after `refresh` to confirm changes propagated, or before
+    /// declaring an extension change "done".
+    Verify {
+        /// Optional names to filter (default: all installed items).
+        names: Vec<String>,
+        /// Shortcut for `--scope global`.
+        #[arg(short, long)]
+        global: bool,
+        /// project | global | all (default: all)
+        #[arg(long)]
+        scope: Option<String>,
     },
 
     /// Update installed Pi extensions from their source repos and npm.
@@ -245,9 +264,13 @@ fn main() -> Result<()> {
             commands::check::run(scope)
         }
         Some(Commands::Update { force }) => commands::update::run(force),
-        Some(Commands::Refresh { global, scope }) => {
+        Some(Commands::Refresh { global, scope, verbose }) => {
             let scope = scope::ScopeFilter::resolve(scope.as_deref(), global, scope::ScopeFilter::All)?;
-            commands::refresh::run(scope)
+            commands::refresh::run(scope, verbose)
+        }
+        Some(Commands::Verify { names, global, scope }) => {
+            let scope = scope::ScopeFilter::resolve(scope.as_deref(), global, scope::ScopeFilter::All)?;
+            commands::verify::run(scope, &names)
         }
         Some(Commands::UpdatePi { check, scope }) => commands::update_pi::run(check, scope),
         Some(Commands::Init { name, kind }) => {

@@ -71,7 +71,8 @@ Every run prints a summary with scope (`PROJECT (...)` vs `GLOBAL (...)`), metho
 | `vstack remove <names>` | project | Uninstall items |
 | `vstack list` (alias `ls`) | all | Show installed items grouped by scope |
 | `vstack check` | all | Validate install state (outdated, orphaned, missing) |
-| `vstack refresh` | all | Reinstall locked items from current source |
+| `vstack refresh` | all | Reinstall locked items from current source. `--verbose`/`-v` prints per-item hash old→new with changed/unchanged status |
+| `vstack verify` | all | Confirm the live install matches its source on disk: lock hash vs current source, plus byte-level source-vs-install comparison for Pi packages. Exits non-zero on drift |
 | `vstack update-pi` | all | Update Pi packages by version (npm sources or vstack repos) |
 | `vstack update` | n/a | Self-update the CLI binary |
 | `vstack init <name> --kind <agent\|skill\|hook>` | n/a | Scaffold a new template in a vstack source repo |

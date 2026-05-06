@@ -259,7 +259,7 @@ pub fn refresh_items_in_scope(
 /// regenerate agent files (re-applying `vstack.toml` customizations),
 /// re-copy skills, hooks, and Pi packages. Use after editing source files
 /// to push changes to the install scope without re-running `vstack add`.
-pub fn run(scope: crate::scope::ScopeFilter) -> Result<()> {
+pub fn run(scope: crate::scope::ScopeFilter, verbose: bool) -> Result<()> {
     let mut any_action = false;
     for &global in scope.globals() {
         let lock_path = config::lock_file_path(global);
@@ -273,7 +273,7 @@ pub fn run(scope: crate::scope::ScopeFilter) -> Result<()> {
         any_action = true;
         let scope_label = if global { "GLOBAL" } else { "PROJECT" };
         eprintln!("\n─ refresh ({scope_label}) ─");
-        run_one(global)?;
+        run_one(global, verbose)?;
     }
     if !any_action {
         eprintln!("Nothing installed in selected scope(s). Run `vstack add` first.");
@@ -281,7 +281,7 @@ pub fn run(scope: crate::scope::ScopeFilter) -> Result<()> {
     Ok(())
 }
 
-fn run_one(global: bool) -> Result<()> {
+fn run_one(global: bool, verbose: bool) -> Result<()> {
     let lock_path = config::lock_file_path(global);
     let mut lock = config::LockFile::load(&lock_path)?;
 
@@ -404,6 +404,7 @@ fn run_one(global: bool) -> Result<()> {
             }
         }
     }
+    let mut changes: Vec<(String, String, String, String)> = Vec::new();
     for entry in lock.entries.values_mut() {
         if resolve_single_source(&entry.source).is_none() {
             if let Some(replacement) = &fallback_source {
@@ -413,10 +414,34 @@ fn run_one(global: bool) -> Result<()> {
                 }
             }
         }
+        let old_hash = entry.source_hash.clone();
         entry.installed_at = now.clone();
         entry.source_hash = config::compute_source_hash(entry);
+        if verbose {
+            changes.push((
+                entry.kind.label_short().to_string(),
+                entry.name.clone(),
+                old_hash,
+                entry.source_hash.clone(),
+            ));
+        }
     }
     lock.save(&lock_path)?;
+    if verbose {
+        let kind_w = changes.iter().map(|(k, _, _, _)| k.len()).max().unwrap_or(0);
+        let name_w = changes.iter().map(|(_, n, _, _)| n.len()).max().unwrap_or(0);
+        for (kind, name, old, new) in &changes {
+            let mark = if old == new { "✓" } else { "!" };
+            let label = if old == new { "unchanged" } else { "changed" };
+            let old_short = if old.is_empty() { "—".to_string() } else { old.chars().take(8).collect() };
+            let new_short: String = new.chars().take(8).collect();
+            eprintln!(
+                "  {mark} {:kw$}  {:nw$}  {} → {}  ({})",
+                kind, name, old_short, new_short, label,
+                kw = kind_w, nw = name_w,
+            );
+        }
+    }
     if repaired_sources > 0 {
         eprintln!(
             "  Repaired {} lock entry source path(s) (previous source missing)",
