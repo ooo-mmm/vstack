@@ -6,6 +6,8 @@ import { dirname, join, resolve } from "node:path";
 const INSTALL_SYMBOL = Symbol.for("vstack.pi-caveman.installed");
 const STATE_TYPE = "vstack-caveman:state";
 const STATUS_KEY = "caveman";
+const PACKAGE_ID = "pi-caveman";
+const SCOPED_PACKAGE_ID = "@vanillagreen/pi-caveman";
 
 type Mode = "off" | "lite" | "full" | "ultra" | "micro";
 type VstackConfig = Record<string, unknown>;
@@ -55,8 +57,11 @@ function readVstackConfig(cwd?: string): VstackConfig {
 		if (!existsSync(path)) continue;
 		try {
 			const parsed = JSON.parse(readFileSync(path, "utf8"));
-			const config = parsed?.vstack?.extensionManager?.config?.["pi-caveman"];
-			if (config && typeof config === "object" && !Array.isArray(config)) Object.assign(merged, config);
+			const configRoot = parsed?.vstack?.extensionManager?.config;
+			const unscoped = configRoot?.[PACKAGE_ID];
+			const scoped = configRoot?.[SCOPED_PACKAGE_ID];
+			if (unscoped && typeof unscoped === "object" && !Array.isArray(unscoped)) Object.assign(merged, unscoped);
+			if (scoped && typeof scoped === "object" && !Array.isArray(scoped)) Object.assign(merged, scoped);
 		} catch {
 			// Ignore malformed optional manager config.
 		}
