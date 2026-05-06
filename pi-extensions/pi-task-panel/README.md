@@ -1,10 +1,7 @@
 # pi-task-panel
 
-![Compact task panel](./assets/task-panel-compact.png)
-
-![Expanded task panel](./assets/task-panel-expanded.png)
-
-![Task manager popup](./assets/task-panel-manager.png)
+![Expanded task panel with phase grouping](assets/panel-expanded.png)
+![Tasks manager overlay](assets/manager.png)
 
 Persistent structured task panel above the Pi status line/editor.
 
