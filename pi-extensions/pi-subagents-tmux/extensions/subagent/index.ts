@@ -1209,6 +1209,35 @@ function createAgentsBrowserComponent(
 			}
 			return;
 		}
+		// '-' and '=' are page-step alternates that work in every tab. Put
+		// them above the active branch and above the search-input fall-through
+		// so the popup search field never captures them.
+		if (matchesKey(data, "-") || matchesKey(data, "=")) {
+			const layout = getLayout();
+			const page = Math.max(1, layout.bodyRows);
+			const delta = matchesKey(data, "-") ? -page : page;
+			if (ui.tab === "active") {
+				const items = getActiveItems();
+				const totalRows = items.length + 1;
+				if (ui.pane === "inspector") {
+					ui.inspectorScroll = Math.max(0, ui.inspectorScroll + delta);
+				} else {
+					ui.activeSelected = Math.max(0, Math.min(totalRows - 1, ui.activeSelected + delta));
+					if (ui.activeSelected < ui.activeScroll) ui.activeScroll = ui.activeSelected;
+					if (ui.activeSelected >= ui.activeScroll + layout.listRows) ui.activeScroll = ui.activeSelected - layout.listRows + 1;
+					ui.activeScroll = Math.max(0, Math.min(ui.activeScroll, Math.max(0, totalRows - layout.listRows)));
+					ui.inspectorScroll = 0;
+				}
+			} else if (ui.pane === "inspector") {
+				ui.inspectorScroll = Math.max(0, ui.inspectorScroll + delta);
+			} else {
+				ui.selected = Math.max(0, ui.selected + delta);
+				ui.inspectorScroll = 0;
+				clamp();
+			}
+			requestRender();
+			return;
+		}
 		if (ui.tab === "active") {
 			const items = getActiveItems();
 			const layout = getLayout();
@@ -1238,21 +1267,6 @@ function createAgentsBrowserComponent(
 				return;
 			}
 			if (matchesKey(data, "pagedown")) {
-				if (ui.pane === "inspector") ui.inspectorScroll += Math.max(1, layout.bodyRows);
-				else { ui.activeSelected += layout.listRows; ui.inspectorScroll = 0; clampActive(); }
-				requestRender();
-				return;
-			}
-			// '-' and '=' are page-step alternates for terminals (tmux, ghostty,
-			// etc) that capture PageUp/PageDown for their own scrollback. Use
-			// matchesKey so the kitty / legacy escape sequences both resolve.
-			if (matchesKey(data, "-")) {
-				if (ui.pane === "inspector") ui.inspectorScroll = Math.max(0, ui.inspectorScroll - Math.max(1, layout.bodyRows));
-				else { ui.activeSelected -= layout.listRows; ui.inspectorScroll = 0; clampActive(); }
-				requestRender();
-				return;
-			}
-			if (matchesKey(data, "=")) {
 				if (ui.pane === "inspector") ui.inspectorScroll += Math.max(1, layout.bodyRows);
 				else { ui.activeSelected += layout.listRows; ui.inspectorScroll = 0; clampActive(); }
 				requestRender();
@@ -1308,12 +1322,12 @@ function createAgentsBrowserComponent(
 		if (ui.tab === "active" && !hasActive) ui.tab = ui.scope;
 		const tabLine = renderAgentBrowserTabs(ui.tab, hasActive, bodyWidth, theme);
 		if (ui.tab === "active") {
-			const footer = `${ansiYellow("tab")} ${theme.fg("dim", "view · ")}${ansiYellow("↑↓")} ${theme.fg("dim", "step · ")}${ansiYellow("-/=")} ${theme.fg("dim", "page · ")}${ansiYellow("←/→")} ${theme.fg("dim", "pane · ")}${ansiYellow("ctrl+e")} ${theme.fg("dim", "view in editor · ")}${ansiYellow("esc")} ${theme.fg("dim", "close")}`;
+			const footer = `${ansiYellow("tab")} ${theme.fg("dim", "view · ")}${ansiYellow("↑↓")} ${theme.fg("dim", "step · ")}${ansiYellow("-/=")} ${theme.fg("dim", "page · ")}${ansiYellow("←/→")} ${theme.fg("dim", "pane · ")}${ansiYellow("ctrl+e")} ${theme.fg("dim", "edit · ")}${ansiYellow("esc")} ${theme.fg("dim", "close")}`;
 			const lines = [tabLine, "", ...renderActiveTabBody(activeItems, runtimeRoot, ui, bodyWidth, theme, layout), agentDivider(bodyWidth, theme), ...wrapTextWithAnsi(footer, bodyWidth)];
 			return agentFrame(lines, safeWidth, theme, layout.innerRows, "Subagents");
 		}
 		clamp();
-		const footer = `${ansiYellow("tab")} ${theme.fg("dim", "view · ")}${ansiYellow("↑↓")} ${theme.fg("dim", "navigate/scroll · ")}${ansiYellow("←/→")} ${theme.fg("dim", "pane · ")}${ansiYellow("enter")} ${theme.fg("dim", "insert · ")}${ansiYellow("ctrl+p/o/x")} ${theme.fg("dim", "pane · ")}${ansiYellow("esc")} ${theme.fg("dim", "close")}`;
+		const footer = `${ansiYellow("tab")} ${theme.fg("dim", "view · ")}${ansiYellow("↑↓")} ${theme.fg("dim", "step · ")}${ansiYellow("-/=")} ${theme.fg("dim", "page · ")}${ansiYellow("←/→")} ${theme.fg("dim", "pane · ")}${ansiYellow("enter")} ${theme.fg("dim", "insert · ")}${ansiYellow("ctrl+p/o/x")} ${theme.fg("dim", "pane ops · ")}${ansiYellow("esc")} ${theme.fg("dim", "close")}`;
 		const lines = [
 			tabLine,
 			"",
