@@ -593,7 +593,10 @@ class SessionManagerOverlay implements Focusable {
 	}
 
 	private detailRowCount(): number {
-		return this.filtered[this.selectedIndex]?.session ? 7 : 4;
+		const selectedNode = this.filtered[this.selectedIndex];
+		if (!selectedNode?.session) return 1;
+		const hasMatchSnippet = Boolean(oneLine(this.searchInput.getValue()) && selectedNode.snippet);
+		return hasMatchSnippet ? 3 : 2;
 	}
 
 	private responsiveVisibleRows(): number {
@@ -1159,36 +1162,20 @@ class SessionManagerOverlay implements Focusable {
 		const search = oneLine(this.searchInput.getValue());
 		const state = `${shown} shown · ${scope} · ${this.sortMode} sort · ${this.nameFilter === "named" ? "named only" : "all names"}${this.showPath ? " · paths on" : ""}${search ? ` · query “${truncateToWidth(search, 28, "…")}”` : ""}`;
 		lines.push(ui.row(ui.dim(state)));
-		lines.push(ui.row(""));
 		if (!selected) {
-			lines.push(ui.row(ui.dim("No session selected")));
-			lines.push(ui.row(""));
 			return lines;
 		}
-
-		const title = sessionResumeTitle(selected);
-		const badge = this.isCurrent(selected) ? ui.success("current") : isNamed(selected) ? ui.warning("named") : ui.dim("session");
-		const titleWidth = Math.max(10, inner - visibleWidth(badge) - 2);
-		const titleText = truncateToWidth(title, titleWidth, "…");
-		lines.push(ui.row(titleText + " ".repeat(Math.max(1, inner - visibleWidth(titleText) - visibleWidth(badge))) + badge));
-
-		const meta = [`${selected.messageCount} msg`, formatAge(selected.modified), selected.id ? selected.id.slice(0, 8) : ""].filter(Boolean).join(" · ");
-		const metaPrefix = ui.dim("meta    ");
-		lines.push(ui.row(metaPrefix + ui.muted(truncateToWidth(meta, Math.max(10, inner - visibleWidth(metaPrefix)), "…"))));
-		lines.push(ui.row(""));
 
 		const locationLabel = this.showPath ? "file" : "cwd";
 		const location = this.showPath ? selected.path : selected.cwd || selected.path;
 		const locationPrefix = ui.dim(`${locationLabel.padEnd(7)} `);
 		lines.push(ui.row(locationPrefix + ui.muted(truncateToWidth(shortenPath(location), Math.max(10, inner - visibleWidth(locationPrefix)), "…"))));
 
-		const snippet = selectedNode?.snippet || oneLine(selected.firstMessage);
+		const snippet = oneLine(this.searchInput.getValue()) ? selectedNode?.snippet : undefined;
 		if (snippet) {
-			const previewPrefix = ui.dim(`${selectedNode?.snippet ? "match" : "first"}   `);
+			const previewPrefix = ui.dim("match   ");
 			const preview = truncateToWidth(styleSearchMatches(snippet, this.searchInput.getValue()), Math.max(10, inner - visibleWidth(previewPrefix) - 1), "…");
 			lines.push(ui.row(previewPrefix + ui.muted(`“${preview}`)));
-		} else {
-			lines.push(ui.row(""));
 		}
 		return lines;
 	}
