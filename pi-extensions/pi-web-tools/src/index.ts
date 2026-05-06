@@ -59,6 +59,17 @@ function registerDiagnosticCommand(pi: ExtensionAPI): void {
 		if (settings.warnings.length) lines.push("warnings:", ...settings.warnings.map((line) => `- ${line}`));
 		ctx.ui.notify(lines.join("\n"), "info");
 	};
+	const tryOpenExtensionManagerSettings = async (ctx: ExtensionCommandContext): Promise<boolean> => {
+		const host = globalThis as unknown as Record<PropertyKey, unknown>;
+		const openQuickSettings = host[Symbol.for("vstack.pi.extension-manager.open-quick-settings")];
+		if (typeof openQuickSettings !== "function") return false;
+		try {
+			await (openQuickSettings as (ctx: ExtensionCommandContext, hint?: string) => Promise<void>)(ctx, "pi-web-tools");
+			return true;
+		} catch {
+			return false;
+		}
+	};
 	const setProvider = (next: WebProvider, ctx: ExtensionCommandContext) => {
 		if (!WEB_PROVIDERS.includes(next)) {
 			ctx.ui.notify(`Unknown provider: ${next}. Use auto, exa, openai-native, perplexity, or gemini.`, "error");
@@ -69,11 +80,16 @@ function registerDiagnosticCommand(pi: ExtensionAPI): void {
 		ctx.ui.notify(`Web Tools provider set to ${next} for this session. Persist via vstack.extensionManager.config[\"pi-web-tools\"].defaultProvider.`, "info");
 	};
 	pi.registerCommand("web-tools", {
-		description: "Show Web Tools status or set provider. Usage: /web-tools:doctor | /web-tools:provider:<name>",
+		description: "Open Web Tools settings (or status/provider). Usage: /web-tools | /web-tools:doctor | /web-tools:provider:<name>",
 		handler: async (args: string, ctx) => {
 			const parts = args.trim().split(/\s+/).filter(Boolean);
 			if (parts[0] === "provider" && parts[1]) {
 				setProvider(parts[1] as WebProvider, ctx);
+				return;
+			}
+			if (parts.length === 0) {
+				if (await tryOpenExtensionManagerSettings(ctx)) return;
+				showStatus(ctx);
 				return;
 			}
 			showStatus(ctx);

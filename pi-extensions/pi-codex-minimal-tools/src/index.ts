@@ -171,12 +171,28 @@ function registerDiagnosticCommand(pi: ExtensionAPI): void {
 		if (diagnostics.length > 0) lines.push("settings diagnostics:", ...diagnostics.map((line) => `- ${line}`));
 		ctx.ui.notify(lines.join("\n"), "info");
 	};
+	const tryOpenExtensionManagerSettings = async (ctx: ExtensionCommandContext): Promise<boolean> => {
+		const host = globalThis as unknown as Record<PropertyKey, unknown>;
+		const openQuickSettings = host[Symbol.for("vstack.pi.extension-manager.open-quick-settings")];
+		if (typeof openQuickSettings !== "function") return false;
+		try {
+			await (openQuickSettings as (ctx: ExtensionCommandContext, hint?: string) => Promise<void>)(ctx, "pi-codex-minimal-tools");
+			return true;
+		} catch {
+			return false;
+		}
+	};
 	pi.registerCommand("codex-minimal-tools", {
-		description: "Show Codex Minimal Tools status and diagnostics.",
+		description: "Open Codex Minimal Tools settings (or status). Usage: /codex-minimal-tools | /codex-minimal-tools:doctor",
 		handler: async (args: string, ctx) => {
 			const subcommand = args.trim().split(/\s+/, 1)[0]?.toLowerCase();
 			if (subcommand === "doctor") {
 				showDoctor(ctx);
+				return;
+			}
+			if (!subcommand) {
+				if (await tryOpenExtensionManagerSettings(ctx)) return;
+				ctx.ui.notify(statusLines(pi, ctx as ExtensionContext).join("\n"), "info");
 				return;
 			}
 			ctx.ui.notify(statusLines(pi, ctx as ExtensionContext).join("\n"), "info");
