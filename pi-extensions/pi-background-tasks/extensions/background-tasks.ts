@@ -31,6 +31,14 @@ const BG_WIDGET_KEY = "vstack-background-tasks";
 const BG_INSTALL_SYMBOL = Symbol.for("vstack.background-tasks.installed");
 const VSTACK_MODAL_LOCK_SYMBOL = Symbol.for("vstack.pi.modal-lock");
 
+// Nerd Font glyphs (Font Awesome subset). Status icons use these instead of
+// unicode dingbats so chat output renders consistently regardless of any
+// emoji-presentation fallback in the user's font stack.
+const ICONS = {
+	check: "\uf00c", // nf-fa-check
+	times: "\uf00d", // nf-fa-times
+} as const;
+
 const DEFAULT_TIMEOUT_MS = 0;
 const DEFAULT_OUTPUT_SETTLE_MS = 1_500;
 const DEFAULT_FORCE_KILL_GRACE_MS = 5_000;
@@ -682,8 +690,8 @@ function bgStatusColor(status: BackgroundTaskStatus): "success" | "error" | "war
 
 function bgStatusIcon(status: BackgroundTaskStatus, theme: Theme): string {
 	if (status === "running") return theme.fg("warning", "●");
-	if (status === "completed") return theme.fg("success", "✓");
-	if (status === "failed" || status === "timed_out") return theme.fg("error", "✗");
+	if (status === "completed") return theme.fg("success", ICONS.check);
+	if (status === "failed" || status === "timed_out") return theme.fg("error", ICONS.times);
 	return theme.fg("muted", "■");
 }
 
@@ -873,7 +881,7 @@ function renderBgToolResult(result: any, options: any, theme: Theme, context: an
 
 	if (context?.isError || result?.isError) {
 		const first = raw.split(/\r?\n/)[0] || "background task failed";
-		return renderLines(`${theme.fg("error", "✗ ")}${bgToolLabel(theme, "Background task")} ${theme.fg("error", first)}`);
+		return renderLines(`${theme.fg("error", `${ICONS.times} `)}${bgToolLabel(theme, "Background task")} ${theme.fg("error", first)}`);
 	}
 
 	if (action === "list") return renderEmpty();

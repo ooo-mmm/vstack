@@ -986,7 +986,7 @@ class SessionManagerOverlay implements Focusable {
 	}
 
 	private renderHeader(inner: number, accent: (s: string) => string, muted: (s: string) => string): string {
-		const title = accent(this.theme.bold("✦ Session Manager"));
+		const title = accent(this.theme.bold(" Session Manager")); // nf-fa-star
 		const sortText = `${muted("sort:")} ${accent(this.sortMode)}`;
 		const nameText = `${muted("names:")} ${accent(this.nameFilter)}`;
 		const pathText = `${muted("path:")} ${this.showPath ? accent("on") : muted("off")}`;

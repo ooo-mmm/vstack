@@ -28,6 +28,16 @@ const PADDING_X = 2;
 const PADDING_Y = 0;
 const OPTION_ROWS = 10;
 const ANSI_GREEN_FG = "\x1b[32m";
+
+// Nerd Font glyphs (Font Awesome subset) used in place of unicode dingbats so
+// chat output renders consistently regardless of emoji-presentation fallback.
+const ICONS = {
+	check: "",          // nf-fa-check
+	checkSquare: "",    // nf-fa-check_square_o
+	square: "",         // nf-fa-square_o
+	circleFilled: "",   // nf-fa-circle
+	circleOpen: "",     // nf-fa-circle_o
+} as const;
 const ANSI_YELLOW_FG = "\x1b[33m";
 const ANSI_FG_RESET = "\x1b[39m";
 
@@ -741,7 +751,7 @@ async function openQuestionUi(ctx: ExtensionContext, pending: PendingQuestion): 
 			const renderTabs = (width: number): string => {
 				const currentAnswers = answers();
 				const parts = request.questions.map((question, index) => {
-					const doneMark = currentAnswers[index].length > 0 ? "✓ " : "";
+					const doneMark = currentAnswers[index].length > 0 ? `${ICONS.check} ` : "";
 					const label = ` ${doneMark}${index + 1}. ${question.header} `;
 					if (index === activeTab) return theme.fg("accent", theme.inverse(theme.bold(label)));
 					const color = currentAnswers[index].length > 0 ? "success" : "accent";
@@ -758,9 +768,9 @@ async function openQuestionUi(ctx: ExtensionContext, pending: PendingQuestion): 
 				const customValue = customAnswers[activeTab].trim();
 				const isChecked = custom ? customValue.length > 0 : selections[activeTab].has(option!.label);
 				const marker = " ";
-				const checkbox = question.multiple ? (isChecked ? "☑" : "☐") : isChecked ? "●" : "○";
+				const checkbox = question.multiple ? (isChecked ? ICONS.checkSquare : ICONS.square) : isChecked ? ICONS.circleFilled : ICONS.circleOpen;
 				const prefix = `${marker}${theme.fg(isChecked || isCursor ? "text" : "muted", checkbox)} `;
-				const prefixWidth = visibleWidth(" ☐ ");
+				const prefixWidth = visibleWidth(` ${ICONS.square} `);
 				const rawLabel = custom && customValue ? `${question.customLabel}: ${customValue}` : custom ? question.customLabel : option!.label;
 				const rawDesc = custom
 					? customValue ? "edit custom response" : question.customPlaceholder
