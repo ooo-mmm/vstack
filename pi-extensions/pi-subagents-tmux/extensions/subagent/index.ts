@@ -782,42 +782,53 @@ function renderActiveAgentList(items: SubagentDashboardItem[], ui: AgentBrowserU
 function renderActiveAgentDetail(item: SubagentDashboardItem | undefined, ui: AgentBrowserUiState, width: number, rows: number, theme: Theme): string[] {
 	if (!item) return [`${agentPaneTitle(theme, "Detail", ui.pane === "inspector")} ${theme.fg("dim", "Select an agent to inspect.")}`];
 	const safeWidth = Math.max(8, width);
-	const push = (target: string[], text: string) => {
+	const wrap = (text: string): string[] => {
 		const wrapped = wrapTextWithAnsi(text, safeWidth);
-		target.push(...(wrapped.length > 0 ? wrapped : [""]));
+		return wrapped.length > 0 ? wrapped : [""];
 	};
-	const lines: string[] = [];
-	push(lines, `${agentPaneTitle(theme, "Detail", ui.pane === "inspector")} ${theme.fg("accent", theme.bold(item.agent))} ${dashboardStatusText(item, theme)} ${theme.fg("dim", dashboardKindLabel(item.kind))}`);
-	push(lines, `${theme.fg("muted", "Task ID")}: ${theme.fg("dim", item.taskId)}`);
-	if (item.task) push(lines, `${theme.fg("muted", "Task")}: ${oneLinePreview(item.task, Math.max(60, safeWidth - 8))}`);
-	if (item.transcriptPath) push(lines, `${theme.fg("muted", "Transcript")}: ${theme.fg("dim", compactPath(item.transcriptPath))}`);
+	// Build the full detail body first, then apply the inspector scroll
+	// across the whole list so up/down moves the entire viewport - not just
+	// the tail block at the bottom (which is often empty when there is no
+	// transcript or the file is shorter than the viewport).
+	const titleLine = `${agentPaneTitle(theme, "Detail", ui.pane === "inspector")} ${theme.fg("accent", theme.bold(item.agent))} ${dashboardStatusText(item, theme)} ${theme.fg("dim", dashboardKindLabel(item.kind))}`;
+	const body: string[] = [];
+	body.push(...wrap(`${theme.fg("muted", "Task ID")}: ${theme.fg("dim", item.taskId)}`));
+	if (item.task) body.push(...wrap(`${theme.fg("muted", "Task")}: ${oneLinePreview(item.task, Math.max(60, safeWidth - 8))}`));
+	if (item.transcriptPath) body.push(...wrap(`${theme.fg("muted", "Transcript")}: ${theme.fg("dim", compactPath(item.transcriptPath))}`));
 	if (item.usage) {
 		const usageLine = formatUsageStatsForDashboard(item.usage).join(" \u00b7 ");
-		if (usageLine) push(lines, `${theme.fg("muted", "Usage")}: ${theme.fg("dim", usageLine)}`);
+		if (usageLine) body.push(...wrap(`${theme.fg("muted", "Usage")}: ${theme.fg("dim", usageLine)}`));
 	}
 	if (item.message) {
-		lines.push("");
-		push(lines, theme.fg("muted", theme.bold("Latest Message")));
+		body.push("");
+		body.push(...wrap(theme.fg("muted", theme.bold("Latest Message"))));
 		const wrapped = wrapTextWithAnsi(item.message, safeWidth);
-		lines.push(...wrapped.slice(0, 6));
+		body.push(...wrapped.slice(0, 8));
 	}
-	lines.push("");
-	push(lines, `${theme.fg("muted", theme.bold("Transcript Tail"))} ${theme.fg("dim", "(Ctrl+E opens full in $EDITOR)")}`);
+	body.push("");
+	body.push(...wrap(theme.fg("muted", theme.bold("Transcript Tail"))));
 	const tail = readTranscriptTail(item.transcriptPath, 400);
 	if (tail.length === 0) {
-		push(lines, theme.fg("dim", "(transcript empty or unavailable)"));
+		body.push(...wrap(theme.fg("dim", "(transcript empty or unavailable)")));
 	} else {
-		const visibleRows = Math.max(1, rows - lines.length);
-		const offset = Math.max(0, Math.min(ui.inspectorScroll, Math.max(0, tail.length - visibleRows)));
-		const slice = tail.slice(offset, offset + visibleRows);
-		for (const line of slice) push(lines, theme.fg("toolOutput", line));
-		const after = Math.max(0, tail.length - offset - slice.length);
-		if (after > 0) push(lines, theme.fg("dim", `\u2193 ${after} more lines`));
-		if (offset > 0) push(lines, theme.fg("dim", `\u2191 ${offset} earlier lines`));
+		for (const line of tail) body.push(...wrap(theme.fg("toolOutput", line)));
 	}
-	return lines.slice(0, rows);
+	// Title is sticky on the first row; body scrolls beneath it.
+	const allLines: string[] = [titleLine];
+	const visibleBodyRows = Math.max(1, rows - 1);
+	const maxOffset = Math.max(0, body.length - visibleBodyRows);
+	const offset = Math.max(0, Math.min(ui.inspectorScroll, maxOffset));
+	const slice = body.slice(offset, offset + visibleBodyRows);
+	allLines.push(...slice);
+	if (offset > 0 || maxOffset > 0) {
+		const hint = `${offset > 0 ? `\u2191 ${offset} earlier` : ""}${offset > 0 && offset < maxOffset ? "  " : ""}${offset < maxOffset ? `\u2193 ${maxOffset - offset} more` : ""}`.trim();
+		if (hint && allLines.length < rows) {
+			const lastIndex = allLines.length - 1;
+			allLines[lastIndex] = `${allLines[lastIndex]} ${theme.fg("dim", hint)}`;
+		}
+	}
+	return allLines.slice(0, rows);
 }
-
 function renderActiveTabBody(items: SubagentDashboardItem[], ui: AgentBrowserUiState, width: number, theme: Theme, layout: AgentBrowserLayout): string[] {
 	const maxLeftWidth = Math.max(10, width - 13);
 	const desiredLeftWidth = Math.min(AGENTS_LEFT_MAX_WIDTH, Math.floor(width * 0.32), maxLeftWidth);
@@ -833,7 +844,7 @@ function renderActiveTabBody(items: SubagentDashboardItem[], ui: AgentBrowserUiS
 	for (let i = 0; i < bodyRows; i += 1) {
 		lines.push(`${agentPad(left[i] ?? "", leftWidth)} ${theme.fg("dim", "\u2502")} ${truncateToWidth(right[i] ?? "", rightWidth, "")}`);
 	}
-	const legend = `${theme.fg("muted", "Active")}: ${theme.fg("warning", "running/waiting")} \u00b7 ${theme.fg("success", "completed")} \u00b7 ${theme.fg("error", "failed")} \u00b7 Ctrl+E open transcript in $EDITOR`;
+	const legend = `${theme.fg("muted", "Active")}: ${theme.fg("warning", "running/waiting")} \u00b7 ${theme.fg("success", "completed")} \u00b7 ${theme.fg("error", "failed")}`;
 	lines.push(...wrapTextWithAnsi(legend, width));
 	return lines;
 }
@@ -1028,7 +1039,7 @@ function createAgentsBrowserComponent(
 		if (ui.tab === "active" && !hasActive) ui.tab = ui.scope;
 		const tabLine = renderAgentBrowserTabs(ui.tab, hasActive, bodyWidth, theme);
 		if (ui.tab === "active") {
-			const footer = `${ansiYellow("tab")} ${theme.fg("dim", "view · ")}${ansiYellow("↑↓")} ${theme.fg("dim", "navigate · ")}${ansiYellow("←/→")} ${theme.fg("dim", "pane · ")}${ansiYellow("ctrl+e")} ${theme.fg("dim", "transcript in $EDITOR · ")}${ansiYellow("esc")} ${theme.fg("dim", "close")}`;
+			const footer = `${ansiYellow("tab")} ${theme.fg("dim", "view · ")}${ansiYellow("↑↓")} ${theme.fg("dim", "navigate · ")}${ansiYellow("←/→")} ${theme.fg("dim", "pane · ")}${ansiYellow("ctrl+e")} ${theme.fg("dim", "view in editor · ")}${ansiYellow("esc")} ${theme.fg("dim", "close")}`;
 			const lines = [tabLine, "", ...renderActiveTabBody(activeItems, ui, bodyWidth, theme, layout), agentDivider(bodyWidth, theme), footer];
 			return agentFrame(lines, safeWidth, theme, layout.innerRows, "Subagents");
 		}
