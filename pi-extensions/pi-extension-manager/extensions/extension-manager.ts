@@ -8,6 +8,7 @@
  */
 
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext, Theme, ThemeColor } from "@mariozechner/pi-coding-agent";
+import type { AutocompleteItem } from "@mariozechner/pi-tui";
 import { matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@mariozechner/pi-tui";
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -2416,13 +2417,60 @@ function createQuickSettingsComponent(pi: ExtensionAPI, ctx: ExtensionCommandCon
 	return { handleInput, invalidate() {}, render };
 }
 
-async function openQuickSettings(pi: ExtensionAPI, ctx: ExtensionCommandContext | ExtensionContext): Promise<void> {
+function resolveQuickSettingsTab(tabs: ManagerTab[], hint: string): TopTab | undefined {
+	const needle = hint.trim().toLowerCase();
+	if (!needle) return undefined;
+	if (needle === "all") return TAB_ALL;
+	for (const tab of tabs) {
+		if (tab.id === TAB_ALL) continue;
+		const pkg = (tab.packageName ?? "").toLowerCase();
+		const label = tab.label.toLowerCase();
+		if (tab.id.toLowerCase() === needle || pkg === needle || label === needle) return tab.id;
+	}
+	for (const tab of tabs) {
+		if (tab.id === TAB_ALL) continue;
+		const pkg = (tab.packageName ?? "").toLowerCase();
+		const label = tab.label.toLowerCase();
+		if (pkg.includes(needle) || label.includes(needle)) return tab.id;
+	}
+	return undefined;
+}
+
+function quickSettingsCompletions(pi: ExtensionAPI, ctx: ExtensionCommandContext | ExtensionContext, prefix: string): AutocompleteItem[] | null {
+	try {
+		const inventory = buildInventory(pi, ctx as ExtensionContext);
+		const tabs = quickSettingsTabs(quickSettingRows(inventory));
+		const query = prefix.trim().toLowerCase();
+		const items: AutocompleteItem[] = tabs
+			.filter((tab) => tab.id !== TAB_ALL && tab.packageName)
+			.map((tab) => ({
+				value: tab.packageName!,
+				label: tab.label,
+				description: `Open ${tab.label} settings`,
+			}));
+		const filtered = query
+			? items.filter((item) => item.value.toLowerCase().includes(query) || (item.label ?? item.value).toLowerCase().includes(query))
+			: items;
+		return filtered.length > 0 ? filtered : null;
+	} catch {
+		return null;
+	}
+}
+
+async function openQuickSettings(pi: ExtensionAPI, ctx: ExtensionCommandContext | ExtensionContext, initialTabHint?: string): Promise<void> {
 	const inventory = buildInventory(pi, ctx as ExtensionContext);
 	if (settingPackages(inventory).length === 0) {
 		ctx.ui.notify("No vstack extension settings are declared by installed packages.", "info");
 		return;
 	}
-	const ui: QuickSettingsUiState = { scroll: 0, search: "", selected: 0, tab: TAB_ALL };
+	let initialTab: TopTab = TAB_ALL;
+	if (initialTabHint && initialTabHint.trim()) {
+		const tabs = quickSettingsTabs(quickSettingRows(inventory));
+		const resolved = resolveQuickSettingsTab(tabs, initialTabHint);
+		if (resolved) initialTab = resolved;
+		else ctx.ui.notify(`No settings tab matches "${initialTabHint}". Showing All.`, "warning");
+	}
+	const ui: QuickSettingsUiState = { scroll: 0, search: "", selected: 0, tab: initialTab };
 	const releaseModalLock = acquireVstackModalLock();
 	try {
 		await ctx.ui.custom<QuickSettingsAction>(
@@ -2480,22 +2528,30 @@ export default function extensionManager(pi: ExtensionAPI): void {
 	pi.registerCommand("extensions", {
 		description: "Browse, toggle, inspect, and configure Pi extension-like resources.",
 		handler: async (args, ctx) => {
-			const trimmed = args.trim().toLowerCase();
-			if (trimmed === "settings") {
+			const trimmed = args.trim();
+			const lower = trimmed.toLowerCase();
+			if (lower === "settings") {
 				await openQuickSettings(pi, ctx);
+				return;
+			}
+			if (lower.startsWith("settings ")) {
+				await openQuickSettings(pi, ctx, trimmed.slice("settings ".length));
 				return;
 			}
 			await openManager(pi, ctx, TAB_ALL);
 		},
 	});
 
+	let activeCtx: ExtensionContext | undefined;
 	pi.registerCommand("extensions:settings", {
-		description: "Open the quick extension settings editor",
-		handler: async (_args, ctx) => openQuickSettings(pi, ctx),
+		description: "Open the quick extension settings editor (optional package name jumps to that tab)",
+		getArgumentCompletions: (prefix: string) => activeCtx ? quickSettingsCompletions(pi, activeCtx, prefix) : null,
+		handler: async (args, ctx) => openQuickSettings(pi, ctx, args),
 	});
 
 
 	pi.on("session_start", (_event, ctx) => {
+		activeCtx = ctx;
 		const inventory = buildInventory(pi, ctx);
 		const disabledTools = new Set(
 			inventory.items.filter((item) => item.kind === "tool" && item.state === "disabled").map((item) => item.displayName),

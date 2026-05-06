@@ -632,7 +632,7 @@ function toolResultContent(summary: string, state: TaskPanelState, cwd: string):
 
 const TaskToolParams = Type.Object({
 	action: StringEnum(["replace", "add_phase", "add_task", "start_task", "mark_done", "drop_task", "remove_task", "append_note", "set_panel"] as const),
-	tasks: Type.Optional(Type.Array(Type.Object({ content: Type.String(), status: Type.Optional(Type.String()), phase: Type.Optional(Type.String()), notes: Type.Optional(Type.Array(Type.String())) }))),
+	tasks: Type.Optional(Type.Array(Type.Object({ content: Type.Optional(Type.String()), task: Type.Optional(Type.String()), status: Type.Optional(Type.String()), phase: Type.Optional(Type.String()), notes: Type.Optional(Type.Array(Type.String())) }))),
 	phase: Type.Optional(Type.String()),
 	task: Type.Optional(Type.String()),
 	note: Type.Optional(Type.String()),
@@ -969,6 +969,7 @@ export default function taskPanel(pi: ExtensionAPI): void {
 		promptGuidelines: [
 			"Use tasks_write to keep a visible task list when the user asks for multi-step work or when you need to track progress across tool calls.",
 			"Use tasks_write replace for a fresh plan, add_task for discovered follow-ups, start_task before working a task, and mark_done/drop_task immediately when status changes.",
+			"Param shape differs by action. replace: { action: 'replace', tasks: [{ content: '<text>', phase?: '<phase>', status?: 'pending' }] }. Single-task actions (add_task/start_task/mark_done/drop_task/remove_task/append_note): top-level { task: '<text or id>', phase?, note? } — no tasks[] array.",
 			"Before final replies that claim work is done, fixed, committed, verified, or no longer relevant, call tasks_write to reconcile the active task first.",
 			"tasks_write runs sequentially and automatically advances to the next pending task after mark_done/drop_task; do not issue a separate start_task unless switching to a non-next task.",
 			"tasks_write hides the panel when all tasks are complete and shows it again when pending work appears.",
@@ -979,7 +980,7 @@ export default function taskPanel(pi: ExtensionAPI): void {
 			if (!runCtx) throw new Error("No active Pi context for tasks_write");
 			const message = mutate(runCtx, () => {
 				switch (params.action) {
-					case "replace": state = emptyState(runCtx.cwd); for (const input of params.tasks ?? []) { const task = addTask(state, input.content, input.phase, runCtx.cwd); task.status = isStatus(input.status) ? input.status : "pending"; task.notes = input.notes ?? []; } updatePanelAfterTaskChange(state, runCtx.cwd); return `Replaced tasks (${state.tasks.length})`;
+					case "replace": state = emptyState(runCtx.cwd); for (const input of params.tasks ?? []) { const text = input.content ?? input.task ?? ""; if (!text) continue; const task = addTask(state, text, input.phase, runCtx.cwd); task.status = isStatus(input.status) ? input.status : "pending"; task.notes = input.notes ?? []; } updatePanelAfterTaskChange(state, runCtx.cwd); return `Replaced tasks (${state.tasks.length})`;
 					case "add_phase": ensurePhase(state, params.phase ?? "General"); return params.phase ?? "General";
 					case "add_task": return addTask(state, params.task ?? "Task", params.phase, runCtx.cwd).content;
 					case "start_task": return startTask(state, params.task ?? "", runCtx.cwd)?.content ?? "No task matched";

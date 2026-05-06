@@ -4443,9 +4443,22 @@ export default function qol(pi: ExtensionAPI): void {
 		}
 	}
 
+	const tryOpenExtensionManagerSettings = async (ctx: ExtensionCommandContext): Promise<boolean> => {
+		const commands = Array.isArray((pi as any).getCommands?.()) ? (pi as any).getCommands() : [];
+		const settings = commands.find((command: any) => command?.name === "extensions:settings" && typeof command?.handler === "function");
+		if (!settings) return false;
+		try {
+			await settings.handler("pi-qol", ctx);
+			return true;
+		} catch {
+			return false;
+		}
+	};
+
 	const dispatchQol = async (sub: string, rest: string, ctx: ExtensionCommandContext) => {
 		const restLower = rest.toLowerCase();
 		if (sub === "status") {
+			if (await tryOpenExtensionManagerSettings(ctx)) return;
 			ctx.ui.notify(statusMessage(ctx), "info");
 			return;
 		}
