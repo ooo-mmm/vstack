@@ -1,6 +1,7 @@
 working/
 HT-AGENTS.md
 .env.local
+.env.npm
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
 .cache/

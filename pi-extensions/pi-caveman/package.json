@@ -1,29 +1,144 @@
 {
-  "name": "pi-caveman",
-  "version": "0.1.0",
+  "name": "@vanillagreen/pi-caveman",
+  "version": "1.0.0",
   "description": "Native Pi caveman communication mode with session persistence, slash command control, status badge, and settings-manager integration.",
   "license": "MIT",
-  "keywords": ["pi-package", "pi", "coding-agent", "caveman", "prompt"],
-  "pi": { "extensions": ["./extensions/caveman.ts"] },
+  "keywords": [
+    "pi-package",
+    "pi",
+    "coding-agent",
+    "caveman",
+    "prompt"
+  ],
+  "pi": {
+    "extensions": [
+      "./extensions/caveman.ts"
+    ],
+    "image": "https://raw.githubusercontent.com/vanillagreencom/vstack/main/pi-extensions/pi-caveman/assets/command-autocomplete.png"
+  },
   "vstack": {
     "extensionManager": {
       "displayName": "Caveman",
       "settings": [
-        { "key": "enabled", "label": "Enable caveman by default", "description": "Start sessions in the configured default caveman mode unless a session override says otherwise.", "type": "boolean", "default": false, "category": "Mode", "apply": "session" },
-        { "key": "defaultMode", "label": "Default mode", "description": "Mode used when enabling caveman with no explicit mode.", "type": "enum", "enumValues": ["lite", "full", "ultra", "micro"], "default": "full", "category": "Mode", "apply": "live" },
-        { "key": "showStatusBadge", "label": "Show status badge", "description": "Show CAVEMAN status while active.", "type": "boolean", "default": true, "category": "UI", "apply": "live" },
-        { "key": "autoClarityEscape", "label": "Auto clarity escape", "description": "Temporarily use normal clarity for destructive/security/clarification turns.", "type": "boolean", "default": true, "category": "Safety", "apply": "live" },
-        { "key": "resumeAfterClarityEscape", "label": "Resume after clarity escape", "description": "Keep caveman mode active after a temporary clarity escape.", "type": "boolean", "default": true, "category": "Safety", "apply": "live" },
-        { "key": "sessionOverrideAllowed", "label": "Allow session override", "description": "Allow /caveman to override manager defaults in the current session.", "type": "boolean", "default": true, "category": "Mode", "apply": "live" },
-        { "key": "boundaryNormalForCode", "label": "Normal code output", "description": "Tell the model to keep code and code blocks normal.", "type": "boolean", "default": true, "category": "Boundaries", "apply": "live" },
-        { "key": "boundaryNormalForCommits", "label": "Normal commits", "description": "Tell the model to keep commit messages normal unless explicitly asked otherwise.", "type": "boolean", "default": true, "category": "Boundaries", "apply": "live" },
-        { "key": "boundaryNormalForReviews", "label": "Normal reviews", "description": "Tell the model to keep formal reviews/PR text normal unless explicitly asked otherwise.", "type": "boolean", "default": true, "category": "Boundaries", "apply": "live" },
-        { "key": "customPromptSuffix", "label": "Custom prompt suffix", "description": "Extra instruction appended to caveman prompt injection.", "type": "string", "default": "", "category": "Advanced", "apply": "live" }
+        {
+          "key": "enabled",
+          "label": "Enable caveman by default",
+          "description": "Start sessions in the configured default caveman mode unless a session override says otherwise.",
+          "type": "boolean",
+          "default": false,
+          "category": "Mode",
+          "apply": "session"
+        },
+        {
+          "key": "defaultMode",
+          "label": "Default mode",
+          "description": "Mode used when enabling caveman with no explicit mode.",
+          "type": "enum",
+          "enumValues": [
+            "lite",
+            "full",
+            "ultra",
+            "micro"
+          ],
+          "default": "full",
+          "category": "Mode",
+          "apply": "live"
+        },
+        {
+          "key": "showStatusBadge",
+          "label": "Show status badge",
+          "description": "Show CAVEMAN status while active.",
+          "type": "boolean",
+          "default": true,
+          "category": "UI",
+          "apply": "live"
+        },
+        {
+          "key": "autoClarityEscape",
+          "label": "Auto clarity escape",
+          "description": "Temporarily use normal clarity for destructive/security/clarification turns.",
+          "type": "boolean",
+          "default": true,
+          "category": "Safety",
+          "apply": "live"
+        },
+        {
+          "key": "resumeAfterClarityEscape",
+          "label": "Resume after clarity escape",
+          "description": "Keep caveman mode active after a temporary clarity escape.",
+          "type": "boolean",
+          "default": true,
+          "category": "Safety",
+          "apply": "live"
+        },
+        {
+          "key": "sessionOverrideAllowed",
+          "label": "Allow session override",
+          "description": "Allow /caveman to override manager defaults in the current session.",
+          "type": "boolean",
+          "default": true,
+          "category": "Mode",
+          "apply": "live"
+        },
+        {
+          "key": "boundaryNormalForCode",
+          "label": "Normal code output",
+          "description": "Tell the model to keep code and code blocks normal.",
+          "type": "boolean",
+          "default": true,
+          "category": "Boundaries",
+          "apply": "live"
+        },
+        {
+          "key": "boundaryNormalForCommits",
+          "label": "Normal commits",
+          "description": "Tell the model to keep commit messages normal unless explicitly asked otherwise.",
+          "type": "boolean",
+          "default": true,
+          "category": "Boundaries",
+          "apply": "live"
+        },
+        {
+          "key": "boundaryNormalForReviews",
+          "label": "Normal reviews",
+          "description": "Tell the model to keep formal reviews/PR text normal unless explicitly asked otherwise.",
+          "type": "boolean",
+          "default": true,
+          "category": "Boundaries",
+          "apply": "live"
+        },
+        {
+          "key": "customPromptSuffix",
+          "label": "Custom prompt suffix",
+          "description": "Extra instruction appended to caveman prompt injection.",
+          "type": "string",
+          "default": "",
+          "category": "Advanced",
+          "apply": "live"
+        }
       ]
     }
   },
   "peerDependencies": {
     "@mariozechner/pi-coding-agent": "*"
   },
-  "files": ["extensions/", "assets/", "README.md", "package.json"]
+  "files": [
+    "extensions/",
+    "assets/",
+    "README.md",
+    "package.json"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vanillagreencom/vstack.git",
+    "directory": "pi-extensions/pi-caveman"
+  },
+  "homepage": "https://github.com/vanillagreencom/vstack/tree/main/pi-extensions/pi-caveman",
+  "bugs": {
+    "url": "https://github.com/vanillagreencom/vstack/issues"
+  },
+  "author": "vanillagreen",
+  "publishConfig": {
+    "access": "public"
+  }
 }

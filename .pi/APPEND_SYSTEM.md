@@ -21,3 +21,59 @@ For any `pi-extensions/**` or Pi package behavior change:
 Worktree/feature branch dev: test via local project Pi settings for that checkout; do not add vstack repo sources pointing at temp/worktree paths.
 
 General `vstack add` scope rules apply (see [AGENTS.md](../AGENTS.md#rules)).
+
+# Publishing Pi extension packages to npm
+
+vstack distribution is independent of npm. `vstack add`/`refresh` copies local source — npm publishing only populates the pi.dev gallery and lets external users run `pi install npm:@vanillagreen/<name>`. Skipping a publish never breaks vstack consumers.
+
+Publish is the user's call. Do not publish proactively. When asked to publish, follow the runbook below.
+
+## When to publish
+- User-visible behavior change in the extension (new tool, new command, new setting, user-facing bug fix).
+- API change that affects integration with other extensions or Pi itself.
+- Skip for: refactors with no behavior change, internal cleanup, comment/typo fixes, README edits unless gallery copy needs updating.
+
+## Versioning (semver, per package)
+- patch — bug fix, no API change.
+- minor — additive: new tool, new setting, backward-compatible feature.
+- major — breaking: removed/renamed tool, changed setting key, dropped Pi peerDependency support.
+
+## How to publish a single package
+Token lives only in 1Password (`op://dev/x5lenzv456d5k4avuwmuwmjzdi/TOKEN`), referenced by `.env.npm` at repo root. `op run` resolves it into the spawned npm process for the duration of one command. The token is never written to disk, never logged, never in shell history.
+
+```bash
+cd pi-extensions/<name>
+npm version <patch|minor|major> --no-git-tag-version   # bumps package.json only
+cd ../..
+git add pi-extensions/<name>/package.json && git commit -m "<name>: bump to vX.Y.Z"
+cd pi-extensions/<name>
+op run --env-file=../../.env.npm -- npm publish
+```
+
+After publish:
+```bash
+cd ../..
+git tag <name>-v<version>
+git push origin main <name>-v<version>
+```
+
+Then verify within ~10 minutes:
+- https://pi.dev/packages/@vanillagreen/<name> (gallery picks up the keyword scrape)
+- `pi -e npm:@vanillagreen/<name>` in a scratch dir (optional smoketest)
+
+## Bulk publish (initial release or coordinated bump)
+Only at intentional batch milestones. Loop the single-package flow:
+```bash
+cd /mnt/Tertiary/dev/vstack/main
+for d in pi-extensions/*/; do
+  (cd "$d" && op run --env-file=../../.env.npm -- npm publish)
+done
+```
+Individual failures don't block siblings — review the output and re-run `npm publish` per failed dir.
+
+## Don'ts
+- Never put a literal token in any file. `.env.npm` only contains the `op://` reference.
+- Never run `npm publish` outside `op run`. With no `NPM_TOKEN` in env, `.npmrc`'s `${NPM_TOKEN}` resolves empty and the publish 401s — that's the safety net. Don't "fix" the 401 by writing the token elsewhere.
+- Never bump versions in `pi-extensions/*/package.json` as part of an unrelated commit. Version bumps are their own commit so the publish chain is auditable.
+- Never commit `.env.npm` (it's gitignored; keep it that way).
+- Never use `op run --no-masking` outside one-off auth verification. Default masking is what makes the runbook safe.

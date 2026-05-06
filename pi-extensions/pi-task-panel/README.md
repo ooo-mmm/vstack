@@ -1,7 +1,7 @@
 # pi-task-panel
 
-![Expanded task panel with phase grouping](assets/panel-expanded.png)
-![Tasks manager overlay](assets/manager.png)
+![Expanded task panel with phase grouping](https://raw.githubusercontent.com/vanillagreencom/vstack/main/pi-extensions/pi-task-panel/assets/panel-expanded.png)
+![Tasks manager overlay](https://raw.githubusercontent.com/vanillagreencom/vstack/main/pi-extensions/pi-task-panel/assets/manager.png)
 
 Persistent structured task panel above the Pi status line/editor.
 

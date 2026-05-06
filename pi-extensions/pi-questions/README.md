@@ -1,6 +1,6 @@
 # pi-questions
 
-![Questions workflow](./assets/questions-workflow.gif)
+![Questions workflow](https://raw.githubusercontent.com/vanillagreencom/vstack/main/pi-extensions/pi-questions/assets/questions-workflow.gif)
 
 Structured inline questions for Pi, with multi-tab categories and `pi-bridge` answer/reject support.
 

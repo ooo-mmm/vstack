@@ -1,6 +1,6 @@
 {
-  "name": "pi-session-bridge",
-  "version": "0.1.0",
+  "name": "@vanillagreen/pi-session-bridge",
+  "version": "1.0.0",
   "description": "Pi extension and CLI for controlling visible interactive Pi sessions over a structured Unix-socket side channel.",
   "license": "MIT",
   "keywords": [
@@ -16,7 +16,8 @@
   "pi": {
     "extensions": [
       "./extensions/session-bridge.ts"
-    ]
+    ],
+    "image": "https://raw.githubusercontent.com/vanillagreencom/vstack/main/pi-extensions/session-bridge/assets/session-bridge-cli.png"
   },
   "peerDependencies": {
     "@mariozechner/pi-coding-agent": "*"
@@ -104,5 +105,18 @@
         }
       ]
     }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vanillagreencom/vstack.git",
+    "directory": "pi-extensions/session-bridge"
+  },
+  "homepage": "https://github.com/vanillagreencom/vstack/tree/main/pi-extensions/session-bridge",
+  "bugs": {
+    "url": "https://github.com/vanillagreencom/vstack/issues"
+  },
+  "author": "vanillagreen",
+  "publishConfig": {
+    "access": "public"
   }
 }

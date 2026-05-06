@@ -1,6 +1,6 @@
 # pi-prompt-stash
 
-![Prompt Stash popup](assets/stash-popup.png)
+![Prompt Stash popup](https://raw.githubusercontent.com/vanillagreencom/vstack/main/pi-extensions/pi-prompt-stash/assets/stash-popup.png)
 
 Per-session prompt stash history for Pi.
 

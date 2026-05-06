@@ -1,6 +1,6 @@
 {
-  "name": "pi-questions",
-  "version": "0.1.0",
+  "name": "@vanillagreen/pi-questions",
+  "version": "1.0.0",
   "description": "Pi extension for structured multi-tab inline questions and bridge-driven replies.",
   "license": "MIT",
   "keywords": [
@@ -13,7 +13,8 @@
   "pi": {
     "extensions": [
       "./extensions/questions.ts"
-    ]
+    ],
+    "image": "https://raw.githubusercontent.com/vanillagreencom/vstack/main/pi-extensions/pi-questions/assets/questions-workflow.gif"
   },
   "peerDependencies": {
     "@mariozechner/pi-coding-agent": "*",
@@ -99,5 +100,18 @@
         }
       ]
     }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vanillagreencom/vstack.git",
+    "directory": "pi-extensions/pi-questions"
+  },
+  "homepage": "https://github.com/vanillagreencom/vstack/tree/main/pi-extensions/pi-questions",
+  "bugs": {
+    "url": "https://github.com/vanillagreencom/vstack/issues"
+  },
+  "author": "vanillagreen",
+  "publishConfig": {
+    "access": "public"
   }
 }

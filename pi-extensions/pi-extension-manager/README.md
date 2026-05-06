@@ -1,6 +1,6 @@
 # pi-extension-manager
 
-![Extension manager popup](./assets/extension-manager-popup.png)
+![Extension manager popup](https://raw.githubusercontent.com/vanillagreencom/vstack/main/pi-extensions/pi-extension-manager/assets/extension-manager-popup.png)
 
 Pi extension inventory and settings manager for vstack-installed packages.
 

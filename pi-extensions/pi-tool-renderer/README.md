@@ -1,7 +1,7 @@
 # pi-tool-renderer
 
-![tool_batch composite result with Read/grep/Bash rows](assets/tool-batch.png)
-![Edit tool with side-by-side diff renderer](assets/edit-diff.png)
+![tool_batch composite result with Read/grep/Bash rows](https://raw.githubusercontent.com/vanillagreencom/vstack/main/pi-extensions/pi-tool-renderer/assets/tool-batch.png)
+![Edit tool with side-by-side diff renderer](https://raw.githubusercontent.com/vanillagreencom/vstack/main/pi-extensions/pi-tool-renderer/assets/edit-diff.png)
 
 Compact renderers for Pi tools, plus an optional `tool_batch` composite tool.
 

@@ -1,9 +1,9 @@
 # pi-background-tasks
 
-![Spawning background tasks](assets/spawn-tasks.png)
-![Task summary](assets/task-summary.png)
-![Inline mini-dashboard](assets/inline-dashboard.png)
-![Full dashboard](assets/dashboard.png)
+![Spawning background tasks](https://raw.githubusercontent.com/vanillagreencom/vstack/main/pi-extensions/pi-background-tasks/assets/spawn-tasks.png)
+![Task summary](https://raw.githubusercontent.com/vanillagreencom/vstack/main/pi-extensions/pi-background-tasks/assets/task-summary.png)
+![Inline mini-dashboard](https://raw.githubusercontent.com/vanillagreencom/vstack/main/pi-extensions/pi-background-tasks/assets/inline-dashboard.png)
+![Full dashboard](https://raw.githubusercontent.com/vanillagreencom/vstack/main/pi-extensions/pi-background-tasks/assets/dashboard.png)
 Pi package for explicit, non-blocking background shell tasks.
 
 ## What it provides

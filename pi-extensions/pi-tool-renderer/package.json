@@ -1,6 +1,6 @@
 {
-  "name": "pi-tool-renderer",
-  "version": "0.1.0",
+  "name": "@vanillagreen/pi-tool-renderer",
+  "version": "1.0.0",
   "description": "Compact Claude/opencode-style renderers for Pi tools with rich diffs, apply_patch, generic/MCP rendering, and optional global chrome.",
   "license": "MIT",
   "keywords": [
@@ -17,7 +17,8 @@
   "pi": {
     "extensions": [
       "./extensions/tool-renderer.ts"
-    ]
+    ],
+    "image": "https://raw.githubusercontent.com/vanillagreencom/vstack/main/pi-extensions/pi-tool-renderer/assets/tool-batch.png"
   },
   "vstack": {
     "extensionManager": {
@@ -156,7 +157,6 @@
           "apply": "reload",
           "requiresReload": true
         },
-
         {
           "key": "renderMutationTools",
           "label": "Render edits/writes compactly",
@@ -474,5 +474,18 @@
     "assets/",
     "README.md",
     "package.json"
-  ]
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vanillagreencom/vstack.git",
+    "directory": "pi-extensions/pi-tool-renderer"
+  },
+  "homepage": "https://github.com/vanillagreencom/vstack/tree/main/pi-extensions/pi-tool-renderer",
+  "bugs": {
+    "url": "https://github.com/vanillagreencom/vstack/issues"
+  },
+  "author": "vanillagreen",
+  "publishConfig": {
+    "access": "public"
+  }
 }

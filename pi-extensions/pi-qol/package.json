@@ -1,7 +1,7 @@
 {
-  "name": "pi-qol",
-  "version": "0.1.0",
-  "description": "Pi quality-of-life extension: compact statusline/\u03c0 prompt, reliable multiline input, styled pasted-image chips, session naming/search/context import, handoff, permission prompts, notifications, custom compaction, and a collapsed-thinking timer.",
+  "name": "@vanillagreen/pi-qol",
+  "version": "1.0.0",
+  "description": "Pi quality-of-life extension: compact statusline/π prompt, reliable multiline input, styled pasted-image chips, session naming/search/context import, handoff, permission prompts, notifications, custom compaction, and a collapsed-thinking timer.",
   "license": "MIT",
   "keywords": [
     "pi-package",
@@ -13,7 +13,8 @@
   "pi": {
     "extensions": [
       "./extensions/qol.ts"
-    ]
+    ],
+    "image": "https://raw.githubusercontent.com/vanillagreencom/vstack/main/pi-extensions/pi-qol/assets/settings-panel.png"
   },
   "vstack": {
     "extensionManager": {
@@ -41,8 +42,8 @@
         },
         {
           "key": "compactPrompt",
-          "label": "Use \u03c0 prompt editor",
-          "description": "Replace the main editor with the compact \u03c0 prompt editor. Disable to use QOL newline/image helpers with Pi default editor chrome.",
+          "label": "Use π prompt editor",
+          "description": "Replace the main editor with the compact π prompt editor. Disable to use QOL newline/image helpers with Pi default editor chrome.",
           "type": "boolean",
           "default": true,
           "category": "Statusline",
@@ -52,7 +53,7 @@
         {
           "key": "showSessionNameTitle",
           "label": "Show session name title",
-          "description": "Show the named session above the prompt. In tmux, update the current pane title to \"\u03c0 <session>\" and enable a pane border title padded with non-breaking spaces so tmux does not trim it.",
+          "description": "Show the named session above the prompt. In tmux, update the current pane title to \"π <session>\" and enable a pane border title padded with non-breaking spaces so tmux does not trim it.",
           "type": "boolean",
           "default": true,
           "category": "Statusline",
@@ -817,5 +818,18 @@
     "assets/",
     "README.md",
     "package.json"
-  ]
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vanillagreencom/vstack.git",
+    "directory": "pi-extensions/pi-qol"
+  },
+  "homepage": "https://github.com/vanillagreencom/vstack/tree/main/pi-extensions/pi-qol",
+  "bugs": {
+    "url": "https://github.com/vanillagreencom/vstack/issues"
+  },
+  "author": "vanillagreen",
+  "publishConfig": {
+    "access": "public"
+  }
 }

@@ -1,6 +1,6 @@
 {
-  "name": "pi-task-panel",
-  "version": "0.1.0",
+  "name": "@vanillagreen/pi-task-panel",
+  "version": "1.0.0",
   "description": "Persistent Claude-style tasks panel for Pi with slash commands and a structured tasks_write tool.",
   "license": "MIT",
   "keywords": [
@@ -12,7 +12,8 @@
   "pi": {
     "extensions": [
       "./extensions/task-panel.ts"
-    ]
+    ],
+    "image": "https://raw.githubusercontent.com/vanillagreencom/vstack/main/pi-extensions/pi-task-panel/assets/panel-expanded.png"
   },
   "vstack": {
     "extensionManager": {
@@ -141,5 +142,18 @@
     "assets/",
     "README.md",
     "package.json"
-  ]
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vanillagreencom/vstack.git",
+    "directory": "pi-extensions/pi-task-panel"
+  },
+  "homepage": "https://github.com/vanillagreencom/vstack/tree/main/pi-extensions/pi-task-panel",
+  "bugs": {
+    "url": "https://github.com/vanillagreencom/vstack/issues"
+  },
+  "author": "vanillagreen",
+  "publishConfig": {
+    "access": "public"
+  }
 }

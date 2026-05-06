@@ -1,6 +1,6 @@
 # pi-caveman
 
-![/caveman command autocomplete](assets/command-autocomplete.png)
+![/caveman command autocomplete](https://raw.githubusercontent.com/vanillagreencom/vstack/main/pi-extensions/pi-caveman/assets/command-autocomplete.png)
 
 Native Pi caveman communication mode: fewer output tokens, same technical accuracy.
 

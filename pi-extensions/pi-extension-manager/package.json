@@ -1,6 +1,6 @@
 {
-  "name": "pi-extension-manager",
-  "version": "0.1.0",
+  "name": "@vanillagreen/pi-extension-manager",
+  "version": "1.0.0",
   "description": "Settings-integrated Pi extension inventory, toggles, and schema-driven extension configuration for vstack packages.",
   "license": "MIT",
   "keywords": [
@@ -13,7 +13,8 @@
   "pi": {
     "extensions": [
       "./extensions/extension-manager.ts"
-    ]
+    ],
+    "image": "https://raw.githubusercontent.com/vanillagreencom/vstack/main/pi-extensions/pi-extension-manager/assets/extension-manager-popup.png"
   },
   "vstack": {
     "extensionManager": {
@@ -72,5 +73,18 @@
     "extensions/",
     "README.md",
     "package.json"
-  ]
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vanillagreencom/vstack.git",
+    "directory": "pi-extensions/pi-extension-manager"
+  },
+  "homepage": "https://github.com/vanillagreencom/vstack/tree/main/pi-extensions/pi-extension-manager",
+  "bugs": {
+    "url": "https://github.com/vanillagreencom/vstack/issues"
+  },
+  "author": "vanillagreen",
+  "publishConfig": {
+    "access": "public"
+  }
 }

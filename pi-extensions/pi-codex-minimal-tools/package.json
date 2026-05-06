@@ -1,6 +1,6 @@
 {
-  "name": "pi-codex-minimal-tools",
-  "version": "0.1.0",
+  "name": "@vanillagreen/pi-codex-minimal-tools",
+  "version": "1.0.0",
   "description": "Minimal Codex/OpenAI native tools for Pi: image_generation, view_image, apply_patch",
   "type": "module",
   "keywords": [
@@ -16,7 +16,8 @@
   "pi": {
     "extensions": [
       "./src/index.ts"
-    ]
+    ],
+    "image": "https://raw.githubusercontent.com/vanillagreencom/vstack/main/pi-extensions/pi-codex-minimal-tools/assets/apply-patch-rendering.png"
   },
   "vstack": {
     "extensionManager": {
@@ -167,5 +168,18 @@
     "README.md",
     "package.json",
     "tsconfig.json"
-  ]
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vanillagreencom/vstack.git",
+    "directory": "pi-extensions/pi-codex-minimal-tools"
+  },
+  "homepage": "https://github.com/vanillagreencom/vstack/tree/main/pi-extensions/pi-codex-minimal-tools",
+  "bugs": {
+    "url": "https://github.com/vanillagreencom/vstack/issues"
+  },
+  "author": "vanillagreen",
+  "publishConfig": {
+    "access": "public"
+  }
 }

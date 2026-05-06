@@ -1,6 +1,6 @@
 {
-  "name": "pi-web-tools",
-  "version": "0.1.0",
+  "name": "@vanillagreen/pi-web-tools",
+  "version": "1.0.0",
   "description": "First-party Pi web tools: provider-toggled web search, Exa deep research, content retrieval, and OpenAI native web_search integration.",
   "type": "module",
   "keywords": [
@@ -17,33 +17,217 @@
   "pi": {
     "extensions": [
       "./src/index.ts"
-    ]
+    ],
+    "image": "https://raw.githubusercontent.com/vanillagreencom/vstack/main/pi-extensions/pi-web-tools/assets/settings-panel.png"
   },
   "vstack": {
     "extensionManager": {
       "displayName": "Web Tools",
       "settings": [
-        { "key": "enabled", "label": "Enable web tools", "description": "Register web_search, web_fetch, web_research, answer/similar/code search, commands, and native web-search rewrites.", "type": "boolean", "default": true, "category": "General", "apply": "reload", "requiresReload": true },
-        { "key": "autoEnable", "label": "Auto-enable web tools", "description": "Add supported web tools to the active tool set while preserving Pi native tools.", "type": "boolean", "default": true, "category": "General", "apply": "live" },
-        { "key": "defaultProvider", "label": "Default provider", "description": "Provider used by web_search unless the tool call overrides it.", "type": "enum", "enumValues": ["auto", "exa", "openai-native", "perplexity", "gemini"], "default": "auto", "category": "Providers", "apply": "live" },
-        { "key": "enabledProviders", "label": "Enabled providers", "description": "Comma-separated provider allow-list: exa,openai-native,perplexity,gemini.", "type": "string", "default": "exa,openai-native,perplexity,gemini", "category": "Providers", "apply": "live" },
-        { "key": "nativeOpenAiWebSearch", "label": "OpenAI native web_search", "description": "Rewrite the function web_search tool to native OpenAI/Codex Responses web_search when supported.", "type": "boolean", "default": true, "category": "OpenAI Native", "apply": "reload", "requiresReload": true },
-        { "key": "openAiExternalWebAccess", "label": "OpenAI external web access", "description": "Set external_web_access on native OpenAI web_search tools.", "type": "boolean", "default": true, "category": "OpenAI Native", "apply": "live" },
-        { "key": "exaDeepResearchEnabled", "label": "Exa deep research", "description": "Register and enable web_research for Exa Deep Search.", "type": "boolean", "default": true, "category": "Exa", "apply": "live" },
-        { "key": "exaResearchModes", "label": "Exa research mode overrides", "description": "Optional JSON object keyed by lite/standard/full. Supports type, numResults, textMaxCharacters, timeoutSeconds, highlightsMaxCharacters, highlightNumSentences, highlightsPerUrl, summaryQuery, maxAgeHours, category, and outputSchema.", "type": "string", "default": "{}", "category": "Exa", "apply": "live" },
-        { "key": "exaAdvancedEnabled", "label": "Exa advanced tools", "description": "Enable advanced Exa fetch, answer, find-similar, and code search tools.", "type": "boolean", "default": false, "category": "Exa", "apply": "reload", "requiresReload": true },
-        { "key": "compatibilityTools", "label": "Compatibility aliases", "description": "Register legacy aliases such as fetch_content and web_search_exa. Off by default to avoid duplicate tool names.", "type": "boolean", "default": false, "category": "Compatibility", "apply": "reload", "requiresReload": true },
-        { "key": "curatorEnabled", "label": "Curator UI", "description": "Allow curator workflow when interactive. Full browser review UI is staged for a follow-up phase.", "type": "boolean", "default": true, "category": "Curator", "apply": "live" },
-        { "key": "curatorTimeoutSeconds", "label": "Curator timeout", "description": "Timeout cap for curator workflows, capped at 600 seconds.", "type": "number", "default": 20, "category": "Curator", "apply": "live" },
-        { "key": "summaryModel", "label": "Summary model", "description": "Model preference for curator summaries; use current to keep the active model.", "type": "string", "default": "current", "category": "Curator", "apply": "live" },
-        { "key": "includeContentByDefault", "label": "Include content by default", "description": "Fetch page content after search results by default.", "type": "boolean", "default": false, "category": "Content", "apply": "live" },
-        { "key": "browserCookieAccess", "label": "Browser cookie access", "description": "Opt-in browser cookie extraction for Gemini Web fallback. Requires reload because it may trigger credential prompts.", "type": "boolean", "default": false, "category": "Content", "apply": "reload", "requiresReload": true },
-        { "key": "htmlExtraction.jinaFallback", "label": "Jina Reader fallback", "description": "Fall back to https://r.jina.ai when HTML extraction returns blocked or low-content output, or when origin returns 403/429/5xx.", "type": "boolean", "default": true, "category": "Content", "apply": "live" },
-        { "key": "githubClone.enabled", "label": "GitHub clone extraction", "description": "Enable GitHub clone extraction for repository URLs. Full clone cache is staged for follow-up parity.", "type": "boolean", "default": true, "category": "Content", "apply": "live" },
-        { "key": "githubClone.maxRepoSizeMB", "label": "GitHub clone max size", "description": "Large repository fallback threshold in MB.", "type": "number", "default": 350, "category": "Content", "apply": "live" },
-        { "key": "video.enabled", "label": "Video extraction", "description": "Enable YouTube/local video understanding. Full Gemini/yt-dlp support is staged for follow-up parity.", "type": "boolean", "default": true, "category": "Content", "apply": "reload", "requiresReload": true },
-        { "key": "shortcuts.curator", "label": "Curator shortcut", "description": "Shortcut for curator UI.", "type": "string", "default": "ctrl+shift+s", "category": "Shortcuts", "apply": "reload", "requiresReload": true },
-        { "key": "shortcuts.activity", "label": "Activity shortcut", "description": "Shortcut for activity widget.", "type": "string", "default": "ctrl+shift+w", "category": "Shortcuts", "apply": "reload", "requiresReload": true }
+        {
+          "key": "enabled",
+          "label": "Enable web tools",
+          "description": "Register web_search, web_fetch, web_research, answer/similar/code search, commands, and native web-search rewrites.",
+          "type": "boolean",
+          "default": true,
+          "category": "General",
+          "apply": "reload",
+          "requiresReload": true
+        },
+        {
+          "key": "autoEnable",
+          "label": "Auto-enable web tools",
+          "description": "Add supported web tools to the active tool set while preserving Pi native tools.",
+          "type": "boolean",
+          "default": true,
+          "category": "General",
+          "apply": "live"
+        },
+        {
+          "key": "defaultProvider",
+          "label": "Default provider",
+          "description": "Provider used by web_search unless the tool call overrides it.",
+          "type": "enum",
+          "enumValues": [
+            "auto",
+            "exa",
+            "openai-native",
+            "perplexity",
+            "gemini"
+          ],
+          "default": "auto",
+          "category": "Providers",
+          "apply": "live"
+        },
+        {
+          "key": "enabledProviders",
+          "label": "Enabled providers",
+          "description": "Comma-separated provider allow-list: exa,openai-native,perplexity,gemini.",
+          "type": "string",
+          "default": "exa,openai-native,perplexity,gemini",
+          "category": "Providers",
+          "apply": "live"
+        },
+        {
+          "key": "nativeOpenAiWebSearch",
+          "label": "OpenAI native web_search",
+          "description": "Rewrite the function web_search tool to native OpenAI/Codex Responses web_search when supported.",
+          "type": "boolean",
+          "default": true,
+          "category": "OpenAI Native",
+          "apply": "reload",
+          "requiresReload": true
+        },
+        {
+          "key": "openAiExternalWebAccess",
+          "label": "OpenAI external web access",
+          "description": "Set external_web_access on native OpenAI web_search tools.",
+          "type": "boolean",
+          "default": true,
+          "category": "OpenAI Native",
+          "apply": "live"
+        },
+        {
+          "key": "exaDeepResearchEnabled",
+          "label": "Exa deep research",
+          "description": "Register and enable web_research for Exa Deep Search.",
+          "type": "boolean",
+          "default": true,
+          "category": "Exa",
+          "apply": "live"
+        },
+        {
+          "key": "exaResearchModes",
+          "label": "Exa research mode overrides",
+          "description": "Optional JSON object keyed by lite/standard/full. Supports type, numResults, textMaxCharacters, timeoutSeconds, highlightsMaxCharacters, highlightNumSentences, highlightsPerUrl, summaryQuery, maxAgeHours, category, and outputSchema.",
+          "type": "string",
+          "default": "{}",
+          "category": "Exa",
+          "apply": "live"
+        },
+        {
+          "key": "exaAdvancedEnabled",
+          "label": "Exa advanced tools",
+          "description": "Enable advanced Exa fetch, answer, find-similar, and code search tools.",
+          "type": "boolean",
+          "default": false,
+          "category": "Exa",
+          "apply": "reload",
+          "requiresReload": true
+        },
+        {
+          "key": "compatibilityTools",
+          "label": "Compatibility aliases",
+          "description": "Register legacy aliases such as fetch_content and web_search_exa. Off by default to avoid duplicate tool names.",
+          "type": "boolean",
+          "default": false,
+          "category": "Compatibility",
+          "apply": "reload",
+          "requiresReload": true
+        },
+        {
+          "key": "curatorEnabled",
+          "label": "Curator UI",
+          "description": "Allow curator workflow when interactive. Full browser review UI is staged for a follow-up phase.",
+          "type": "boolean",
+          "default": true,
+          "category": "Curator",
+          "apply": "live"
+        },
+        {
+          "key": "curatorTimeoutSeconds",
+          "label": "Curator timeout",
+          "description": "Timeout cap for curator workflows, capped at 600 seconds.",
+          "type": "number",
+          "default": 20,
+          "category": "Curator",
+          "apply": "live"
+        },
+        {
+          "key": "summaryModel",
+          "label": "Summary model",
+          "description": "Model preference for curator summaries; use current to keep the active model.",
+          "type": "string",
+          "default": "current",
+          "category": "Curator",
+          "apply": "live"
+        },
+        {
+          "key": "includeContentByDefault",
+          "label": "Include content by default",
+          "description": "Fetch page content after search results by default.",
+          "type": "boolean",
+          "default": false,
+          "category": "Content",
+          "apply": "live"
+        },
+        {
+          "key": "browserCookieAccess",
+          "label": "Browser cookie access",
+          "description": "Opt-in browser cookie extraction for Gemini Web fallback. Requires reload because it may trigger credential prompts.",
+          "type": "boolean",
+          "default": false,
+          "category": "Content",
+          "apply": "reload",
+          "requiresReload": true
+        },
+        {
+          "key": "htmlExtraction.jinaFallback",
+          "label": "Jina Reader fallback",
+          "description": "Fall back to https://r.jina.ai when HTML extraction returns blocked or low-content output, or when origin returns 403/429/5xx.",
+          "type": "boolean",
+          "default": true,
+          "category": "Content",
+          "apply": "live"
+        },
+        {
+          "key": "githubClone.enabled",
+          "label": "GitHub clone extraction",
+          "description": "Enable GitHub clone extraction for repository URLs. Full clone cache is staged for follow-up parity.",
+          "type": "boolean",
+          "default": true,
+          "category": "Content",
+          "apply": "live"
+        },
+        {
+          "key": "githubClone.maxRepoSizeMB",
+          "label": "GitHub clone max size",
+          "description": "Large repository fallback threshold in MB.",
+          "type": "number",
+          "default": 350,
+          "category": "Content",
+          "apply": "live"
+        },
+        {
+          "key": "video.enabled",
+          "label": "Video extraction",
+          "description": "Enable YouTube/local video understanding. Full Gemini/yt-dlp support is staged for follow-up parity.",
+          "type": "boolean",
+          "default": true,
+          "category": "Content",
+          "apply": "reload",
+          "requiresReload": true
+        },
+        {
+          "key": "shortcuts.curator",
+          "label": "Curator shortcut",
+          "description": "Shortcut for curator UI.",
+          "type": "string",
+          "default": "ctrl+shift+s",
+          "category": "Shortcuts",
+          "apply": "reload",
+          "requiresReload": true
+        },
+        {
+          "key": "shortcuts.activity",
+          "label": "Activity shortcut",
+          "description": "Shortcut for activity widget.",
+          "type": "string",
+          "default": "ctrl+shift+w",
+          "category": "Shortcuts",
+          "apply": "reload",
+          "requiresReload": true
+        }
       ]
     }
   },
@@ -73,5 +257,18 @@
     "README.md",
     "package.json",
     "tsconfig.json"
-  ]
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vanillagreencom/vstack.git",
+    "directory": "pi-extensions/pi-web-tools"
+  },
+  "homepage": "https://github.com/vanillagreencom/vstack/tree/main/pi-extensions/pi-web-tools",
+  "bugs": {
+    "url": "https://github.com/vanillagreencom/vstack/issues"
+  },
+  "author": "vanillagreen",
+  "publishConfig": {
+    "access": "public"
+  }
 }

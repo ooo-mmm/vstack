@@ -1,6 +1,6 @@
 # pi-output-policy
 
-![Output Policy settings panel](assets/settings-panel.png)
+![Output Policy settings panel](https://raw.githubusercontent.com/vanillagreencom/vstack/main/pi-extensions/pi-output-policy/assets/settings-panel.png)
 
 OMP-style large-output policy for Pi tool results.
 

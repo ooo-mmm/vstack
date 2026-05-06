@@ -1,9 +1,9 @@
 # pi-qol
 
-![QOL extension settings panel](assets/settings-panel.png)
+![QOL extension settings panel](https://raw.githubusercontent.com/vanillagreencom/vstack/main/pi-extensions/pi-qol/assets/settings-panel.png)
 
-![Session search popup](assets/session-search.png)
-![/context usage breakdown](assets/context-usage.png)
+![Session search popup](https://raw.githubusercontent.com/vanillagreencom/vstack/main/pi-extensions/pi-qol/assets/session-search.png)
+![/context usage breakdown](https://raw.githubusercontent.com/vanillagreencom/vstack/main/pi-extensions/pi-qol/assets/context-usage.png)
 
 Quality-of-life extension for Pi.
 

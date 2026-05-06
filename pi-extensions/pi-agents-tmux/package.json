@@ -1,6 +1,6 @@
 {
-  "name": "pi-agents-tmux",
-  "version": "0.1.0",
+  "name": "@vanillagreen/pi-agents-tmux",
+  "version": "1.0.0",
   "description": "Pi extension for delegating work to project or user agents, including persistent tmux agent panes.",
   "license": "MIT",
   "keywords": [
@@ -13,7 +13,8 @@
   "pi": {
     "extensions": [
       "./extensions/subagent/index.ts"
-    ]
+    ],
+    "image": "https://raw.githubusercontent.com/vanillagreencom/vstack/main/pi-extensions/pi-agents-tmux/assets/agents-browser.png"
   },
   "peerDependencies": {
     "@mariozechner/pi-ai": "*",
@@ -98,7 +99,7 @@
         {
           "key": "dashboardShortcut",
           "label": "Dashboard display shortcut",
-          "description": "Keyboard shortcut that cycles the agent dashboard through hidden \u2192 compact \u2192 normal \u2192 expanded \u2192 hidden. Use none to disable.",
+          "description": "Keyboard shortcut that cycles the agent dashboard through hidden → compact → normal → expanded → hidden. Use none to disable.",
           "type": "string",
           "default": "alt+a",
           "category": "Keyboard",
@@ -227,5 +228,18 @@
         }
       ]
     }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vanillagreencom/vstack.git",
+    "directory": "pi-extensions/pi-agents-tmux"
+  },
+  "homepage": "https://github.com/vanillagreencom/vstack/tree/main/pi-extensions/pi-agents-tmux",
+  "bugs": {
+    "url": "https://github.com/vanillagreencom/vstack/issues"
+  },
+  "author": "vanillagreen",
+  "publishConfig": {
+    "access": "public"
   }
 }

@@ -1,6 +1,6 @@
 # pi-skills-manager
 
-![Skills Manager overlay](assets/skills-manager.png)
+![Skills Manager overlay](https://raw.githubusercontent.com/vanillagreencom/vstack/main/pi-extensions/pi-skills-manager/assets/skills-manager.png)
 
 Dedicated Pi skills manager for vstack packages. It provides one `/skill` manager view for browsing, previewing, creating, editing, renaming, deleting, and enabling/disabling skills while preserving Pi's native `/skill:<name>` invocation and autocomplete behavior.
 

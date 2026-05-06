@@ -1,6 +1,6 @@
 # pi-session-bridge
 
-![Session bridge CLI flow](./assets/session-bridge-cli.png)
+![Session bridge CLI flow](https://raw.githubusercontent.com/vanillagreencom/vstack/main/pi-extensions/session-bridge/assets/session-bridge-cli.png)
 
 Pi package that keeps the normal interactive Pi TUI visible while exposing a structured Unix-domain JSONL side channel for external controllers. It is **not** Pi `--mode rpc`; it keeps the live TUI and borrows compatible JSONL command/response conventions where useful.
 

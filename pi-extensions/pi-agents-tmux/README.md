@@ -1,12 +1,12 @@
 # pi-agents-tmux
 
-![Agents browser](./assets/agents-browser.png)
+![Agents browser](https://raw.githubusercontent.com/vanillagreencom/vstack/main/pi-extensions/pi-agents-tmux/assets/agents-browser.png)
 
-![Inline one-shot agent and dashboard](./assets/agents-inline.png)
+![Inline one-shot agent and dashboard](https://raw.githubusercontent.com/vanillagreencom/vstack/main/pi-extensions/pi-agents-tmux/assets/agents-inline.png)
 
-![Persistent pane dashboard](./assets/agents-dashboard.png)
+![Persistent pane dashboard](https://raw.githubusercontent.com/vanillagreencom/vstack/main/pi-extensions/pi-agents-tmux/assets/agents-dashboard.png)
 
-![Persistent agent pane](./assets/agents-pane.png)
+![Persistent agent pane](https://raw.githubusercontent.com/vanillagreencom/vstack/main/pi-extensions/pi-agents-tmux/assets/agents-pane.png)
 
 Pi package for delegating work to specialized agents from a running Pi session.
 
