@@ -1585,22 +1585,14 @@ function createManagerComponent(
 			}
 			return;
 		}
-		if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) return done({ type: "close" });
-		if (matchesKey(data, "tab")) {
-			switchTab(1);
-			return;
-		}
-		if (matchesKey(data, "shift+tab")) {
-			switchTab(-1);
-			return;
-		}
-		if (matchesKey(data, "alt+a")) {
-			ui.showAudit = !ui.showAudit;
-			ui.diagnosticsScroll = 0;
-			requestRender();
-			return;
-		}
 		if (ui.showAudit) {
+			if (matchesKey(data, "escape") || matchesKey(data, "backspace")) {
+				ui.showAudit = false;
+				ui.diagnosticsScroll = 0;
+				requestRender();
+				return;
+			}
+			if (matchesKey(data, "ctrl+c")) return done({ type: "close" });
 			if (matchesKey(data, "up")) return scrollDiagnostics(-1);
 			if (matchesKey(data, "down")) return scrollDiagnostics(1);
 			if (matchesKey(data, "-") || matchesKey(data, "pageUp")) return scrollDiagnostics(-diagnosticsPageRows());
@@ -1615,6 +1607,21 @@ function createManagerComponent(
 				requestRender();
 				return;
 			}
+			return;
+		}
+		if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) return done({ type: "close" });
+		if (matchesKey(data, "tab")) {
+			switchTab(1);
+			return;
+		}
+		if (matchesKey(data, "shift+tab")) {
+			switchTab(-1);
+			return;
+		}
+		if (matchesKey(data, "alt+a")) {
+			ui.showAudit = true;
+			ui.diagnosticsScroll = 0;
+			requestRender();
 			return;
 		}
 		if (!isInventoryTab(ui.topTab)) return;
@@ -1734,7 +1741,7 @@ function createManagerComponent(
 		const primaryHint = ui.editing
 			? `${theme.fg("dim", "editing value · ")}${ansiYellow("←/→")} ${theme.fg("dim", "move · ")}${ansiYellow("alt+←/→")} ${theme.fg("dim", "word · ")}${ansiYellow("backspace/delete")} ${theme.fg("dim", "delete")}`
 			: ui.showAudit
-			? `${theme.fg("dim", "diagnostics · ")}${ansiYellow("-/=")} ${theme.fg("dim", "page · ")}${ansiYellow("alt+a")} ${theme.fg("dim", "back")}`
+			? `${theme.fg("dim", "diagnostics · ")}${ansiYellow("-/=")} ${theme.fg("dim", "page · ")}${ansiYellow("backspace")} ${theme.fg("dim", "back")}`
 			: `${ansiYellow("tab")} ${theme.fg("dim", "switch tabs · ")}${ansiYellow("-/=")} ${theme.fg("dim", "page · ")}${ansiYellow("alt+a")} ${theme.fg("dim", "diagnostics")}`;
 		const footerLines = ["", ...wrapLine(primaryHint, bodyWidth)];
 		const availableRows = Math.max(1, layout.innerRows - lines.length - footerLines.length);
