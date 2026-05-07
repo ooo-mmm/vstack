@@ -1,6 +1,5 @@
 import { calculateCost, type Api, type AssistantMessage, type Context, type Model, type Tool, type Usage } from "@mariozechner/pi-ai";
 import type { ResponseCreateParamsStreaming, ResponseInput, ResponseStreamEvent, Tool as OpenAITool } from "openai/resources/responses/responses.js";
-import { parse as partialParse } from "partial-json";
 import type { AssistantMessageEventStream } from "@mariozechner/pi-ai";
 
 type MessageRole = Context["messages"][number]["role"];
@@ -58,11 +57,7 @@ function parseStreamingJson(partialJson: string): Record<string, unknown> {
 	try {
 		return JSON.parse(partialJson) as Record<string, unknown>;
 	} catch {
-		try {
-			return (partialParse(partialJson) ?? {}) as Record<string, unknown>;
-		} catch {
-			return {};
-		}
+		return {};
 	}
 }
 
