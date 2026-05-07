@@ -8,6 +8,10 @@ export interface ViewImageInput {
 	detail?: ImageDetail;
 }
 
+export interface ViewImageOptions {
+	workspaceOnly?: boolean;
+}
+
 export interface ValidatedImage {
 	absolutePath: string;
 	displayPath: string;
@@ -35,12 +39,12 @@ function assertWithinCwd(absolutePath: string, cwd: string, displayPath: string)
 	throw new Error(`view_image path escapes the workspace: ${displayPath}`);
 }
 
-export function normalizeImagePath(pathValue: string, cwd: string): { absolutePath: string; displayPath: string } {
+export function normalizeImagePath(pathValue: string, cwd: string, options?: ViewImageOptions): { absolutePath: string; displayPath: string } {
 	let cleaned = pathValue.trim();
 	if ((cleaned.startsWith('"') && cleaned.endsWith('"')) || (cleaned.startsWith("'") && cleaned.endsWith("'"))) cleaned = cleaned.slice(1, -1);
 	if (cleaned.startsWith("@")) cleaned = cleaned.slice(1);
 	const absolutePath = resolve(cwd, cleaned);
-	assertWithinCwd(absolutePath, cwd, cleaned);
+	if (options?.workspaceOnly) assertWithinCwd(absolutePath, cwd, cleaned);
 	return { absolutePath, displayPath: cleaned };
 }
 
@@ -48,11 +52,11 @@ export function mimeTypeForImagePath(path: string): string | undefined {
 	return IMAGE_MIME_BY_EXT[extname(path).toLowerCase()];
 }
 
-export async function validateImagePath(input: ViewImageInput, cwd: string): Promise<ValidatedImage> {
+export async function validateImagePath(input: ViewImageInput, cwd: string, options?: ViewImageOptions): Promise<ValidatedImage> {
 	if (!input || typeof input.path !== "string" || input.path.trim().length === 0) throw new Error("view_image requires a non-empty path.");
 	const detail = input.detail ?? "auto";
 	if (!["auto", "low", "high", "original"].includes(detail)) throw new Error(`Unsupported image detail: ${String(input.detail)}`);
-	const normalized = normalizeImagePath(input.path, cwd);
+	const normalized = normalizeImagePath(input.path, cwd, options);
 	let fileStat;
 	try {
 		fileStat = await stat(normalized.absolutePath);
@@ -61,19 +65,21 @@ export async function validateImagePath(input: ViewImageInput, cwd: string): Pro
 	}
 	if (fileStat.isDirectory()) throw new Error(`view_image expected a file but got a directory: ${normalized.displayPath}`);
 	if (!fileStat.isFile()) throw new Error(`view_image expected a regular image file: ${normalized.displayPath}`);
-	try {
-		assertWithinCwd(await realpath(normalized.absolutePath), await realpath(cwd), normalized.displayPath);
-	} catch (error) {
-		if (error instanceof Error && error.message.includes("escapes the workspace")) throw error;
-		throw new Error(`Unable to validate image path: ${normalized.displayPath}`);
+	if (options?.workspaceOnly) {
+		try {
+			assertWithinCwd(await realpath(normalized.absolutePath), await realpath(cwd), normalized.displayPath);
+		} catch (error) {
+			if (error instanceof Error && error.message.includes("escapes the workspace")) throw error;
+			throw new Error(`Unable to validate image path: ${normalized.displayPath}`);
+		}
 	}
 	const mimeType = mimeTypeForImagePath(normalized.absolutePath);
 	if (!mimeType) throw new Error(`Unsupported image file type for view_image: ${normalized.displayPath}`);
 	return { ...normalized, detail, mimeType, sizeBytes: fileStat.size };
 }
 
-export async function viewImage(input: ViewImageInput, cwd: string) {
-	const image = await validateImagePath(input, cwd);
+export async function viewImage(input: ViewImageInput, cwd: string, options?: ViewImageOptions) {
+	const image = await validateImagePath(input, cwd, options);
 	const data = await readFile(image.absolutePath, "base64");
 	return {
 		content: [{ type: "image", data, mimeType: image.mimeType, detail: image.detail }],

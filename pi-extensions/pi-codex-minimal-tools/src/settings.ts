@@ -13,6 +13,7 @@ export interface CodexMinimalToolsSettings {
 	imageModel: "gpt-image-2" | "gpt-image-1.5" | "gpt-image-1";
 	directImageApiFallback: boolean;
 	viewImage: boolean;
+	viewImageWorkspaceOnly: boolean;
 	applyPatchEnabled: boolean;
 	strictPatchMode: boolean;
 	allowAbsolutePatchPaths: boolean;
@@ -27,7 +28,8 @@ export const DEFAULT_SETTINGS: CodexMinimalToolsSettings = {
 	imageOutputDir: ".pi/openai-codex-images",
 	imageModel: "gpt-image-2",
 	directImageApiFallback: false,
-	viewImage: true,
+	viewImage: false,
+	viewImageWorkspaceOnly: false,
 	applyPatchEnabled: true,
 	strictPatchMode: false,
 	allowAbsolutePatchPaths: false,
@@ -119,6 +121,7 @@ export function loadSettings(cwd?: string): CodexMinimalToolsSettings {
 		imageModel: imageModelSetting(raw),
 		directImageApiFallback: boolSetting(raw, "directImageApiFallback"),
 		viewImage: boolSetting(raw, "viewImage"),
+		viewImageWorkspaceOnly: boolSetting(raw, "viewImageWorkspaceOnly"),
 		applyPatchEnabled: boolSetting(raw, "applyPatchEnabled"),
 		strictPatchMode: boolSetting(raw, "strictPatchMode"),
 		allowAbsolutePatchPaths: boolSetting(raw, "allowAbsolutePatchPaths"),

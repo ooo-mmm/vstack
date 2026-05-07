@@ -96,9 +96,18 @@
         {
           "key": "viewImage",
           "label": "Enable view_image",
-          "description": "Expose local image viewing on image-capable models.",
+          "description": "Expose local image viewing on image-capable models. Off by default; Pi's read tool already returns images, so view_image is mainly for prompt parity with the Codex CLI.",
           "type": "boolean",
-          "default": true,
+          "default": false,
+          "category": "Images",
+          "apply": "live"
+        },
+        {
+          "key": "viewImageWorkspaceOnly",
+          "label": "Restrict view_image to workspace",
+          "description": "Reject view_image paths outside ctx.cwd. Off by default so clipboard paste from /tmp keeps working.",
+          "type": "boolean",
+          "default": false,
           "category": "Images",
           "apply": "live"
         },

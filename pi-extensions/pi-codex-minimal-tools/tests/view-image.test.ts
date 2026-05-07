@@ -30,18 +30,28 @@ test("view_image rejects directories and non-images", async () => {
 	await assert.rejects(() => validateImagePath({ path: "notes.txt" }, cwd), /Unsupported image file type/);
 });
 
-test("view_image rejects paths outside cwd", async () => {
+test("view_image rejects paths outside cwd when workspaceOnly", async () => {
 	const cwd = tempDir();
 	const outside = tempDir();
 	writeFileSync(join(outside, "secret.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
-	await assert.rejects(() => validateImagePath({ path: "../secret.png" }, cwd), /escapes the workspace/);
-	await assert.rejects(() => validateImagePath({ path: join(outside, "secret.png") }, cwd), /escapes the workspace/);
+	await assert.rejects(() => validateImagePath({ path: "../secret.png" }, cwd, { workspaceOnly: true }), /escapes the workspace/);
+	await assert.rejects(() => validateImagePath({ path: join(outside, "secret.png") }, cwd, { workspaceOnly: true }), /escapes the workspace/);
 });
 
-test("view_image rejects symlinks that resolve outside cwd", async () => {
+test("view_image rejects symlinks that resolve outside cwd when workspaceOnly", async () => {
 	const cwd = tempDir();
 	const outside = tempDir();
 	writeFileSync(join(outside, "secret.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
 	symlinkSync(join(outside, "secret.png"), join(cwd, "linked.png"));
-	await assert.rejects(() => validateImagePath({ path: "linked.png" }, cwd), /escapes the workspace/);
+	await assert.rejects(() => validateImagePath({ path: "linked.png" }, cwd, { workspaceOnly: true }), /escapes the workspace/);
+});
+
+test("view_image allows paths outside cwd by default", async () => {
+	const cwd = tempDir();
+	const outside = tempDir();
+	const outsidePath = join(outside, "clip.png");
+	writeFileSync(outsidePath, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+	const validated = await validateImagePath({ path: outsidePath }, cwd);
+	assert.equal(validated.absolutePath, outsidePath);
+	assert.equal(validated.mimeType, "image/png");
 });

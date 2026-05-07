@@ -155,7 +155,8 @@ function registerTools(pi: ExtensionAPI): void {
 		promptGuidelines: ["Use view_image when you need to inspect a local image file; pass the path in the path argument."],
 		parameters: viewImageToolSchema,
 		async execute(_toolCallId: string, params: ViewImageInput, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
-			return viewImage(params, ctx.cwd) as never;
+			const settings = loadSettings(ctx.cwd);
+			return viewImage(params, ctx.cwd, { workspaceOnly: settings.viewImageWorkspaceOnly }) as never;
 		},
 		renderCall(args: ViewImageInput, theme: any, context: any) {
 			if (context?.executionStarted && !context?.isPartial) return emptyComponent();
