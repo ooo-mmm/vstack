@@ -1,6 +1,6 @@
 {
   "name": "@vanillagreen/pi-extension-manager",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Settings-integrated Pi extension inventory, toggles, and schema-driven extension configuration for vstack packages.",
   "license": "MIT",
   "keywords": [
