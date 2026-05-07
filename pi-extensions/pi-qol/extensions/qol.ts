@@ -1268,11 +1268,11 @@ function renderStatusLine(width: number, ctx: ExtensionContext, git: GitState, p
 	const cavemanGlyph = caveman ? (cavemanActive ? CAVEMAN_ICON_ACTIVE : CAVEMAN_ICON_INACTIVE) : "";
 	const cavemanTone = cavemanIconTone(caveman?.getMode() ?? "off", cavemanActive);
 	const cavemanSegment = caveman ? ` / ${cavemanGlyph}` : "";
-	const leftPlain = `${projectChunk}${thinkingChunk}${contextChunk}${cavemanSegment}`;
+	const leftPlain = `${projectChunk}${thinkingChunk}${cavemanSegment}${contextChunk}`;
 	const rightPlain = percent === null ? "…%" : `${percent}%`;
 	const percentColor = percent === null ? "muted" : percent <= 15 ? "error" : percent <= 30 ? "warning" : "success";
 	const leftColored = caveman
-		? `${theme.fg("accent", projectChunk)}${theme.fg(THINKING_TOKEN[thinkingLevel], thinkingChunk)}${theme.fg("accent", `${contextChunk} / `)}${theme.fg(cavemanTone, cavemanGlyph)}`
+		? `${theme.fg("accent", projectChunk)}${theme.fg(THINKING_TOKEN[thinkingLevel], thinkingChunk)}${theme.fg("accent", " / ")}${theme.fg(cavemanTone, cavemanGlyph)}${theme.fg("accent", contextChunk)}`
 		: `${theme.fg("accent", projectChunk)}${theme.fg(THINKING_TOKEN[thinkingLevel], thinkingChunk)}${theme.fg("accent", contextChunk)}`;
 	const right = theme.fg(percentColor, rightPlain);
 	const minimumGap = 1;
