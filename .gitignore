@@ -21,3 +21,6 @@ yarn-error.log
 Thumbs.db
 *.swp
 *.swo
+
+# Generated OpenAI Codex images
+.pi/openai-codex-images/

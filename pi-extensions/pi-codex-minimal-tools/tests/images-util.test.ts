@@ -18,5 +18,5 @@ test("saveBase64Image uses unique filenames and writes format-specific latest pa
 	assert.notEqual(first.path, second.path);
 	assert.equal(first.latestPath?.endsWith("latest.jpeg"), true);
 	assert.equal(existsSync(first.latestPath!), true);
-	assert.match(basename(first.path), /^[\dTZ-]+-[a-f0-9]{8}-call-resp\.jpeg$/);
+	assert.match(basename(first.path), /^[\dTZ-]+-[a-f0-9]{8}\.jpeg$/);
 });

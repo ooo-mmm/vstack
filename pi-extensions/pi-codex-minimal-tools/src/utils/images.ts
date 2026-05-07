@@ -63,10 +63,8 @@ export async function saveBase64Image(options: {
 	const ext = extensionForMime(mimeType);
 	const dir = imageOutputDir(options.cwd, options.settings);
 	await mkdir(dir, { recursive: true });
-	const safeCall = (options.callId || "image").replace(/[^a-z0-9_.-]+/gi, "-").slice(0, 60);
-	const safeResponse = (options.responseId || "response").replace(/[^a-z0-9_.-]+/gi, "-").slice(0, 60);
 	const unique = randomUUID().slice(0, 8);
-	const filePath = join(dir, `${new Date().toISOString().replace(/[:.]/g, "-")}-${unique}-${safeCall}-${safeResponse}.${ext}`);
+	const filePath = join(dir, `${new Date().toISOString().replace(/[:.]/g, "-")}-${unique}.${ext}`);
 	const data = Buffer.from(options.base64, "base64");
 	await writeFile(filePath, data, { mode: 0o600 });
 	const latestPath = join(dir, `latest.${ext}`);

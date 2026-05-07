@@ -116,7 +116,7 @@ test("saveOpenAICodexGeneratedImage writes generated images under the configured
 	const encoded = Buffer.from("png-bytes").toString("base64");
 	try {
 		const saved = await saveOpenAICodexGeneratedImage(cwd, { responseId: "resp_123", callId: "ig_456", result: encoded, outputFormat: "png" });
-		assert.match(saved.relativePath, /^\.pi[/\\]openai-codex-images[/\\].+ig_456-resp_123\.png$/);
+		assert.match(saved.relativePath, /^\.pi[/\\]openai-codex-images[/\\][\dTZ-]+-[a-f0-9]{8}\.png$/);
 		assert.equal(saved.latestRelativePath, path.join(".pi", "openai-codex-images", "latest.png"));
 		assert.deepEqual(await fs.readFile(saved.absolutePath), Buffer.from("png-bytes"));
 		assert.deepEqual(await fs.readFile(saved.latestAbsolutePath), Buffer.from("png-bytes"));
