@@ -12,7 +12,7 @@
  *   The bridge replies with JSONL responses and broadcasts live Pi events.
  */
 
-import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import * as fs from "node:fs";
 import * as net from "node:net";
 import * as os from "node:os";

@@ -1,6 +1,6 @@
-import { StringEnum } from "@mariozechner/pi-ai";
-import type { AgentToolResult, ExtensionAPI, ExtensionCommandContext, ExtensionContext, Theme, ToolExecutionMode } from "@mariozechner/pi-coding-agent";
-import { matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi, type AutocompleteItem } from "@mariozechner/pi-tui";
+import { StringEnum } from "@earendil-works/pi-ai";
+import type { AgentToolResult, ExtensionAPI, ExtensionCommandContext, ExtensionContext, Theme, ToolExecutionMode } from "@earendil-works/pi-coding-agent";
+import { matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi, type AutocompleteItem } from "@earendil-works/pi-tui";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";

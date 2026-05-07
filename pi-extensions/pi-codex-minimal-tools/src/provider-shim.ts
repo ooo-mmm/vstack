@@ -1,7 +1,7 @@
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { loadSettings } from "./settings.js";
 import { saveBase64Image } from "./utils/images.js";
-import { Box, Container, getCapabilities, getImageDimensions, Image, Spacer, Text } from "@mariozechner/pi-tui";
+import { Box, Container, getCapabilities, getImageDimensions, Image, Spacer, Text } from "@earendil-works/pi-tui";
 import {
 	createAssistantMessageEventStream,
 	appendAssistantMessageDiagnostic,
@@ -14,7 +14,7 @@ import {
 	type Context,
 	type Model,
 	type SimpleStreamOptions,
-} from "@mariozechner/pi-ai";
+} from "@earendil-works/pi-ai";
 import type { ResponseCreateParamsStreaming } from "openai/resources/responses/responses.js";
 import {
 	convertResponsesMessages,

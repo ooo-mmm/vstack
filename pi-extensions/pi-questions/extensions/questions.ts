@@ -9,8 +9,8 @@ import {
 	truncateHead,
 	type TruncationResult,
 	withFileMutationQueue,
-} from "@mariozechner/pi-coding-agent";
-import { Editor, type EditorTheme, matchesKey, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
+} from "@earendil-works/pi-coding-agent";
+import { Editor, type EditorTheme, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";

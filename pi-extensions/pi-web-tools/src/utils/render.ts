@@ -1,4 +1,4 @@
-import { Text, truncateToWidth, type Component } from "@mariozechner/pi-tui";
+import { Text, truncateToWidth, type Component } from "@earendil-works/pi-tui";
 
 export function emptyComponent(): Component {
 	return { invalidate() {}, render: () => [] };

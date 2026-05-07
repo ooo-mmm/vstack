@@ -17,8 +17,8 @@
     "image": "https://raw.githubusercontent.com/vanillagreencom/vstack/main/pi-extensions/pi-questions/assets/questions-workflow.gif"
   },
   "peerDependencies": {
-    "@mariozechner/pi-coding-agent": "*",
-    "@mariozechner/pi-tui": "*"
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
   },
   "files": [
     "extensions/",

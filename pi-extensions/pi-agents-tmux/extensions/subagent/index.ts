@@ -16,8 +16,8 @@ import { spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { Message } from "@mariozechner/pi-ai";
-import { StringEnum } from "@mariozechner/pi-ai";
+import type { Message } from "@earendil-works/pi-ai";
+import { StringEnum } from "@earendil-works/pi-ai";
 import {
 	formatSize,
 	type AgentToolResult,
@@ -30,8 +30,8 @@ import {
 	truncateTail,
 	type TruncationResult,
 	withFileMutationQueue,
-} from "@mariozechner/pi-coding-agent";
-import { type Component, Container, Markdown, matchesKey, Spacer, truncateToWidth, visibleWidth, wrapTextWithAnsi, type TUI } from "@mariozechner/pi-tui";
+} from "@earendil-works/pi-coding-agent";
+import { type Component, Container, Markdown, matchesKey, Spacer, truncateToWidth, visibleWidth, wrapTextWithAnsi, type TUI } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { type AgentConfig, type AgentScope, discoverAgents, formatAgentList } from "./agents.js";
 

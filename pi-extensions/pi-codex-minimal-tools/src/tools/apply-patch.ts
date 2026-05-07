@@ -26,7 +26,7 @@ export function applyPatchTargetPaths(input: string, cwd: string, allowAbsoluteP
 
 async function withMutationQueue(path: string, fn: () => Promise<void>): Promise<void> {
 	try {
-		const mod = await import("@mariozechner/pi-coding-agent");
+		const mod = await import("@earendil-works/pi-coding-agent");
 		const queue = (mod as { withFileMutationQueue?: (path: string, fn: () => Promise<void>) => Promise<void> }).withFileMutationQueue;
 		if (typeof queue === "function") return queue(path, fn);
 	} catch {

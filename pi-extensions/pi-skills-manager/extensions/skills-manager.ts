@@ -5,7 +5,7 @@
  * editing, renaming, deleting, and enabling/disabling Pi skills.
  */
 
-import { completeSimple, type ThinkingLevel, type UserMessage } from "@mariozechner/pi-ai";
+import { completeSimple, type ThinkingLevel, type UserMessage } from "@earendil-works/pi-ai";
 import {
 	DefaultPackageManager,
 	getAgentDir,
@@ -20,7 +20,7 @@ import {
 	type PackageSource,
 	type ResolvedResource,
 	type Theme,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 import {
 	Container,
 	type Component,
@@ -36,7 +36,7 @@ import {
 	type TUI,
 	visibleWidth,
 	wrapTextWithAnsi,
-} from "@mariozechner/pi-tui";
+} from "@earendil-works/pi-tui";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";

@@ -1,5 +1,5 @@
-import { StringEnum } from "@mariozechner/pi-ai";
-import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
+import { StringEnum } from "@earendil-works/pi-ai";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
 import { DuckDuckGoClient } from "../providers/duckduckgo.js";
 import { ExaClient, type NormalizedExaResult } from "../providers/exa.js";

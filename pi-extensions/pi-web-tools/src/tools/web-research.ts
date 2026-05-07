@@ -1,7 +1,7 @@
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
-import { StringEnum } from "@mariozechner/pi-ai";
-import { withFileMutationQueue, type ExtensionAPI, type ExtensionContext } from "@mariozechner/pi-coding-agent";
+import { StringEnum } from "@earendil-works/pi-ai";
+import { withFileMutationQueue, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
 import { ExaClient, type ExaDeepType, type NormalizedExaResponse } from "../providers/exa.js";
 import type { WebToolsSettings } from "../settings.js";

@@ -1,4 +1,4 @@
-import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { computeNextActiveTools, statusLines } from "./active-tools.js";
 import { INSTALL_SYMBOL } from "./activation.js";
 import { rewriteNativeOpenAiWebSearch } from "./native-openai.js";

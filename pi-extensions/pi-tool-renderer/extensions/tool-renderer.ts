@@ -1,5 +1,5 @@
-import { CompactionSummaryMessageComponent, getLanguageFromPath, getMarkdownTheme, highlightCode, keyText, ToolExecutionComponent, type ExtensionAPI, type ExtensionContext } from "@mariozechner/pi-coding-agent";
-import { Container, Loader, Markdown, Text, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@mariozechner/pi-tui";
+import { CompactionSummaryMessageComponent, getLanguageFromPath, getMarkdownTheme, highlightCode, keyText, ToolExecutionComponent, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { Container, Loader, Markdown, Text, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
@@ -3336,7 +3336,7 @@ export default async function toolRenderer(pi: ExtensionAPI): Promise<void> {
 	installMarkdownCodeBlockRenderer(pi);
 	installCompactionSummaryRenderer(pi, CompactionSummaryMessageComponent);
 
-	const agent = await import("@mariozechner/pi-coding-agent");
+	const agent = await import("@earendil-works/pi-coding-agent");
 	installUserMessageRenderer(pi, agent.UserMessageComponent);
 	installAssistantMessageRenderer(pi, agent.AssistantMessageComponent);
 	installCustomMessageSpacingPatch(pi, (agent as any).CustomMessageComponent);

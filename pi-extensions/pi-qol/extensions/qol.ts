@@ -1,8 +1,8 @@
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
-import { complete, type Message } from "@mariozechner/pi-ai";
-import { AssistantMessageComponent, BorderedLoader, convertToLlm, CustomEditor, serializeConversation, SessionManager, Theme, type ExtensionAPI, type ExtensionCommandContext, type ExtensionContext, type KeybindingsManager, type SessionEntry } from "@mariozechner/pi-coding-agent";
-import type { AutocompleteItem, AutocompleteSuggestions, EditorTheme, TUI } from "@mariozechner/pi-tui";
-import { matchesKey, Text, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@mariozechner/pi-tui";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import { complete, type Message } from "@earendil-works/pi-ai";
+import { AssistantMessageComponent, BorderedLoader, convertToLlm, CustomEditor, serializeConversation, SessionManager, Theme, type ExtensionAPI, type ExtensionCommandContext, type ExtensionContext, type KeybindingsManager, type SessionEntry } from "@earendil-works/pi-coding-agent";
+import type { AutocompleteItem, AutocompleteSuggestions, EditorTheme, TUI } from "@earendil-works/pi-tui";
+import { matchesKey, Text, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { execFile, execFileSync } from "node:child_process";
 import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";

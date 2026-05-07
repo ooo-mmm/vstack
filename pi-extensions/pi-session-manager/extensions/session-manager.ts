@@ -4,8 +4,8 @@ import { unlink } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
-import { SessionManager, type ExtensionAPI, type ExtensionCommandContext, type ExtensionContext, type KeybindingsManager, type Theme } from "@mariozechner/pi-coding-agent";
-import { Input, matchesKey, truncateToWidth, visibleWidth, type Focusable } from "@mariozechner/pi-tui";
+import { SessionManager, type ExtensionAPI, type ExtensionCommandContext, type ExtensionContext, type KeybindingsManager, type Theme } from "@earendil-works/pi-coding-agent";
+import { Input, matchesKey, truncateToWidth, visibleWidth, type Focusable } from "@earendil-works/pi-tui";
 
 const INSTALL_SYMBOL = Symbol.for("vstack.pi-session-manager.installed");
 const VSTACK_MODAL_LOCK_SYMBOL = Symbol.for("vstack.pi.modal-lock");

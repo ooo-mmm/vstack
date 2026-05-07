@@ -1,8 +1,8 @@
 import { readFile } from "node:fs/promises";
 import { extname, isAbsolute, resolve } from "node:path";
-import type { ExtensionAPI, ExtensionCommandContext, Theme } from "@mariozechner/pi-coding-agent";
-import type { Api, Model } from "@mariozechner/pi-ai";
-import { type Component, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
+import type { ExtensionAPI, ExtensionCommandContext, Theme } from "@earendil-works/pi-coding-agent";
+import type { Api, Model } from "@earendil-works/pi-ai";
+import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { loadSettings } from "./settings.js";
 import {
 	buildGeneratedImageDisplayText,

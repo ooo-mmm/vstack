@@ -2,8 +2,8 @@ import {
 	type ExtensionAPI,
 	type ExtensionContext,
 	type Theme,
-} from "@mariozechner/pi-coding-agent";
-import { Input, matchesKey, truncateToWidth, visibleWidth, type Focusable } from "@mariozechner/pi-tui";
+} from "@earendil-works/pi-coding-agent";
+import { Input, matchesKey, truncateToWidth, visibleWidth, type Focusable } from "@earendil-works/pi-tui";
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";

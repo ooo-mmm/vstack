@@ -1,5 +1,5 @@
-import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@mariozechner/pi-coding-agent";
-import { getCapabilities, Image, Text, type Component } from "@mariozechner/pi-tui";
+import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { getCapabilities, Image, Text, type Component } from "@earendil-works/pi-tui";
 import { hasOpenAiModelsLoaded } from "./activation.js";
 import { registerBackgroundImageGenerationCommand } from "./background-image-generation.js";
 import { computeNextActiveTools, computeToolCapabilities, modelKey, PACKAGE_TOOL_NAMES, type ModelLike } from "./capabilities.js";

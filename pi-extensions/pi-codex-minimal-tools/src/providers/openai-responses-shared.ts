@@ -1,6 +1,6 @@
-import { calculateCost, type Api, type AssistantMessage, type Context, type Model, type Tool, type Usage } from "@mariozechner/pi-ai";
+import { calculateCost, type Api, type AssistantMessage, type Context, type Model, type Tool, type Usage } from "@earendil-works/pi-ai";
 import type { ResponseCreateParamsStreaming, ResponseInput, ResponseStreamEvent, Tool as OpenAITool } from "openai/resources/responses/responses.js";
-import type { AssistantMessageEventStream } from "@mariozechner/pi-ai";
+import type { AssistantMessageEventStream } from "@earendil-works/pi-ai";
 
 type MessageRole = Context["messages"][number]["role"];
 type Message = Context["messages"][number];

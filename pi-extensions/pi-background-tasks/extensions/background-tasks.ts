@@ -5,7 +5,7 @@
  * @ifi/pi-background-tasks package. See ../THIRD_PARTY_NOTICES.md.
  */
 
-import { StringEnum } from "@mariozechner/pi-ai";
+import { StringEnum } from "@earendil-works/pi-ai";
 import {
 	getShellConfig,
 	type AgentToolResult,
@@ -13,8 +13,8 @@ import {
 	type ExtensionCommandContext,
 	type ExtensionContext,
 	type Theme,
-} from "@mariozechner/pi-coding-agent";
-import { type Component, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@mariozechner/pi-tui";
+} from "@earendil-works/pi-coding-agent";
+import { type Component, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
