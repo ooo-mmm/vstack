@@ -1,7 +1,7 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { loadSettings } from "./settings.js";
 import { saveBase64Image } from "./utils/images.js";
-import { Box, Image, Spacer, Text } from "@mariozechner/pi-tui";
+import { Box, Container, getCapabilities, getImageDimensions, Image, Spacer, Text } from "@mariozechner/pi-tui";
 import {
 	createAssistantMessageEventStream,
 	appendAssistantMessageDiagnostic,
@@ -89,6 +89,9 @@ type PendingActivity = QueuedImageActivity | QueuedWebSearchActivity;
 interface CachedImagePreview {
 	data: string;
 	mimeType: string;
+	bytes: number;
+	widthPx?: number;
+	heightPx?: number;
 }
 
 interface WebSocketLike {
@@ -1335,21 +1338,70 @@ export function buildWebSearchSummaryText(searches: SurfacedWebSearch[]): string
 	return searches.length === 1 ? "Searched the web once" : `Searched the web ${searches.length} times`;
 }
 
+function makeCachedImagePreview(data: string, mimeType: string, bytes?: number): CachedImagePreview {
+	const dimensions = getImageDimensions(data, mimeType) ?? undefined;
+	return { data, mimeType, bytes: bytes ?? Buffer.from(data, "base64").byteLength, widthPx: dimensions?.widthPx, heightPx: dimensions?.heightPx };
+}
+
 function loadCachedImagePreview(savedImage: SavedGeneratedImage, imagePreviewCache: Map<string, CachedImagePreview>): CachedImagePreview | undefined {
 	const cached = imagePreviewCache.get(savedImage.absolutePath);
 	if (cached) return cached;
 	const fs = getNodeFsSync();
 	if (!fs) return undefined;
 	try {
-		const preview = {
-			data: fs.readFileSync(savedImage.absolutePath).toString("base64"),
-			mimeType: `image/${savedImage.outputFormat}`,
-		};
+		const buffer = fs.readFileSync(savedImage.absolutePath);
+		const data = buffer.toString("base64");
+		const mimeType = `image/${savedImage.outputFormat}`;
+		const preview = makeCachedImagePreview(data, mimeType, buffer.byteLength);
 		imagePreviewCache.set(savedImage.absolutePath, preview);
 		return preview;
 	} catch {
 		return undefined;
 	}
+}
+
+function formatImageBytes(bytes: number | undefined): string | undefined {
+	if (!Number.isFinite(bytes) || !bytes) return undefined;
+	if (bytes < 1024) return `${bytes} B`;
+	if (bytes < 1024 * 1024) return `${Math.round(bytes / 102.4) / 10}K`;
+	return `${Math.round(bytes / (1024 * 102.4)) / 10}M`;
+}
+
+function themeFg(theme: any, token: string, text: string): string {
+	try { return theme?.fg?.(token, text) ?? text; } catch { return text; }
+}
+
+function themeBold(theme: any, text: string): string {
+	try { return theme?.bold?.(text) ?? text; } catch { return text; }
+}
+
+function shouldRenderInlineImage(): { ok: boolean; reason?: string } {
+	if (process.env.TMUX) return { ok: false, reason: "inline preview disabled in tmux to avoid overlay/stale image artifacts" };
+	const protocol = getCapabilities().images;
+	if (!protocol) return { ok: false, reason: "terminal image protocol unavailable" };
+	return { ok: true };
+}
+
+function renderImageGenerationMessage(savedImage: SavedGeneratedImage | undefined, messageContent: unknown, options: any, theme: any, imagePreviewCache: Map<string, CachedImagePreview>): Container {
+	const container = new Container();
+	const preview = savedImage ? loadCachedImagePreview(savedImage, imagePreviewCache) : undefined;
+	const type = savedImage?.outputFormat?.toUpperCase() ?? preview?.mimeType?.replace(/^image\//, "").toUpperCase() ?? "IMAGE";
+	const dimensions = preview?.widthPx && preview?.heightPx ? `${preview.widthPx}x${preview.heightPx}` : undefined;
+	const size = formatImageBytes(preview?.bytes);
+	const meta = [type, dimensions, size].filter(Boolean).join(" · ");
+	const label = `${themeFg(theme, "accent", "● ")}${themeFg(theme, "text", themeBold(theme, "Image Generation "))}`;
+	const pathText = savedImage?.relativePath ?? (typeof messageContent === "string" ? messageContent : "generated image");
+	const lines = [`${label}${themeFg(theme, "accent", pathText)}${meta ? themeFg(theme, "dim", ` · ${meta}`) : ""}`];
+	if (savedImage?.latestRelativePath) lines.push(`${themeFg(theme, "muted", "  ├─ ")}${themeFg(theme, "text", "Latest ")}${themeFg(theme, "accent", savedImage.latestRelativePath)}`);
+	if (options?.expanded && savedImage?.revisedPrompt) lines.push(`${themeFg(theme, "muted", "  ├─ ")}${themeFg(theme, "text", "Prompt ")}${themeFg(theme, "dim", savedImage.revisedPrompt)}`);
+	const inline = shouldRenderInlineImage();
+	if (!inline.ok) lines.push(`${themeFg(theme, "muted", "  └─ ")}${themeFg(theme, "warning", inline.reason ?? "inline preview unavailable")}`);
+	container.addChild(new Text(lines.join("\n"), 0, 0));
+	if (savedImage && preview && inline.ok) {
+		container.addChild(new Spacer(1));
+		container.addChild(new Image(preview.data, preview.mimeType, { fallbackColor: (text) => themeFg(theme, "dim", text) }, { maxWidthCells: 72, maxHeightCells: options?.expanded ? 24 : 14, filename: savedImage.relativePath }));
+	}
+	return container;
 }
 
 function createInitialAssistantMessage<TApi extends Api>(model: Model<TApi>): AssistantMessage {
@@ -1592,7 +1644,7 @@ export function registerOpenAICodexCustomProvider(pi: ExtensionAPI, options: { g
 		for (let index = 0; index < activities.length; index++) {
 			const activity = activities[index];
 			if (activity.kind === "image") {
-				imagePreviewCache.set(activity.savedImage.absolutePath, activity.imageData);
+				imagePreviewCache.set(activity.savedImage.absolutePath, makeCachedImagePreview(activity.imageData.data, activity.imageData.mimeType));
 				pi.sendMessage(
 					{
 						customType: IMAGE_SAVE_DISPLAY_MESSAGE_TYPE,
@@ -1666,28 +1718,14 @@ export function registerOpenAICodexCustomProvider(pi: ExtensionAPI, options: { g
 	});
 
 	pi.registerMessageRenderer<ImageDisplayMessageDetails>(IMAGE_SAVE_DISPLAY_MESSAGE_TYPE, (message, options, theme) => {
-		const box = new Box(1, 1, (text) => theme.bg("customMessageBg", text));
-		box.addChild(new Text(theme.fg("customMessageLabel", theme.bold("[image_generation]")), 0, 0));
 		const savedImage = message.details?.savedImages?.[0];
-		const textContent = savedImage
-			? buildGeneratedImageDisplayText(savedImage, { expanded: options.expanded })
-			: typeof message.content === "string"
-				? message.content
-				: message.content
-						.filter((item) => item.type === "text")
-						.map((item) => item.text)
-						.join("\n");
-		box.addChild(new Text(`\n${theme.fg("customMessageText", textContent)}`, 0, 0));
-		if (savedImage) {
-			const preview = loadCachedImagePreview(savedImage, imagePreviewCache);
-			if (preview) {
-				box.addChild(new Spacer(1));
-				box.addChild(
-					new Image(preview.data, preview.mimeType, { fallbackColor: (text) => theme.fg("customMessageText", text) }, { maxWidthCells: 60 }),
-				);
-			}
-		}
-		return box;
+		const textContent = typeof message.content === "string"
+			? message.content
+			: message.content
+					.filter((item) => item.type === "text")
+					.map((item) => item.text)
+					.join("\n");
+		return renderImageGenerationMessage(savedImage, textContent, options, theme, imagePreviewCache);
 	});
 
 	pi.registerMessageRenderer<{ searches?: SurfacedWebSearch[] }>(WEB_SEARCH_ACTIVITY_MESSAGE_TYPE, (message, options, theme) => {
