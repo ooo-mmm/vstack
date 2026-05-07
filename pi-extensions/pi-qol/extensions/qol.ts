@@ -3750,7 +3750,7 @@ class QolSessionSearchComponent {
 		const rightLines = twoPane ? this.renderPromptPreviewLines(selectedHit, rightWidth, paneRows, dim, muted, accent) : [];
 		const fixed = (content: string, colWidth: number, selected = false): string => {
 			const safe = content.replace(/[\r\n\t]+/g, " ");
-			const clipped = truncateToWidth(safe, colWidth, "…");
+			const clipped = truncateToWidth(safe, colWidth, "");
 			const padded = clipped + " ".repeat(Math.max(0, colWidth - visibleWidth(clipped)));
 			return selected ? this.theme.bg("selectedBg", padded) : padded;
 		};
