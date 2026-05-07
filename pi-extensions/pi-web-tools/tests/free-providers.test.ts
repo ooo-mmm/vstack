@@ -58,6 +58,20 @@ test("ExaMcpClient calls JSON-RPC MCP endpoint and parses SSE response", async (
 	assert.equal(result.metadata.provider, "exa-mcp");
 });
 
+test("web_search non-storing provider tells models to fetch URLs instead of using result numbers as content ids", async () => {
+	const originalFetch = globalThis.fetch;
+	(globalThis as any).fetch = (async () => new Response(`<div class="result"><a class="result__a" href="https://example.com/a">A</a><div class="result__snippet">Alpha</div></div>`, { status: 200 })) as typeof fetch;
+	try {
+		const tool = createWebSearchToolDefinition({ appendEntry() {} } as any, () => settings({ enabledProviders: ["duckduckgo"] }));
+		const result = await tool.execute("call", { query: "q", provider: "duckduckgo" }, undefined, undefined, { cwd: process.cwd(), model: { provider: "openai-codex" } } as any);
+		assert.match(textOf(result), /Result numbers above are not content ids/);
+		assert.match(textOf(result), /call web_fetch with its URL/);
+		assert.doesNotMatch(textOf(result), /Use get_web_content only with shown content id values/);
+	} finally {
+		(globalThis as any).fetch = originalFetch;
+	}
+});
+
 test("web_search auto falls back from failing keyed provider to Exa MCP", async () => {
 	const appended: any[] = [];
 	const originalFetch = globalThis.fetch;
@@ -75,6 +89,8 @@ test("web_search auto falls back from failing keyed provider to Exa MCP", async 
 		assert.equal(result.details.provider, "exa-mcp");
 		assert.match(textOf(result), /Provider: exa-mcp/);
 		assert.match(textOf(result), /https:\/\/example.com\/fallback/);
+		assert.match(textOf(result), /Use get_web_content only with shown content id values/);
+		assert.doesNotMatch(textOf(result), /Result numbers above are not content ids/);
 		assert.match(result.details.warnings[0], /perplexity/);
 		assert.equal(appended.length, 1);
 		assert.equal(appended[0].data.metadata.provider, "exa-mcp");

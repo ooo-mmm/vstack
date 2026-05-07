@@ -47,9 +47,16 @@ function storeProviderContent(pi: ExtensionAPI, result: NormalizedExaResult, met
 	});
 }
 
+function contentIdGuidance(all: any[]): string {
+	return all.some((r) => r.contentId)
+		? "Use get_web_content only with shown content id values (for example web-...), not result numbers."
+		: "Result numbers above are not content ids. To inspect a page, call web_fetch with its URL; use get_web_content only after a tool returns a content id.";
+}
+
 function formatProviderBody(provider: string, all: any[], answer?: string): string {
-	if (answer) return `${answer}\n\n${sourceList(all)}`;
-	return `Provider: ${provider}\nResults: ${all.length}\n${sourceList(all)}${all.some((r) => r.contentId) ? "\n\nUse get_web_content with the content id for stored full text." : ""}`;
+	const guidance = contentIdGuidance(all);
+	if (answer) return `${answer}\n\n${sourceList(all)}\n\n${guidance}`;
+	return `Provider: ${provider}\nResults: ${all.length}\n${sourceList(all)}\n\n${guidance}`;
 }
 
 export function createWebSearchToolDefinition(pi: ExtensionAPI, getSettings: (cwd?: string) => WebToolsSettings, name = "web_search", forcedProvider?: WebProvider) {

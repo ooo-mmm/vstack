@@ -39,6 +39,13 @@ function sourceLabelFromMetadata(metadata: Record<string, unknown> | undefined):
 	return provider;
 }
 
+function missingContentGuidance(id: string | undefined): string {
+	const value = String(id ?? "").trim();
+	if (/^\d+$/.test(value)) return "Result numbers from web_search are not content ids; use web_fetch with the result URL first.";
+	if (/^https?:\/\//i.test(value)) return "URLs are not content ids; use web_fetch with the URL first.";
+	return "Use a content id returned by web_search or web_fetch; content ids look like web-...";
+}
+
 export function createGetWebContentToolDefinition(name = "get_web_content") {
 	return {
 		renderShell: "self" as const,
@@ -58,7 +65,7 @@ export function createGetWebContentToolDefinition(name = "get_web_content") {
 				const message = rawMessage.toLowerCase().includes("stored content id not found") ? "stored content id not found" : rawMessage;
 				const lines = [errorSummary(theme, providerLabel("Get Web Content", "session"), message)];
 				if (context?.args?.id) lines.push(`${tree(theme, "├")}${muted(theme, "content id ")}${accent(theme, context.args.id)}`);
-				lines.push(`${tree(theme, "└")}${muted(theme, "Use the content id returned by web_search or web_fetch; URLs are not content ids.")}`);
+				lines.push(`${tree(theme, "└")}${muted(theme, missingContentGuidance(context?.args?.id))}`);
 				return textComponent(lines.join("\n"));
 			}
 			const details = result?.details ?? {};
@@ -81,7 +88,7 @@ export function createGetWebContentToolDefinition(name = "get_web_content") {
 		},
 		async execute(_toolCallId: string, params: GetWebContentInput) {
 			const item = getWebContent(params.id);
-			if (!item) throw new Error(`Stored content id not found: ${params.id}. Use a content id returned by web_search/web_fetch; passing a URL here will not fetch it.`);
+			if (!item) throw new Error(`Stored content id not found: ${params.id}. ${missingContentGuidance(params.id)}`);
 			const maxCharacters = params.maxCharacters ?? DEFAULT_GET_WEB_CONTENT_CHARACTERS;
 			const { text, truncated } = truncateText(item.content, maxCharacters);
 			return { content: [{ type: "text", text: `${displayTitle(item)}\n${item.url ?? ""}\n\n${text}${truncated ? "\n\n[Use a larger maxCharacters value for more.]" : ""}` }], details: { ...item, truncated, maxCharacters, contentLength: item.content.length } };
