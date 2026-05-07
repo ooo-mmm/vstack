@@ -1209,17 +1209,16 @@ function setTmuxWindowOption(target: string, option: string, value: string): voi
 
 function renderStatusLine(width: number, ctx: ExtensionContext, git: GitState, pi: ExtensionAPI, theme: Pick<Theme, "fg">): string {
 	const { label: contextLabel, percent } = statuslineContextInfo(ctx);
-	const leftHead = `${git.projectName}${gitBadge(git, settingBoolean("showDirtyMarker", true, ctx.cwd))} ${formatModel(ctx, pi)}`;
-	const leftTail = ` (${contextLabel})`;
+	const leftHead = `${git.projectName}${gitBadge(git, settingBoolean("showDirtyMarker", true, ctx.cwd))} ${formatModel(ctx, pi)} (${contextLabel})`;
 	const caveman = readCavemanBridge();
 	const cavemanGlyph = caveman ? (caveman.isActive() ? CAVEMAN_ICON_ACTIVE : CAVEMAN_ICON_INACTIVE) : "";
 	const cavemanTone: "success" | "muted" = caveman?.isActive() ? "success" : "muted";
 	const cavemanSegment = caveman ? ` / ${cavemanGlyph}` : "";
-	const leftPlain = `${leftHead}${cavemanSegment}${leftTail}`;
+	const leftPlain = `${leftHead}${cavemanSegment}`;
 	const rightPlain = percent === null ? "…%" : `${percent}%`;
 	const percentColor = percent === null ? "muted" : percent <= 15 ? "error" : percent <= 30 ? "warning" : "success";
 	const leftColored = caveman
-		? `${theme.fg("accent", `${leftHead} / `)}${theme.fg(cavemanTone, cavemanGlyph)}${theme.fg("accent", leftTail)}`
+		? `${theme.fg("accent", `${leftHead} / `)}${theme.fg(cavemanTone, cavemanGlyph)}`
 		: theme.fg("accent", leftPlain);
 	const right = theme.fg(percentColor, rightPlain);
 	const minimumGap = 1;
