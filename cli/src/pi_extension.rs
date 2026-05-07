@@ -247,6 +247,7 @@ const PI_EXTENSION_RENAMES: &[(&str, &[&str])] = &[
     ("@vanillagreen/pi-claude-bridge",       &["pi-claude-bridge"]),
     ("@vanillagreen/pi-codex-minimal-tools", &["pi-codex-minimal-tools"]),
     ("@vanillagreen/pi-extension-manager",   &["pi-extension-manager"]),
+    ("@vanillagreen/pi-flightdeck",          &["pi-flightdeck"]),
     ("@vanillagreen/pi-output-policy",       &["pi-output-policy"]),
     ("@vanillagreen/pi-prompt-stash",        &["pi-prompt-stash", "prompt-stash"]),
     ("@vanillagreen/pi-qol",                 &["pi-qol"]),
