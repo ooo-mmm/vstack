@@ -93,6 +93,12 @@ function tokenizeArgs(input: string): string[] {
 	return tokens;
 }
 
+function isSupportedImagePathToken(token: string): boolean {
+	const normalized = token.replace(/^file:\/\//, "").replace(/[),.;:]+$/, "");
+	if (/^https?:\/\//i.test(normalized) || normalized.startsWith("data:")) return false;
+	return /\.(?:png|jpe?g|webp)$/i.test(normalized);
+}
+
 function padAnsi(text: string, width: number): string {
 	const truncated = truncateToWidth(text, width, "");
 	return `${truncated}${" ".repeat(Math.max(0, width - visibleWidth(truncated)))}`;
@@ -201,6 +207,7 @@ export function parseImageGenCommandArgs(input: string): ParsedImageGenCommand {
 	const promptParts: string[] = [];
 	for (const token of tokenizeArgs(input.trim())) {
 		if (token.startsWith("@") && token.length > 1) imagePaths.push(token.slice(1));
+		else if (isSupportedImagePathToken(token)) imagePaths.push(token.replace(/^file:\/\//, "").replace(/[),.;:]+$/, ""));
 		else promptParts.push(token);
 	}
 	return { prompt: promptParts.join(" ").trim(), imagePaths };

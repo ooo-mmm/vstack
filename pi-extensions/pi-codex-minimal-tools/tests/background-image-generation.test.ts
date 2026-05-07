@@ -9,6 +9,17 @@ test("parseImageGenCommandArgs separates @reference images from prompt", () => {
 	});
 });
 
+test("parseImageGenCommandArgs treats pasted image paths as references", () => {
+	assert.deepEqual(parseImageGenCommandArgs("make this button green /tmp/pi-clipboard-abc.png"), {
+		prompt: "make this button green",
+		imagePaths: ["/tmp/pi-clipboard-abc.png"],
+	});
+	assert.deepEqual(parseImageGenCommandArgs("edit file:///tmp/reference.webp."), {
+		prompt: "edit",
+		imagePaths: ["/tmp/reference.webp"],
+	});
+});
+
 test("buildBackgroundImageRequest requests generate without reference images", () => {
 	const body = buildBackgroundImageRequest({ prompt: "draw a red apple", referenceImages: [], responsesModel: "gpt-5.5", imageModel: "gpt-image-2" });
 	assert.equal(body.model, "gpt-5.5");
