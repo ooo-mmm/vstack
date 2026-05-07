@@ -2293,7 +2293,6 @@ function statusMessage(ctx: ExtensionContext): string {
 }
 
 
-type QolSessionSortMode = "recent" | "relevance";
 type QolSessionSearchScope = "current" | "all";
 
 interface QolSessionSearchSession {
@@ -3075,13 +3074,28 @@ function parseSessionSearchQuery(query: string): QolParsedSessionQuery {
 	return { mode: "tokens", tokens };
 }
 
-function simpleTokenScore(needle: string, haystack: string): number | undefined {
-	const query = needle.toLowerCase();
-	const text = haystack.toLowerCase();
+function searchWordLengthPenalty(word: string, query: string): number {
+	return Math.max(0, word.length - query.length);
+}
+
+function searchStringScore(needle: string, haystack: string): number | undefined {
+	const query = normalizeSearchText(needle);
+	const text = normalizeSearchText(haystack);
 	if (!query) return 0;
-	const direct = text.indexOf(query);
-	if (direct >= 0) return direct * 0.1;
-	return undefined;
+	let best: number | undefined;
+	const record = (score: number) => {
+		best = best === undefined ? score : Math.min(best, score);
+	};
+	if (/^[a-z0-9_]+$/i.test(query)) {
+		for (const match of text.matchAll(/[a-z0-9_]+/gi)) {
+			const word = match[0].toLowerCase();
+			if (word === query) record(0);
+			else if (word.startsWith(query)) record(10 + searchWordLengthPenalty(word, query));
+			else if (word.includes(query)) record(100 + searchWordLengthPenalty(word, query));
+		}
+		return best;
+	}
+	return text.includes(query) ? 0 : undefined;
 }
 
 function matchSessionSearch(session: QolSessionSearchSession, parsed: QolParsedSessionQuery): { matches: boolean; score: number } {
@@ -3089,21 +3103,12 @@ function matchSessionSearch(session: QolSessionSearchSession, parsed: QolParsedS
 	if (parsed.mode === "regex") {
 		if (!parsed.regex) return { matches: false, score: 0 };
 		const index = text.search(parsed.regex);
-		return index < 0 ? { matches: false, score: 0 } : { matches: true, score: index * 0.1 };
+		return index < 0 ? { matches: false, score: 0 } : { matches: true, score: 0 };
 	}
 	if (parsed.tokens.length === 0) return { matches: true, score: 0 };
 	let score = 0;
-	let normalized: string | undefined;
 	for (const token of parsed.tokens) {
-		if (token.kind === "phrase") {
-			normalized ??= normalizeSearchText(text);
-			const phrase = normalizeSearchText(token.value);
-			const index = normalized.indexOf(phrase);
-			if (index < 0) return { matches: false, score: 0 };
-			score += index * 0.1;
-			continue;
-		}
-		const tokenScore = simpleTokenScore(token.value, text);
+		const tokenScore = searchStringScore(token.value, text);
 		if (tokenScore === undefined) return { matches: false, score: 0 };
 		score += tokenScore;
 	}
@@ -3173,8 +3178,7 @@ function searchQolSessions(sessions: QolSessionSearchSession[], query: string, c
 		if (!match.matches) continue;
 		results.push({ ...session, rank: match.score, snippets: buildSessionSnippets(session, parsed, snippetLimit) });
 	}
-	const sortMode = sessionSearchSortMode(cwd);
-	results.sort((a, b) => sortMode === "recent" ? b.modified.getTime() - a.modified.getTime() : a.rank - b.rank || b.modified.getTime() - a.modified.getTime());
+	results.sort((a, b) => a.rank - b.rank || b.modified.getTime() - a.modified.getTime());
 	return results.slice(0, limit);
 }
 
@@ -3186,21 +3190,12 @@ function matchTextSearch(text: string, parsed: QolParsedSessionQuery): { matches
 	if (parsed.mode === "regex") {
 		if (!parsed.regex) return { matches: false, score: 0 };
 		const index = text.search(parsed.regex);
-		return index < 0 ? { matches: false, score: 0 } : { matches: true, score: index * 0.1 };
+		return index < 0 ? { matches: false, score: 0 } : { matches: true, score: 0 };
 	}
 	if (parsed.tokens.length === 0) return { matches: true, score: 0 };
 	let score = 0;
-	let normalized: string | undefined;
 	for (const token of parsed.tokens) {
-		if (token.kind === "phrase") {
-			normalized ??= normalizeSearchText(text);
-			const phrase = normalizeSearchText(token.value);
-			const index = normalized.indexOf(phrase);
-			if (index < 0) return { matches: false, score: 0 };
-			score += index * 0.1;
-			continue;
-		}
-		const tokenScore = simpleTokenScore(token.value, text);
+		const tokenScore = searchStringScore(token.value, text);
 		if (tokenScore === undefined) return { matches: false, score: 0 };
 		score += tokenScore;
 	}
@@ -3232,10 +3227,6 @@ function buildPromptSnippet(message: QolSessionUserMessage, parsed: QolParsedSes
 		if (index >= 0) return snippetAround(source, index, value.length, 160, 24);
 	}
 	return source.slice(0, 160);
-}
-
-function sessionSearchSortMode(cwd: string): QolSessionSortMode {
-	return settingString("sessionSearch.sortMode", "recent", cwd) === "relevance" ? "relevance" : "recent";
 }
 
 function promptRecencyTime(hit: QolSessionSearchHit): number {
@@ -3284,10 +3275,7 @@ function searchQolSessionHits(sessions: QolSessionSearchSession[], query: string
 			hits.push({ message, rank: titleMatch.score, result: resultFromSession(session, titleMatch.score, [snippet]), snippet });
 		}
 	}
-	const sortMode = sessionSearchSortMode(cwd);
-	hits.sort((a, b) => sortMode === "recent"
-		? compareSessionSearchHitsRecent(a, b)
-		: a.rank - b.rank || compareSessionSearchHitsRecent(a, b));
+	hits.sort((a, b) => a.rank - b.rank || compareSessionSearchHitsRecent(a, b));
 	return hits.slice(0, limit);
 }
 
