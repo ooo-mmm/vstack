@@ -32,13 +32,13 @@ interface PiAgentsStatuslineBridge {
 }
 
 const AGENT_ASCII_COLOR_SEQUENCE: AgentAsciiColor[] = ["magenta", "green", "blue", "cyan", "yellow", "red"];
-const AGENT_ASCII_BG: Record<AgentAsciiColor, { fg: number; bg: number }> = {
-	red: { fg: 37, bg: 41 },
-	green: { fg: 37, bg: 42 },
-	yellow: { fg: 30, bg: 43 },
-	blue: { fg: 37, bg: 44 },
-	magenta: { fg: 37, bg: 45 },
-	cyan: { fg: 30, bg: 46 },
+const AGENT_ASCII_BG: Record<AgentAsciiColor, number> = {
+	red: 41,
+	green: 42,
+	yellow: 43,
+	blue: 44,
+	magenta: 45,
+	cyan: 46,
 };
 
 interface CavemanBridge {
@@ -91,8 +91,7 @@ function fallbackAgentAsciiColor(name: string): AgentAsciiColor {
 }
 
 function ansiAgentBg(color: AgentAsciiColor, text: string): string {
-	const token = AGENT_ASCII_BG[color];
-	return `\x1b[${token.fg};${token.bg}m${text}\x1b[39;49m`;
+	return `\x1b[30;${AGENT_ASCII_BG[color]}m${text}\x1b[39;49m`;
 }
 
 function subagentStatuslineMarker(cwd: string, maxInnerWidth = 24): { plain: string; styled: string } | undefined {
