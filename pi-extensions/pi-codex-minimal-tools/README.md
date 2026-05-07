@@ -2,6 +2,8 @@
 
 ![apply_patch side-by-side diff rendering](https://raw.githubusercontent.com/vanillagreencom/vstack/main/pi-extensions/pi-codex-minimal-tools/assets/apply-patch-rendering.png)
 
+![image_generation lifecycle](https://raw.githubusercontent.com/vanillagreencom/vstack/main/pi-extensions/pi-codex-minimal-tools/assets/image-generation.gif)
+
 Minimal Codex/OpenAI tool augmentation for Pi. This package adds the useful Codex-style tools without replacing Pi native tools like `read`, `grep`, `find`, `ls`, `bash`, `edit`, or `write`.
 
 Implemented features:
@@ -9,10 +11,11 @@ Implemented features:
 - `view_image` — validate and return a local image file as model image content.
 - `apply_patch` — local Codex-style patch application with the public argument shape `{ input: string }`.
 - `image_generation` — native OpenAI Codex image generation on supported models.
+- `/image-gen` — non-blocking background image generation/editing via Codex OAuth, with a live status card and saved-image completion output.
 - `/codex-minimal-tools` — opens the extension-manager settings popup when `pi-extension-manager` is installed; otherwise prints status and active package tools inline.
 - Capability gating that only adds/removes this package's tools and preserves Pi native tools.
 - OpenAI active-model gating: package tools are only active for OpenAI/OpenAI-Codex-like models, even if other providers support images.
-- Native-aware OpenAI Codex provider shim for active `image_generation` tools, including response-stream capture for `image_generation_call` results.
+- Native-aware OpenAI Codex provider shim for active in-chat `image_generation` tools, including response-stream capture for `image_generation_call` results.
 - Generated image saving under `imageOutputDir` with short timestamp/uuid filenames, `latest.<ext>` mirrors, metadata, and inline previews when the terminal image protocol is available. Tmux sessions show the saved paths and skip inline image drawing to avoid stale overlay artifacts.
 - Optional direct OpenAI Images API fallback when `directImageApiFallback` is enabled and `OPENAI_API_KEY` is set.
 
@@ -41,9 +44,11 @@ Restart Pi after installation.
 | --- | --- |
 | `/codex-minimal-tools` | Open the extension-manager settings popup (falls back to inline status when the manager is not installed). |
 | `/codex-minimal-tools:doctor` | Run lightweight self-checks. |
-| `/image-gen <prompt> [@reference.png]` | Queue background Codex OAuth image generation/editing with the configured GPT Image model. Posts the saved image path when complete without holding the current turn open. |
+| `/image-gen <prompt> [reference.png]` | Queue background Codex OAuth image generation/editing with the configured GPT Image model. Shows a live status card and posts the saved image path when complete without holding the current turn open. Reference images may be written as `@reference.png` or pasted as bare local PNG/JPEG/WebP paths such as `/tmp/pi-clipboard-*.png`. |
 
 Arguments support autocomplete.
+
+`/image-gen` uses the `openai-codex/gpt-5.5` Responses route with the configured `imageModel` (default `gpt-image-2`) and Codex/ChatGPT OAuth headers from Pi's model registry. It does **not** require `OPENAI_API_KEY`. The normal in-chat `image_generation` tool remains in-stream; use `/image-gen` when you want image work to continue in the background.
 
 ## Settings
 
@@ -82,7 +87,7 @@ Project `.pi/settings.json` overrides user `~/.pi/agent/settings.json`.
 | --- | --- | --- |
 | `imageGeneration` | `true` | Expose the `image_generation` tool on supported OpenAI Codex image-capable models. Disabling hides the tool entirely. |
 | `imageOutputDir` | `.pi/openai-codex-images` | Directory for saved generated images. Resolved relative to the workspace/repo root unless absolute. The latest image is also mirrored as `latest.<ext>`. |
-| `imageModel` | `gpt-image-2` | Image model used by the optional direct OpenAI Images API fallback. Pick from `gpt-image-2`, `gpt-image-1.5`, `gpt-image-1`. Ignored when native Codex `image_generation` is in use. |
+| `imageModel` | `gpt-image-2` | Requested GPT Image model for native Codex `image_generation`, background `/image-gen`, and the optional direct OpenAI Images API fallback. Pick from `gpt-image-2`, `gpt-image-1.5`, `gpt-image-1`. |
 | `directImageApiFallback` | `false` | Allow direct OpenAI Images API generation with `OPENAI_API_KEY` when native Codex `image_generation` is unavailable (e.g. non-Codex provider, or `nativeProviderTools` off). Off by default to keep image generation tied to the active provider. |
 | `viewImage` | `false` | Expose the `view_image` tool on image-capable models. Off by default — Pi's built-in `read` already returns image content blocks for image files, so `view_image` is mainly Codex-CLI prompt parity rather than a functional necessity. Turn on if a model is trained against the `view_image` name and you want it to use that name. |
 | `viewImageWorkspaceOnly` | `false` | Reject `view_image` paths outside `ctx.cwd`. Off by default so Pi's clipboard-paste flow keeps working (clipboard images are written to `/tmp/pi-clipboard-*.png`). Turn on for stricter sandboxing; note that Pi's `read` tool does not enforce this either, so it's mostly defense-in-depth. |
