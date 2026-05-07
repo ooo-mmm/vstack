@@ -29,6 +29,19 @@ function ansiGreen(text: string): string { return `${ANSI_GREEN_FG}${text}${ANSI
 function ansiRed(text: string): string { return `${ANSI_RED_FG}${text}${ANSI_FG_RESET}`; }
 function ansiYellow(text: string): string { return `${ANSI_YELLOW_FG}${text}${ANSI_FG_RESET}`; }
 
+function padAnsi(text: string, width: number): string {
+	const safeWidth = Math.max(0, width);
+	const clipped = truncateToWidth(text, safeWidth, "");
+	return `${clipped}${" ".repeat(Math.max(0, safeWidth - visibleWidth(clipped)))}`;
+}
+
+function centerAnsi(text: string, width: number): string {
+	const safeWidth = Math.max(0, width);
+	const clipped = truncateToWidth(text, safeWidth, "");
+	const left = Math.max(0, Math.floor((safeWidth - visibleWidth(clipped)) / 2));
+	return `${" ".repeat(left)}${clipped}`;
+}
+
 type SessionInfo = Awaited<ReturnType<typeof SessionManager.list>>[number];
 type Scope = "current" | "all";
 type SortMode = "threaded" | "recent" | "relevance";
@@ -856,12 +869,12 @@ class SessionManagerOverlay implements Focusable {
 		}
 
 		if (this.mode === "confirm-delete" || this.mode === "confirm-delete-all") {
-			if (this.keybindings.matches(data, "tui.select.confirm")) {
+			if (this.keybindings.matches(data, "tui.select.confirm") || matchesKey(data, "enter") || matchesKey(data, "return")) {
 				if (this.mode === "confirm-delete-all") void this.confirmDeleteAll();
 				else void this.confirmDelete();
 				return;
 			}
-			if (this.keybindings.matches(data, "tui.select.cancel")) {
+			if (this.keybindings.matches(data, "tui.select.cancel") || matchesKey(data, "backspace") || matchesKey(data, "escape")) {
 				this.cancelModalMode();
 				this.requestRender();
 				return;
@@ -1010,6 +1023,17 @@ class SessionManagerOverlay implements Focusable {
 		for (let i = 0; i < POPUP_PADDING_Y; i++) lines.push(blank());
 		lines.push(row(this.renderScopeTabs(bodyWidth)));
 		lines.push(row(""));
+
+		if (this.mode === "confirm-delete" || this.mode === "confirm-delete-all") {
+			const rowsBeforeConfirmBody = 1 + POPUP_PADDING_Y + 2;
+			const rowsAfterConfirmBody = POPUP_PADDING_Y + 1;
+			const targetRows = Math.max(10, this.maxPopupRows() - rowsBeforeConfirmBody - rowsAfterConfirmBody);
+			lines.push(...this.renderDeleteConfirmationRows(bodyWidth, targetRows, { row, dim, muted, accent, warning, error, border }));
+			for (let i = 0; i < POPUP_PADDING_Y; i++) lines.push(blank());
+			lines.push(border(`┗${"━".repeat(frameInner)}┛`));
+			return lines.map((line) => truncateToWidth(line, renderWidth, ""));
+		}
+
 		lines.push(row(this.renderSubheader(bodyWidth, accent, muted, dim, warning, error)));
 		lines.push(filledRow(this.renderSearch(bodyWidth, dim)));
 		lines.push(divider());
@@ -1029,6 +1053,72 @@ class SessionManagerOverlay implements Focusable {
 		for (let i = 0; i < POPUP_PADDING_Y; i++) lines.push(blank());
 		lines.push(border(`┗${"━".repeat(frameInner)}┛`));
 		return lines.map((line) => truncateToWidth(line, renderWidth, ""));
+	}
+
+	private renderDeleteConfirmationRows(
+		inner: number,
+		targetRows: number,
+		ui: {
+			row: (content?: string) => string;
+			dim: (s: string) => string;
+			muted: (s: string) => string;
+			accent: (s: string) => string;
+			warning: (s: string) => string;
+			error: (s: string) => string;
+			border: (s: string) => string;
+		},
+	): string[] {
+		const deleteAll = this.mode === "confirm-delete-all";
+		const target = deleteAll ? undefined : this.deleteTarget;
+		const boxWidth = Math.max(1, Math.min(inner, Math.max(32, Math.min(74, inner - 18))));
+		const boxInner = Math.max(1, boxWidth - 4);
+		const centeredBoxLine = (line: string) => `${" ".repeat(Math.max(0, Math.floor((inner - boxWidth) / 2)))}${line}`;
+		const top = () => {
+			const label = " Confirm delete ";
+			const fill = Math.max(1, boxWidth - 2 - visibleWidth(label));
+			return `${ui.error("┏")}${ansiRed(label)}${ui.error("━".repeat(fill))}${ui.error("┓")}`;
+		};
+		const bottom = () => ui.error(`┗${"━".repeat(Math.max(0, boxWidth - 2))}┛`);
+		const boxRow = (content = "") => `${ui.error("┃ ")}${padAnsi(content, boxInner)}${ui.error(" ┃")}`;
+		const boxDivider = () => `${ui.error("┃ ")}${ui.muted("─".repeat(boxInner))}${ui.error(" ┃")}`;
+
+		const subject = deleteAll
+			? `${this.deleteAllTargets.length} shown deletable sessions`
+			: target
+				? `“${truncateToWidth(sessionResumeTitle(target), Math.max(8, boxInner - 2), "…")}”`
+				: "selected session";
+		const scope = this.scope === "current" ? "current project" : "all sessions";
+		const search = oneLine(this.searchInput.getValue());
+		const context = `${scope}${search ? ` · query “${truncateToWidth(search, 20, "…")}”` : ""}`;
+		const deleteText = `${ansiYellow("enter")} ${ui.error(deleteAll ? "delete all shown sessions" : "delete this session")}`;
+		const cancelText = `${ansiYellow("backspace/esc")} ${ui.dim("go back to previous screen")}`;
+		const actionLine = this.theme.bg("toolErrorBg", padAnsi(deleteText, boxInner));
+
+		const boxLines = [
+			top(),
+			boxRow(centerAnsi(ui.error(this.theme.bold(deleteAll ? "Delete sessions?" : "Delete session?")), boxInner)),
+			boxRow(centerAnsi(ui.accent(subject), boxInner)),
+			boxRow(""),
+			boxRow(ui.warning("This removes the session file.")),
+			boxRow(ui.dim("If trash is unavailable, deletion is permanent.")),
+			...(deleteAll
+				? [boxRow(ui.dim(truncateToWidth(context, boxInner, "…")))]
+				: target
+					? [boxRow(`${ui.dim("Path: ")}${ui.muted(truncateToWidth(shortenPath(target.path), Math.max(8, boxInner - 6), "…"))}`)]
+					: []),
+			boxDivider(),
+			boxRow(actionLine),
+			boxRow(cancelText),
+			bottom(),
+		];
+
+		const bodyRows = Math.max(boxLines.length, targetRows);
+		const topPad = Math.max(0, Math.floor((bodyRows - boxLines.length) / 2));
+		const lines: string[] = [];
+		for (let i = 0; i < topPad; i++) lines.push(ui.row(""));
+		for (const line of boxLines) lines.push(ui.row(centeredBoxLine(line)));
+		while (lines.length < bodyRows) lines.push(ui.row(""));
+		return lines;
 	}
 
 	private renderHeader(inner: number, accent: (s: string) => string, muted: (s: string) => string): string {
