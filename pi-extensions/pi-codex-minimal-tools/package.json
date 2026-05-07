@@ -1,6 +1,6 @@
 {
   "name": "@vanillagreen/pi-codex-minimal-tools",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "Minimal Codex/OpenAI native tools for Pi: image_generation, view_image, apply_patch",
   "type": "module",
   "keywords": [
