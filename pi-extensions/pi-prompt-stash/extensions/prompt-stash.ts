@@ -389,8 +389,8 @@ async function openStashPopup(ctx: ExtensionContext): Promise<void> {
 
 				lines.push(panelLine("", innerWidth));
 				const status = confirmDeleteAll
-					? `${theme.fg("warning", "delete all stashed prompts?")} ${ansiYellow("enter")} ${theme.fg("dim", "confirm · ")}${ansiYellow("esc")} ${theme.fg("dim", "cancel")}`
-					: `${ansiYellow("-/=")} ${theme.fg("dim", "page · ")}${ansiYellow("enter")} ${theme.fg("dim", "restore · ")}${ansiYellow("ctrl+d")} ${theme.fg("dim", "delete · ")}${ansiYellow("ctrl+x")} ${theme.fg("dim", "delete all · ")}${ansiYellow("esc")} ${theme.fg("dim", "close")}`;
+					? theme.fg("warning", "delete all stashed prompts?")
+					: `${ansiYellow("-/=")} ${theme.fg("dim", "page · ")}${ansiYellow("alt+d")} ${theme.fg("dim", "delete · ")}${ansiYellow("alt+x")} ${theme.fg("dim", "delete all")}`;
 				lines.push(panelLine(status, innerWidth));
 
 				return framePopup(lines, width, theme, "Prompt Stash", `${items.length} saved`);
@@ -448,11 +448,11 @@ async function openStashPopup(ctx: ExtensionContext): Promise<void> {
 						tui.requestRender();
 						return;
 					}
-					if (matchesKey(data, "ctrl+d") || matchesKey(data, "delete")) {
+					if (matchesKey(data, "alt+d") || matchesKey(data, "ctrl+d") || matchesKey(data, "delete")) {
 						deleteSelected();
 						return;
 					}
-					if (matchesKey(data, "ctrl+x")) {
+					if (matchesKey(data, "alt+x") || matchesKey(data, "ctrl+x")) {
 						confirmDeleteAll = items.length > 0;
 						tui.requestRender();
 						return;

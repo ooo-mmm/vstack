@@ -872,7 +872,7 @@ function renderActiveAgentDetail(item: SubagentDashboardItem | undefined, ui: Ag
 		return wrapped.length > 0 ? wrapped : [""];
 	};
 	// Build the full detail body first, then apply the inspector scroll
-	// across the whole list so up/down moves the entire viewport - not just
+	// across the whole list so vertical movement scrolls the entire viewport - not just
 	// the tail block at the bottom (which is often empty when there is no
 	// transcript or the file is shorter than the viewport).
 	const titleLine = `${agentPaneTitle(theme, "Detail", ui.pane === "inspector")} ${ansiMagenta(theme.bold(item.agent))} ${dashboardStatusText(item, theme)} ${theme.fg("dim", dashboardKindLabel(item.kind))}`;
@@ -1472,7 +1472,7 @@ function createAgentsBrowserComponent(
 			requestRender();
 			return;
 		}
-		if (matchesKey(data, "ctrl+e")) {
+		if (matchesKey(data, "alt+e") || matchesKey(data, "ctrl+e")) {
 			if (ui.tab === "active" && ui.activeSelected > 0) {
 				const item = getActiveItems()[ui.activeSelected - 1];
 				if (item?.transcriptPath) {
@@ -1627,9 +1627,9 @@ function createAgentsBrowserComponent(
 		if (matchesKey(data, "home")) { if (ui.pane === "inspector") ui.inspectorScroll = 0; else { ui.selected = 0; ui.scroll = 0; } requestRender(); return; }
 		if (matchesKey(data, "end")) { if (ui.pane === "inspector") ui.inspectorScroll = Number.MAX_SAFE_INTEGER; else { ui.selected = Math.max(0, filtered().length - 1); clamp(); } requestRender(); return; }
 		if (matchesKey(data, "enter") || matchesKey(data, "return")) return insertSelected();
-		if (matchesKey(data, "ctrl+p")) return startSelected();
-		if (matchesKey(data, "ctrl+o")) return attachSelected();
-		if (matchesKey(data, "ctrl+x")) return stopSelected();
+		if (matchesKey(data, "alt+p") || matchesKey(data, "ctrl+p")) return startSelected();
+		if (matchesKey(data, "alt+o") || matchesKey(data, "ctrl+o")) return attachSelected();
+		if (matchesKey(data, "alt+x") || matchesKey(data, "ctrl+x")) return stopSelected();
 		if (matchesKey(data, "backspace")) { ui.search = ui.search.slice(0, -1); ui.selected = 0; ui.scroll = 0; ui.inspectorScroll = 0; clamp(); requestRender(); return; }
 		if (matchesKey(data, "ctrl+u")) { ui.search = ""; ui.selected = 0; ui.scroll = 0; ui.inspectorScroll = 0; requestRender(); return; }
 		if (isAgentBrowserTextInput(data)) { ui.search += data; ui.pane = "list"; ui.selected = 0; ui.scroll = 0; ui.inspectorScroll = 0; clamp(); requestRender(); }
@@ -1644,7 +1644,7 @@ function createAgentsBrowserComponent(
 		if (ui.tab === "active" && !hasActive) ui.tab = ui.scope;
 		const tabLine = renderAgentBrowserTabs(ui.tab, hasActive, bodyWidth, theme);
 		if (ui.tab === "active") {
-			const footer = `${ansiYellow("tab")} ${theme.fg("dim", "view · ")}${ansiYellow("-/=")} ${theme.fg("dim", "page · ")}${ansiYellow("←/→")} ${theme.fg("dim", "pane · ")}${ansiYellow("ctrl+e")} ${theme.fg("dim", "edit · ")}${ansiYellow("esc")} ${theme.fg("dim", "close")}`;
+			const footer = `${ansiYellow("tab")} ${theme.fg("dim", "view · ")}${ansiYellow("-/=")} ${theme.fg("dim", "page · ")}${ansiYellow("←/→")} ${theme.fg("dim", "pane · ")}${ansiYellow("alt+e")} ${theme.fg("dim", "edit")}`;
 			const lines = [tabLine, "", ...renderActiveTabBody(activeItems, runtimeRoot, ui, bodyWidth, theme, layout), agentDivider(bodyWidth, theme), ...wrapTextWithAnsi(footer, bodyWidth)];
 			return agentFrame(lines, safeWidth, theme, layout.innerRows, "Agents");
 		}
@@ -1652,13 +1652,12 @@ function createAgentsBrowserComponent(
 			clampHistory();
 			loadHistoryRecord(historyRecords[ui.historySelected]);
 			const arrowsLabel = ui.pane === "inspector" ? "sections · " : "pane · ";
-			const enterLabel = ui.pane === "list" ? "open · " : "edit file · ";
-			const footer = `${ansiYellow("tab")} ${theme.fg("dim", "view · ")}${ansiYellow("-/=")} ${theme.fg("dim", "page · ")}${ansiYellow("←/→")} ${theme.fg("dim", arrowsLabel)}${ansiYellow("enter")} ${theme.fg("dim", enterLabel)}${ansiYellow("ctrl+e")} ${theme.fg("dim", "edit · ")}${ansiYellow("esc")} ${theme.fg("dim", "close")}`;
+			const footer = `${ansiYellow("tab")} ${theme.fg("dim", "view · ")}${ansiYellow("-/=")} ${theme.fg("dim", "page · ")}${ansiYellow("←/→")} ${theme.fg("dim", arrowsLabel)}${ansiYellow("alt+e")} ${theme.fg("dim", "edit")}`;
 			const lines = [tabLine, "", ...renderHistoryTabBody(historyRecords, historyCache, ui, bodyWidth, theme, layout), agentDivider(bodyWidth, theme), ...wrapTextWithAnsi(footer, bodyWidth)];
 			return agentFrame(lines, safeWidth, theme, layout.innerRows, "Agents");
 		}
 		clamp();
-		const footer = `${ansiYellow("tab")} ${theme.fg("dim", "view · ")}${ansiYellow("-/=")} ${theme.fg("dim", "page · ")}${ansiYellow("←/→")} ${theme.fg("dim", "pane · ")}${ansiYellow("enter")} ${theme.fg("dim", "insert · ")}${ansiYellow("ctrl+p/o/x")} ${theme.fg("dim", "pane ops · ")}${ansiYellow("esc")} ${theme.fg("dim", "close")}`;
+		const footer = `${ansiYellow("tab")} ${theme.fg("dim", "view · ")}${ansiYellow("-/=")} ${theme.fg("dim", "page · ")}${ansiYellow("←/→")} ${theme.fg("dim", "pane · ")}${ansiYellow("alt+p/o/x")} ${theme.fg("dim", "pane ops")}`;
 		const lines = [
 			tabLine,
 			"",
@@ -4211,7 +4210,7 @@ function renderPaneCompletionMessage(message: { content: string; details?: unkno
 	if (!expanded) {
 		const lines: string[] = [];
 		for (const detail of completions) {
-			lines.push(agentStatusLine(theme, detail.agent, detail.status, paneCompletionTone(detail.status), theme.fg("dim", ` · ${shortTaskId(detail.taskId)} · Ctrl+O`)));
+			lines.push(agentStatusLine(theme, detail.agent, detail.status, paneCompletionTone(detail.status), theme.fg("dim", ` · ${shortTaskId(detail.taskId)} · ctrl+o`)));
 			lines.push(`${subagentBranch(theme, "└")}${theme.fg("toolOutput", oneLinePreview(detail.summary, 120) || "No summary provided.")}`);
 		}
 		return framedMessage(lines.join("\n"), theme);
@@ -4360,7 +4359,7 @@ function traceViewerLines(state: TraceViewerState, width: number, rows: number, 
 	const innerWidth = Math.max(1, width - 4);
 	const frameRows = Math.max(8, rows);
 	const item = state.items[state.selected] ?? state.items[0];
-	const help = `${ansiYellow("tab/←→")} ${theme.fg("dim", "sections · ")}${ansiYellow("-/=")} ${theme.fg("dim", "page · ")}${ansiYellow("enter")} ${theme.fg("dim", "open · ")}${ansiYellow("esc")} ${theme.fg("dim", "close")}`;
+	const help = `${ansiYellow("tab/←→")} ${theme.fg("dim", "sections · ")}${ansiYellow("-/=")} ${theme.fg("dim", "page")}`;
 	const tabs = renderTraceTabBar(state.items, state.selected, innerWidth, theme);
 	const meta = [
 		item?.ref ? theme.fg("accent", item.ref) : "",
@@ -4377,7 +4376,7 @@ function traceViewerLines(state: TraceViewerState, width: number, rows: number, 
 	state.scroll = Math.max(0, Math.min(state.scroll, maxScroll));
 	const visible = content.slice(state.scroll, state.scroll + bodyRows);
 	const footer = item?.path
-		? `${theme.fg("dim", `${state.scroll + 1}-${Math.min(content.length, state.scroll + bodyRows)}/${content.length} · `)}${ansiYellow("enter")} ${theme.fg("dim", "opens $VISUAL/$EDITOR")}`
+		? theme.fg("dim", `${state.scroll + 1}-${Math.min(content.length, state.scroll + bodyRows)}/${content.length} · file`)
 		: theme.fg("dim", `${state.scroll + 1}-${Math.min(content.length, state.scroll + bodyRows)}/${content.length} · metadata`);
 	const innerLines = [
 		tabs,
@@ -6112,7 +6111,7 @@ export default function (pi: ExtensionAPI) {
 			const transcriptLine = (r: SingleResult) => (r.transcriptPath ? theme.fg("dim", `Transcript: ${compactPath(r.transcriptPath)}`) : "");
 			const queuedPaneLine = (r: SingleResult) => {
 				if (!r.taskId || !r.paneId) return "";
-				const hint = theme.fg("dim", " · Ctrl+O");
+				const hint = theme.fg("dim", " · ctrl+o");
 				return agentStatusLine(theme, r.agent, "Queued task", "warning", `${theme.fg("dim", " · pane")}${hint}`);
 			};
 			const addFinalResponseMarkdown = (container: Container, finalOutput: string, toolCalls: DisplayItem[]) => {
@@ -6193,7 +6192,7 @@ export default function (pi: ExtensionAPI) {
 				}
 
 				if (quietDashboard && queued) {
-					return wrappedText(agentStatusLine(theme, r.agent, "Queued task", "warning", `${theme.fg("dim", " · pane · dashboard")}${theme.fg("dim", " · Ctrl+O")}`));
+					return wrappedText(agentStatusLine(theme, r.agent, "Queued task", "warning", `${theme.fg("dim", " · pane · dashboard")}${theme.fg("dim", " · ctrl+o")}`));
 				}
 
 				if (quietDashboard && !queued && !isError) {
@@ -6203,14 +6202,14 @@ export default function (pi: ExtensionAPI) {
 						: r.task
 							? oneLinePreview(r.task, 140)
 							: "completed";
-					let text = `${theme.fg("toolTitle", theme.bold("Result from"))} ${ansiMagenta(theme.bold(r.agent))}${theme.fg("dim", " · bg · Ctrl+O")}${truncationBadge(r)}`;
+					let text = `${theme.fg("toolTitle", theme.bold("Result from"))} ${ansiMagenta(theme.bold(r.agent))}${theme.fg("dim", " · bg · ctrl+o")}${truncationBadge(r)}`;
 					if (preview) text += `\n${subagentBranch(theme, "└", cwd)}${theme.fg("toolOutput", preview)}`;
 					const outputPath = fullOutputLine(r);
 					if (outputPath) text += `\n${outputPath}`;
 					return wrappedText(text);
 				}
 
-				let text = queued || agentStatusLine(theme, r.agent, isError ? "failed" : "completed", isError ? "error" : "success", `${theme.fg("dim", " · bg")}${theme.fg("dim", " · Ctrl+O")}`);
+				let text = queued || agentStatusLine(theme, r.agent, isError ? "failed" : "completed", isError ? "error" : "success", `${theme.fg("dim", " · bg")}${theme.fg("dim", " · ctrl+o")}`);
 				if (isError && r.stopReason) text += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
 				text += truncationBadge(r);
 				if (queued) text += `\n${subagentBranch(theme, "└", cwd)}${theme.fg("dim", r.task ? oneLinePreview(r.task, 120) : "queued task")}`;
@@ -6219,7 +6218,7 @@ export default function (pi: ExtensionAPI) {
 				else {
 					if (r.task) text += `\n${subagentBranch(theme, "├", cwd)}${theme.fg("dim", oneLinePreview(r.task, 120))}`;
 					text += `\n${renderDisplayItems(displayItems, collapsedItemCount)}`;
-					if (displayItems.length > collapsedItemCount) text += `\n${theme.fg("muted", "… more in Ctrl+O")}`;
+					if (displayItems.length > collapsedItemCount) text += `\n${theme.fg("muted", "… more in ctrl+o")}`;
 				}
 				const outputPath = queued ? "" : fullOutputLine(r);
 				if (outputPath) text += `\n${outputPath}`;
@@ -6318,7 +6317,7 @@ export default function (pi: ExtensionAPI) {
 				}
 				const usageStr = formatUsageStats(aggregateUsage(details.results));
 				if (usageStr) text += `\n\n${theme.fg("dim", `Total: ${usageStr}`)}`;
-				text += `\n${theme.fg("muted", "(Ctrl+O to expand)")}`;
+				text += `\n${theme.fg("muted", "(ctrl+o to expand)")}`;
 				return wrappedText(text);
 			}
 
@@ -6348,7 +6347,7 @@ export default function (pi: ExtensionAPI) {
 							? theme.fg("muted", " · lifecycle in dashboard")
 						: expanded
 							? ""
-							: theme.fg("muted", " (Ctrl+O to inspect)");
+							: theme.fg("muted", " (ctrl+o to inspect)");
 				const headerText =
 					theme.fg("accent", "● ") +
 					theme.fg("toolTitle", theme.bold(headerLabel)) +

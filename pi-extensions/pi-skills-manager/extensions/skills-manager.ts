@@ -920,10 +920,8 @@ class ScrollableSkillPreview implements Component {
 		const maxScroll = Math.max(0, totalLines - visibleHeight);
 		const scroll = maxScroll > 0 ? this.theme.fg("dim", ` • ${this.scrollOffset + 1}-${Math.min(totalLines, this.scrollOffset + visibleHeight)}/${totalLines}`) : "";
 		const hints: Array<[string, string]> = [["-/=", "page"]];
-		if (this.skill.enabled) hints.push(["enter", "insert"]);
-		hints.push(["ctrl+x", "enable/disable"]);
-		if (isDeletableSkill(this.skill)) hints.push(["ctrl+e", "edit"], ["ctrl+r", "rename"], ["backspace", "delete"]);
-		hints.push(["esc", "back"]);
+		hints.push(["alt+x", "enable/disable"]);
+		if (isDeletableSkill(this.skill)) hints.push(["alt+e", "edit"], ["alt+r", "rename"], ["backspace", "delete"]);
 		return truncateToWidth(`${skillKeyHints(this.theme, hints)}${scroll}`, innerWidth, this.theme.fg("dim", "..."));
 	}
 	render(width: number): string[] {
@@ -994,13 +992,13 @@ class SkillEditorView implements Component, Focusable {
 		const staticLineCount = lines.length + 3;
 		const editorBlockLines = Math.max(7, targetInnerLines - staticLineCount);
 		this.virtualRows = this.rowsForVisibleEditorLines(Math.max(5, editorBlockLines - 2));
-		lines.push("", ...this.editor.render(innerWidth), "", truncateToWidth(skillKeyHints(this.theme, [["ctrl+s", "save"], ["esc", "back"]]), innerWidth, this.theme.fg("dim", "...")));
+		lines.push("", ...this.editor.render(innerWidth), "", truncateToWidth(skillKeyHints(this.theme, [["alt+s", "save"]]), innerWidth, this.theme.fg("dim", "...")));
 		while (lines.length < targetInnerLines) lines.splice(Math.max(0, lines.length - 1), 0, "");
 		return renderFrame(this.theme, width, lines.slice(0, targetInnerLines));
 	}
 	handleInput(data: string): void {
 		if (matchesKey(data, Key.escape)) { this.onCancel(); return; }
-		if (matchesKey(data, Key.ctrl("s"))) { this.onSave(this.editor.getText()); return; }
+		if (matchesKey(data, Key.alt("s")) || matchesKey(data, Key.ctrl("s"))) { this.onSave(this.editor.getText()); return; }
 		if (this.message?.tone === "error") this.message = undefined;
 		this.editor.handleInput(data);
 	}
@@ -1311,8 +1309,7 @@ class SkillsManagerDialog implements Focusable {
 		root.addChild(new Spacer(1));
 		const selected = this.getSelectedSkill();
 		const actions: Array<[string, string]> = [["-/=", "page"]];
-		if (!selected) actions.push(["enter", "create"], ["esc", "close"]);
-		else { if (selected.enabled) actions.push(["enter", "insert"]); actions.push(["tab", "preview"], ["ctrl+x", "enable/disable"]); if (!this.browseQuery && isDeletableSkill(selected)) actions.push(["backspace", "delete"]); actions.push(["esc", "close"]); }
+		if (selected) { actions.push(["tab", "preview"], ["alt+x", "enable/disable"]); if (!this.browseQuery && isDeletableSkill(selected)) actions.push(["backspace", "delete"]); }
 		root.addChild(new Text(skillKeyHints(this.theme, actions), 1, 0));
 		return renderFrame(this.theme, width, root.render(innerWidth), undefined, "Skills Manager", `${enabledCount}/${totalCount} enabled`);
 	}
@@ -1335,28 +1332,27 @@ class SkillsManagerDialog implements Focusable {
 		if (this.createError) { root.addChild(new Spacer(1)); root.addChild(new Text(this.theme.fg("error", this.createError), 1, 0)); }
 		root.addChild(new Spacer(1));
 		const footer = step.id === "description"
-			? skillKeyHints(this.theme, [["enter", "next"], ["ctrl+j", "newline"], ["alt+←", "back"], ["alt+→", "next"], ["esc", "cancel"]])
+			? skillKeyHints(this.theme, [["alt+←", "back"], ["alt+→", "next"]])
 			: step.id === "location"
-				? skillKeyHints(this.theme, [["enter", "create"], ["alt+←", "back"], ["esc", "cancel"]])
-				: skillKeyHints(this.theme, [["enter", "next"], ["alt+←", "back"], ["alt+→", "next"], ["esc", "cancel"]]);
+				? skillKeyHints(this.theme, [["alt+←", "back"]])
+				: skillKeyHints(this.theme, [["alt+←", "back"], ["alt+→", "next"]]);
 		root.addChild(new Text(footer, 1, 0));
 		return renderFrame(this.theme, width, root.render(innerWidth));
 	}
 	private renderRenameDialog(width: number): string[] {
 		const lines = [skillEntityTitle(this.theme, "Rename skill"), "", this.theme.fg("dim", "Enter new skill name (lowercase letters, numbers, hyphens)"), "", ...this.renameInput.render(Math.max(1, Math.min(width - 4, 64)))];
 		if (this.renameError) lines.push("", toneText(this.theme, "error", this.renameError));
-		lines.push("", skillKeyHints(this.theme, [["enter", "save"], ["esc", "cancel"]]));
 		return renderCenteredDialog(this.theme, width, lines);
 	}
 	private renderDeleteDialog(width: number): string[] {
 		const skill = this.deleteSkillPath ? this.registry.allSkills.find((entry) => entry.path === this.deleteSkillPath) : undefined;
 		const innerWidth = Math.max(1, Math.min(width - 4, 64));
 		const message = skill ? `Delete ${skill.name}? This removes ${skillStorageTarget(skill)} and cannot be undone.` : "Delete this skill?";
-		return renderCenteredDialog(this.theme, width, [skillEntityTitle(this.theme, "Delete skill"), "", ...wrapTextWithAnsi(message, innerWidth), "", skillKeyHints(this.theme, [["enter", "delete"], ["esc", "cancel"]])]);
+		return renderCenteredDialog(this.theme, width, [skillEntityTitle(this.theme, "Delete skill"), "", ...wrapTextWithAnsi(message, innerWidth), ""]);
 	}
 	private renderGeneratingDialog(width: number): string[] {
 		const modelLabel = this.ctx.model?.id ?? "fallback template";
-		return renderCenteredDialog(this.theme, width, [skillEntityTitle(this.theme, "Generating skill"), "", this.theme.fg("dim", `Using ${modelLabel} to draft SKILL.md.`), this.theme.fg("dim", "The preview opens when generation finishes."), "", skillKeyHints(this.theme, [["esc", "cancel"]])]);
+		return renderCenteredDialog(this.theme, width, [skillEntityTitle(this.theme, "Generating skill"), "", this.theme.fg("dim", `Using ${modelLabel} to draft SKILL.md.`), this.theme.fg("dim", "The preview opens when generation finishes.")]);
 	}
 
 	handleInput(data: string): void {
@@ -1368,10 +1364,10 @@ class SkillsManagerDialog implements Focusable {
 			const skill = this.getCurrentSkill();
 			if (!skill) { this.exitToBrowse(); return; }
 			if (matchesKey(data, Key.escape) || matchesKey(data, Key.tab)) { this.exitToBrowse(skill.path); return; }
-			if (matchesKey(data, Key.enter)) { if (!skill.enabled) this.ctx.ui.notify("Enable this skill first with ctrl+x", "info"); else this.done(skill); return; }
-			if (matchesKey(data, Key.ctrl("x"))) { void this.toggleSkill(skill); return; }
-			if (isDeletableSkill(skill) && matchesKey(data, Key.ctrl("e"))) { this.openEditor(); return; }
-			if (isDeletableSkill(skill) && matchesKey(data, Key.ctrl("r"))) { this.openRenameDialog(); return; }
+			if (matchesKey(data, Key.enter)) { if (!skill.enabled) this.ctx.ui.notify("Enable this skill first with alt+x", "info"); else this.done(skill); return; }
+			if (matchesKey(data, Key.alt("x")) || matchesKey(data, Key.ctrl("x"))) { void this.toggleSkill(skill); return; }
+			if (isDeletableSkill(skill) && (matchesKey(data, Key.alt("e")) || matchesKey(data, Key.ctrl("e")))) { this.openEditor(); return; }
+			if (isDeletableSkill(skill) && (matchesKey(data, Key.alt("r")) || matchesKey(data, Key.ctrl("r")))) { this.openRenameDialog(); return; }
 			if (isDeletableSkill(skill) && (matchesKey(data, Key.backspace) || matchesKey(data, "delete"))) { this.openDeleteConfirm(skill, "preview"); return; }
 			this.preview?.handleInput(data); return;
 		}
@@ -1383,9 +1379,9 @@ class SkillsManagerDialog implements Focusable {
 		if (matchesKey(data, Key.down)) { this.selectedIndex = this.selectedIndex === this.filteredSkills.length ? 0 : this.selectedIndex + 1; return; }
 		if (matchesKey(data, "-") || matchesKey(data, Key.pageUp)) { this.selectedIndex = Math.max(0, this.selectedIndex - this.listRows); return; }
 		if (matchesKey(data, "=") || matchesKey(data, Key.pageDown)) { this.selectedIndex = Math.min(this.filteredSkills.length, this.selectedIndex + this.listRows); return; }
-		if (matchesKey(data, Key.enter)) { if (this.selectedIndex === 0) { this.enterCreateMode(); return; } const skill = this.getSelectedSkill(); if (!skill) return; if (!skill.enabled) this.ctx.ui.notify("Enable this skill first with ctrl+x", "info"); else this.done(skill); return; }
+		if (matchesKey(data, Key.enter)) { if (this.selectedIndex === 0) { this.enterCreateMode(); return; } const skill = this.getSelectedSkill(); if (!skill) return; if (!skill.enabled) this.ctx.ui.notify("Enable this skill first with alt+x", "info"); else this.done(skill); return; }
 		if (matchesKey(data, Key.tab)) { const skill = this.getSelectedSkill(); if (skill) this.openPreview(skill); return; }
-		if (matchesKey(data, Key.ctrl("x"))) { const skill = this.getSelectedSkill(); if (skill) void this.toggleSkill(skill); return; }
+		if (matchesKey(data, Key.alt("x")) || matchesKey(data, Key.ctrl("x"))) { const skill = this.getSelectedSkill(); if (skill) void this.toggleSkill(skill); return; }
 		if (matchesKey(data, Key.backspace) && !this.browseInput.getValue()) { const skill = this.getSelectedSkill(); if (skill && isDeletableSkill(skill)) this.openDeleteConfirm(skill, "browse"); return; }
 		if (matchesKey(data, Key.escape)) { if (this.browseInput.getValue()) { this.browseQuery = ""; this.browseInput.setValue(""); this.refreshBrowseList(); } else this.done(null); return; }
 		this.browseInput.handleInput(data); this.browseQuery = this.browseInput.getValue(); this.refreshBrowseList();

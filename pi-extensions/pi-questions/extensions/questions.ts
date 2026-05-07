@@ -442,7 +442,7 @@ function normalizeRequest(payload: unknown): QuestionRequest {
 		return {
 			allowCustom: question.allowCustom === true,
 			customLabel: readString(question.customLabel, "Type custom answer"),
-			customPlaceholder: readString(question.customPlaceholder, "Type your answer, then press Enter."),
+			customPlaceholder: readString(question.customPlaceholder, "Type your answer, then press enter."),
 			header: readString(question.header, `Question ${index + 1}`),
 			multiple: question.multiple === true,
 			options,

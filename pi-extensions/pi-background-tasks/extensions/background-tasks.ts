@@ -796,7 +796,7 @@ function renderTaskEventMessage(
 			? `${theme.fg("toolTitle", theme.bold("Background task "))}${theme.fg("success", "finished")}`
 			: theme.fg("toolTitle", theme.bold("Background task output"));
 		return renderRuledBackgroundMessage(
-			`${prefix} ${label} ${theme.fg("accent", task.id)}${theme.fg("dim", ` · ${compactText(taskDisplayName(task), 64)} · Ctrl+O details`)}`,
+			`${prefix} ${label} ${theme.fg("accent", task.id)}${theme.fg("dim", ` · ${compactText(taskDisplayName(task), 64)} · ctrl+o details`)}`,
 			theme,
 		);
 	}
@@ -843,14 +843,14 @@ function renderBgTaskList(tasks: BackgroundTaskSnapshot[], theme: Theme, expande
 	const status = failed > 0 ? theme.fg("warning", ` · ${failed} failed`) : running > 0 ? theme.fg("warning", ` · ${running} running`) : theme.fg("success", " · idle");
 	let text = `${theme.fg("accent", "● ")}${bgToolLabel(theme, "Background tasks")}${theme.fg("dim", ` ${running} running · ${finished} finished`)}${status}`;
 	if (tasks.length === 0) return `${text}${theme.fg("dim", " · none")}`;
-	if (toolRenderMode(cwd) === "compact" && !expanded) return `${text}${theme.fg("dim", " · Ctrl+O details")}`;
+	if (toolRenderMode(cwd) === "compact" && !expanded) return `${text}${theme.fg("dim", " · ctrl+o details")}`;
 	const shown = tasks.slice(0, expanded ? tasks.length : TOOL_PREVIEW_TASKS);
 	shown.forEach((task, index) => {
 		const isLast = index === shown.length - 1 && shown.length === tasks.length;
 		text += `\n${renderToolTaskRow(task, theme, isLast ? "└" : "├", cwd)}`;
 	});
 	const hidden = tasks.length - shown.length;
-	if (hidden > 0) text += `\n${bgTree(theme, "└", cwd)}${theme.fg("muted", `… ${hidden} more · Ctrl+O to expand`)}`;
+	if (hidden > 0) text += `\n${bgTree(theme, "└", cwd)}${theme.fg("muted", `… ${hidden} more · ctrl+o to expand`)}`;
 	return text;
 }
 
@@ -860,7 +860,7 @@ function renderBgLogResult(task: BackgroundTaskSnapshot | undefined, output: str
 	const outputLines = takeTailLines(output, expanded ? outputLineLimit(cwd) : TOOL_PREVIEW_LINES);
 	let text = `${theme.fg("accent", "● ")}${bgToolLabel(theme, "Background log ")}${taskLabel}${theme.fg(
 		"dim",
-		` · ${lineCount(output)} line${lineCount(output) === 1 ? "" : "s"}${expanded ? "" : " · Ctrl+O to expand"}`,
+		` · ${lineCount(output)} line${lineCount(output) === 1 ? "" : "s"}${expanded ? "" : " · ctrl+o to expand"}`,
 	)}`;
 	if (expanded && task) text += `\n${renderTaskDetails(task, theme, cwd).join("\n")}`;
 	if (expanded && output) {
@@ -893,7 +893,7 @@ function renderBgToolResult(result: any, options: any, theme: Theme, context: an
 		if (!task) return renderLines(`${theme.fg("warning", "● ")}${bgToolLabel(theme, "Background task started")}`);
 		let text = `${theme.fg("warning", "● ")}${bgToolLabel(theme, "Background task started ")}${theme.fg("accent", task.id)}${theme.fg(
 			"dim",
-			` · pid ${task.pid} · ${compactText(taskDisplayName(task), 72)}${expanded ? "" : " · Ctrl+O details"}`,
+			` · pid ${task.pid} · ${compactText(taskDisplayName(task), 72)}${expanded ? "" : " · ctrl+o details"}`,
 		)}`;
 		if (expanded) text += `\n${renderTaskDetails(task, theme, cwd).join("\n")}`;
 		return renderLines(text);
@@ -1432,7 +1432,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 					syncOutputScroll();
 
 					const lines: string[] = [];
-					const footer = `${ansiYellow("←/→ tab")} ${theme.fg("dim", "pane · ")}${ansiYellow("s")} ${theme.fg("dim", "stop · ")}${ansiYellow("c")} ${theme.fg("dim", "clear · ")}${ansiYellow("f")} ${theme.fg("dim", "follow · ")}${ansiYellow("-/=")} ${theme.fg("dim", "page output · ")}${ansiYellow("esc")} ${theme.fg("dim", "close")}`;
+					const footer = `${ansiYellow("←/→ tab")} ${theme.fg("dim", "pane · ")}${ansiYellow("s")} ${theme.fg("dim", "stop · ")}${ansiYellow("c")} ${theme.fg("dim", "clear · ")}${ansiYellow("f")} ${theme.fg("dim", "follow · ")}${ansiYellow("-/=")} ${theme.fg("dim", "page output")}`;
 
 					if (sorted.length === 0) {
 						lines.push(theme.fg("dim", "No background tasks yet. Use /bg run <command> or the bg_task tool."));

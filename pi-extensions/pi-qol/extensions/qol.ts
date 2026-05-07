@@ -2272,7 +2272,7 @@ function statusMessage(ctx: ExtensionContext): string {
 	return [
 		"Pi QOL status",
 		`Statusline: ${settingBoolean("replaceFooter", true, ctx.cwd) ? "replaces footer" : "footer preserved"}; prompt=${settingBoolean("compactPrompt", true, ctx.cwd) ? "π compact" : "default chrome"}`,
-		`Shift+Enter newline: ${settingBoolean("newlineOnShiftEnter", true, ctx.cwd) ? "enabled" : "disabled"}`,
+		`shift+enter newline: ${settingBoolean("newlineOnShiftEnter", true, ctx.cwd) ? "enabled" : "disabled"}`,
 		`Fallback newline key: ${newlineFallbackKey(ctx.cwd)}`,
 		`Pending queue preview: ${settingBoolean("pendingQueue.asciiGreen", true, ctx.cwd) ? "ANSI green" : "Pi default"}`,
 		`Image chips: ${settingBoolean("showImageChips", true, ctx.cwd) ? "filled (placeholders and existing image paths)" : "off"}`,
@@ -2288,7 +2288,7 @@ function statusMessage(ctx: ExtensionContext): string {
 		`Notifications: ${settingBoolean("notification.enabled", true, ctx.cwd) ? `enabled (bell=${settingBoolean("notification.bell", true, ctx.cwd)}, native=${settingBoolean("notification.native", true, ctx.cwd)}, tmuxClientTty=${settingBoolean("notification.tmuxNativeClientTty", true, ctx.cwd)}, tmuxMessage=${settingBoolean("notification.tmux", false, ctx.cwd)})` : "disabled"}`,
 		`Permission gate: ${settingBoolean("permissionGate.enabled", false, ctx.cwd) ? `enabled (${permissionGateCommands(ctx.cwd).join(", ") || "none configured"}; preview ${boundedSettingNumber("permissionGate.previewLines", DEFAULT_PERMISSION_GATE_PREVIEW_LINES, 4, 40, ctx.cwd)} lines/${boundedSettingNumber("permissionGate.previewChars", DEFAULT_PERMISSION_GATE_PREVIEW_CHARS, 200, 5000, ctx.cwd)} chars)` : "disabled"}`,
 		`Thinking timer: ${settingBoolean("thinkingTimer.enabled", true, ctx.cwd) ? "enabled" : "disabled"}`,
-		"If Shift+Enter still submits, configure your terminal/tmux to send a distinct Shift+Enter sequence or use the fallback key.",
+		"If shift+enter still submits, configure your terminal/tmux to send a distinct shift+enter sequence or use the fallback key.",
 	].join("\n");
 }
 
@@ -2425,7 +2425,7 @@ function resolveSettingsRelativePath(value: string, settingsPath: string): strin
 }
 
 function sessionSearchShortcut(cwd?: string): string | undefined {
-	// Legacy escape hatch from the original Ctrl+F setting. If users disabled it,
+	// Legacy escape hatch from the original ctrl+f setting. If users disabled it,
 	// keep shortcuts disabled even though the default shortcut is now conflict-free.
 	if (!settingBoolean("sessionSearch.ctrlFShortcut", true, cwd)) return undefined;
 	const shortcut = settingStringAllowEmpty("sessionSearch.shortcutKey", DEFAULT_SESSION_SEARCH_SHORTCUT, cwd).trim().toLowerCase();
@@ -3786,9 +3786,9 @@ class QolSessionSearchComponent {
 
 		lines.push(divider());
 		if (compact) {
-			lines.push(row(`${ansiYellow("enter")} ${dim("prompts")}  ${ansiYellow("alt+c/f/r/i/n/a")} ${dim("actions")}  ${ansiYellow("tab")} ${dim("scope")}`));
+			lines.push(row(`${ansiYellow("alt+c/f/r/i/n/a")} ${dim("actions")}  ${ansiYellow("tab")} ${dim("scope")}`));
 		} else {
-			lines.push(row(`${ansiYellow("-/=")} ${dim("page")}  ${ansiYellow("enter")} ${dim("all prompts")}  ${ansiYellow("alt+c")} ${dim("copy")}  ${ansiYellow("alt+f")} ${dim("fork")}  ${ansiYellow("alt+r")} ${dim("resume")}`));
+			lines.push(row(`${ansiYellow("-/=")} ${dim("page")}  ${ansiYellow("alt+c")} ${dim("copy")}  ${ansiYellow("alt+f")} ${dim("fork")}  ${ansiYellow("alt+r")} ${dim("resume")}`));
 			lines.push(row(`${ansiYellow("alt+i")} ${dim("inject+ctx")}  ${ansiYellow("alt+n")} ${dim("new+ctx")}  ${ansiYellow("alt+a")} ${dim("actions")}  ${ansiYellow("tab")} ${dim("scope")}`));
 		}
 		lines.push(bottom());
@@ -3913,7 +3913,7 @@ class QolSessionSearchComponent {
 			lines.push(selected ? selectedRow(messageRow) : row(messageRow));
 		}
 		lines.push(divider(), empty());
-		lines.push(row(`${ansiYellow("-/=")} ${dim("page")}  ${ansiYellow("enter")} ${dim("prompt actions")}  ${ansiYellow("alt+c")} ${dim("copy")}  ${ansiYellow("alt+f")} ${dim("fork")}  ${ansiYellow("alt+r")} ${dim("resume")}`));
+		lines.push(row(`${ansiYellow("-/=")} ${dim("page")}  ${ansiYellow("alt+c")} ${dim("copy")}  ${ansiYellow("alt+f")} ${dim("fork")}  ${ansiYellow("alt+r")} ${dim("resume")}`));
 		lines.push(row(`${ansiYellow("alt+i")} ${dim("inject+ctx")}  ${ansiYellow("alt+n")} ${dim("new+ctx")}`));
 		lines.push(bottom());
 		return lines;
@@ -3979,7 +3979,7 @@ class QolSessionSearchComponent {
 		}
 		if (state.messages.length > maxVisible) lines.push(row(dim(`${state.selected + 1}/${state.messages.length} prompts`)));
 		lines.push(divider(), empty());
-		lines.push(row(`${ansiYellow("enter")} ${dim("fork session")}  ${ansiYellow("up/down")} ${dim("choose prompt")}  ${ansiYellow("backspace")} ${dim("back")}`));
+		lines.push(row(`${ansiYellow("backspace")} ${dim("back")}`));
 		lines.push(bottom());
 		return lines;
 	}
@@ -4006,7 +4006,7 @@ class QolSessionSearchComponent {
 			for (const line of wrapVisible(dim(detail), inner, 2)) lines.push(row(line));
 		}
 		lines.push(empty(), divider(), empty());
-		lines.push(row(`${ansiYellow("enter")} ${dim(verb)}  ${ansiYellow("backspace")} ${dim("back")}`));
+		lines.push(row(`${ansiYellow("backspace")} ${dim("back")}`));
 		lines.push(bottom());
 		return lines;
 	}
@@ -4075,7 +4075,6 @@ class QolSessionSearchLoadingComponent {
 			empty(),
 			divider(),
 			empty(),
-			row(`${ansiYellow("ctrl+c")} ${dim("cancel")}`),
 			bottom(),
 		];
 	}
@@ -4238,7 +4237,7 @@ async function createNewSessionWithSearchContext(pi: ExtensionAPI, ctx: Extensio
 	}
 	setPendingSessionSearchMessage(message);
 	ctx.ui.setEditorText("/new");
-	ctx.ui.notify(`${title} — press Enter to create a new session with this context`, "info");
+	ctx.ui.notify(`${title} — press enter to create a new session with this context`, "info");
 }
 
 async function consumePendingSessionSearchContext(pi: ExtensionAPI, ctx: ExtensionContext, reason: unknown): Promise<void> {
@@ -4303,7 +4302,7 @@ async function openQolSessionSearch(pi: ExtensionAPI, ctx: ExtensionContext, ini
 			return;
 		}
 		ctx.ui.setEditorText(`/resume ${quoteSessionSearchArg(action.result.path)}`);
-		ctx.ui.notify(`${sessionDisplayName(action.result)} — press Enter to ${action.type === "fork" ? "fork" : "resume"}`, "info");
+		ctx.ui.notify(`${sessionDisplayName(action.result)} — ${action.type === "fork" ? "fork" : "resume"} command queued`, "info");
 		return;
 	}
 	if (action.type === "copy") {

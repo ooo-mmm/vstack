@@ -876,35 +876,35 @@ class SessionManagerOverlay implements Focusable {
 			return;
 		}
 
-		if (this.keybindings.matches(data, "app.session.toggleSort")) {
+		if (matchesKey(data, "alt+s") || this.keybindings.matches(data, "app.session.toggleSort")) {
 			this.sortMode = this.sortMode === "threaded" ? "recent" : this.sortMode === "recent" ? "relevance" : "threaded";
 			this.applyFilter();
 			this.requestRender();
 			return;
 		}
 
-		if (this.keybindings.matches(data, "app.session.toggleNamedFilter")) {
+		if (matchesKey(data, "alt+n") || this.keybindings.matches(data, "app.session.toggleNamedFilter")) {
 			this.nameFilter = this.nameFilter === "all" ? "named" : "all";
 			this.applyFilter();
 			this.requestRender();
 			return;
 		}
 
-		if (this.keybindings.matches(data, "app.session.rename")) {
+		if (matchesKey(data, "alt+r") || this.keybindings.matches(data, "app.session.rename")) {
 			const selected = this.selected();
 			if (selected) this.startRename(selected);
 			this.requestRender();
 			return;
 		}
 
-		if (this.keybindings.matches(data, "app.session.delete")) {
+		if (matchesKey(data, "alt+d") || this.keybindings.matches(data, "app.session.delete")) {
 			const selected = this.selected();
 			if (selected) this.startDelete(selected);
 			this.requestRender();
 			return;
 		}
 
-		if (matchesKey(data, "ctrl+x")) {
+		if (matchesKey(data, "alt+x") || matchesKey(data, "ctrl+x")) {
 			this.startDeleteAll();
 			this.requestRender();
 			return;
@@ -1176,11 +1176,11 @@ class SessionManagerOverlay implements Focusable {
 	}
 
 	private renderFooter(inner: number, dim: (s: string) => string, warning: (s: string) => string, error: (s: string) => string): string[] {
-		if (this.mode === "confirm-delete" || this.mode === "confirm-delete-all") return [`${ansiYellow("Enter")} ${error("confirm")} · ${ansiYellow("Esc")} ${error("cancel")}`];
-		if (this.mode === "rename") return [`${ansiYellow("Enter")} ${warning("save")} · ${ansiYellow("Esc")} ${warning("cancel")} · ${warning("empty name clears title")}`];
+		if (this.mode === "confirm-delete" || this.mode === "confirm-delete-all") return [];
+		if (this.mode === "rename") return [warning("empty name clears title")];
 		return [
-			`${ansiYellow("-/=")} ${dim("page · ")}${ansiYellow("Enter")} ${dim("resume · ")}${ansiYellow("Ctrl+R")} ${dim("rename · ")}${ansiYellow("Ctrl+D")} ${dim("delete · ")}${ansiYellow("Ctrl+X")} ${dim("delete all")}`,
-			`${ansiYellow("Tab")} ${dim("scope · ")}${ansiYellow("Ctrl+S")} ${dim("sort · ")}${ansiYellow("Ctrl+N")} ${dim("names · ")}${ansiYellow("Esc")} ${dim("close")}`,
+			`${ansiYellow("-/=")} ${dim("page · ")}${ansiYellow("alt+r")} ${dim("rename · ")}${ansiYellow("alt+d")} ${dim("delete · ")}${ansiYellow("alt+x")} ${dim("delete all")}`,
+			`${ansiYellow("tab")} ${dim("scope · ")}${ansiYellow("alt+s")} ${dim("sort · ")}${ansiYellow("alt+n")} ${dim("names")}`,
 		];
 	}
 

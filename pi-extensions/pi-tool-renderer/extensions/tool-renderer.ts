@@ -375,7 +375,7 @@ function installCompactionSummaryRenderer(pi: ExtensionAPI, Component: any): voi
 			this.setBgFn?.(undefined);
 			this.clear?.();
 
-			const hint = expanded ? "" : theme.fg("dim", " · Ctrl+O to expand");
+			const hint = expanded ? "" : theme.fg("dim", " · ctrl+o to expand");
 			this.addChild?.(makeTruncatedLines(`${stackPrefix(theme)}${toolLabel(theme, "Compacted ")}${theme.fg("success", `${tokenStr} tokens`)}${hint}`));
 
 			if (expanded) {
@@ -1696,7 +1696,7 @@ function collapsedDiffHint(remainingLines: number, hiddenHunks: number, expanded
 			"…",
 		]
 		: [
-			`… ${remainingLines} more diff lines${hiddenHunks > 0 ? ` · ${hiddenHunks} more hunks` : ""} · Ctrl+O to expand`,
+			`… ${remainingLines} more diff lines${hiddenHunks > 0 ? ` · ${hiddenHunks} more hunks` : ""} · ctrl+o to expand`,
 			`… ${remainingLines} more lines${hiddenHunks > 0 ? ` · ${hiddenHunks} hunks` : ""}`,
 			`… +${remainingLines}${hiddenHunks > 0 ? ` · +${hiddenHunks}h` : ""}`,
 			"…",
@@ -1931,9 +1931,9 @@ function renderBashDiffOutput(output: string, theme: any, expanded: boolean, cwd
 		if (remainingRows !== null) remainingRows -= Math.min(file.diff.lines.length, fileLimit ?? file.diff.lines.length);
 	}
 	const hiddenFiles = files.length - renderedFiles;
-	if (hiddenFiles > 0) rendered.push(theme.fg("muted", `… ${hiddenFiles} more file diff${hiddenFiles === 1 ? "" : "s"}${expanded ? ` · UI cap ${Math.max(0, renderedFiles)}/${files.length}` : " · Ctrl+O to expand"}`));
+	if (hiddenFiles > 0) rendered.push(theme.fg("muted", `… ${hiddenFiles} more file diff${hiddenFiles === 1 ? "" : "s"}${expanded ? ` · UI cap ${Math.max(0, renderedFiles)}/${files.length}` : " · ctrl+o to expand"}`));
 	else if (remainingRows !== null && totalLines > configuredDiffRowLimit(expanded, cwd)!) {
-		rendered.push(theme.fg("muted", expanded ? "diff UI cap reached" : "Ctrl+O to expand"));
+		rendered.push(theme.fg("muted", expanded ? "diff UI cap reached" : "ctrl+o to expand"));
 	}
 	return rendered.join("\n");
 }
@@ -2001,7 +2001,7 @@ function renderMutationCallPreview(kind: "Edit" | "Write" | "Create", targetPath
 		text += `\n${rendered.split(/\r?\n/).map((line) => `${stem}${line}`).join("\n")}`;
 	}
 	const hidden = diffs.length - maxShown;
-	if (hidden > 0) text += `\n${treeConnector(theme, "└", cwd)}${theme.fg("muted", `… ${hidden} more edit block${hidden === 1 ? "" : "s"} · Ctrl+O to expand`)}`;
+	if (hidden > 0) text += `\n${treeConnector(theme, "└", cwd)}${theme.fg("muted", `… ${hidden} more edit block${hidden === 1 ? "" : "s"} · ctrl+o to expand`)}`;
 	return makeTruncatedLines(text);
 }
 
@@ -2153,7 +2153,7 @@ function stackBatchHeadline(batch: StackBatch, theme: any, expanded: boolean, ch
 	const lead = joinPhrases(phrases) || (running ? "running tools" : "ran tools");
 	const sentence = lead.charAt(0).toUpperCase() + lead.slice(1);
 	const progress = running ? theme.fg("warning", ` · ${done}/${items.length} done`) : theme.fg("success", " · done");
-	const expandHint = childDisplay === "headline" && !expanded && items.length > 0 ? theme.fg("dim", " · Ctrl+O to expand") : "";
+	const expandHint = childDisplay === "headline" && !expanded && items.length > 0 ? theme.fg("dim", " · ctrl+o to expand") : "";
 	return `${stackPrefix(theme)}${sentence}${running ? "…" : ""}${progress}${expandHint}`;
 }
 
@@ -2346,7 +2346,7 @@ function renderToolBatchText(items: BatchToolItem[], theme: any, expanded: boole
 		stackPrefix(theme) +
 		toolLabel(theme, `Batch ${succeeded}/${items.length}`) +
 		theme.fg(failed > 0 ? "warning" : "success", failed > 0 ? ` · ${failed} failed` : " · succeeded") +
-		(expanded ? "" : theme.fg("dim", " · Ctrl+O to inspect"));
+		(expanded ? "" : theme.fg("dim", " · ctrl+o to inspect"));
 	const lines = [header];
 	items.forEach((item, index) => {
 		const stackItem = batchStackItem(item);
@@ -2751,7 +2751,7 @@ function renderApplyPatchResult(result: any, { expanded, isPartial }: any, theme
 		if (changes.length > 1) text += `\n${connector}${theme.fg("accent", applyPatchChangeLabel(change))} ${diffSummary(change.diff, theme, context?.cwd)}`;
 		text += `\n${renderStructuredDiff(change.diff, theme, expanded, context?.cwd, rowLimit, change.diff.path)}`;
 	}
-	if (hidden > 0) text += `\n${treeConnector(theme, "└", context?.cwd)}${theme.fg("muted", `… ${hidden} more file patch${hidden === 1 ? "" : "es"} · Ctrl+O to expand`)}`;
+	if (hidden > 0) text += `\n${treeConnector(theme, "└", context?.cwd)}${theme.fg("muted", `… ${hidden} more file patch${hidden === 1 ? "" : "es"} · ctrl+o to expand`)}`;
 	return makeTruncatedLines(text);
 }
 
@@ -2831,7 +2831,7 @@ function renderUnknownToolResult(name: string, result: any, { expanded, isPartia
 	const args = context?.args ?? {};
 	const status = unknownToolStatus(name, raw, Boolean(context?.isError), theme);
 	let text = `${stackPrefix(theme)}${toolLabel(theme, `${humanizeToolName(name)} `)}${summarizeUnknownToolCall(name, args, theme)}${theme.fg("dim", " · ")}${status}`;
-	if (!expanded) return makeTruncatedLines(`${text}${theme.fg("dim", " · Ctrl+O to expand")}`);
+	if (!expanded) return makeTruncatedLines(`${text}${theme.fg("dim", " · ctrl+o to expand")}`);
 	const json = JSON.stringify(args, null, 2).split(/\r?\n/);
 	text += `\n${treeConnector(theme, raw ? "├" : "└", context?.cwd)}${theme.fg("muted", "args")}`;
 	text += `\n${json.map((line) => `${treeStem(theme, raw ? "├" : "└", context?.cwd)}${theme.fg("dim", clipLine(line, context?.cwd))}`).join("\n")}`;
@@ -2871,7 +2871,7 @@ function renderGenericToolResult(name: string, result: any, { expanded, isPartia
 		text += `\n${lines.slice(0, limit).map((line) => `${treeConnector(theme, "│")}${theme.fg("dim", clipLine(line, context?.cwd))}`).join("\n")}`;
 		if (lines.length > limit) text += `\n${treeConnector(theme, "│")}${theme.fg("muted", `… ${lines.length - limit} more line(s)`)}`;
 	} else if (mode === "preview") {
-		text += theme.fg("dim", " · Ctrl+O to expand");
+		text += theme.fg("dim", " · ctrl+o to expand");
 	}
 	return makeTruncatedLines(text);
 }

@@ -291,10 +291,7 @@ function ruledSingleLine(text: string, theme: Theme): RuledSingleLineText {
 }
 
 function formatShortcutHint(shortcut: string): string {
-	return shortcut
-		.split("+")
-		.map((part) => part.length === 1 ? part.toUpperCase() : part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
-		.join("+");
+	return shortcut.toLowerCase();
 }
 
 function panelToggleHint(cwd: string): string {
@@ -857,7 +854,7 @@ export default function taskPanel(pi: ExtensionAPI): void {
 							if (below > 0) lines.push(theme.fg("dim", `↓ ${below} more task(s)`));
 						}
 						const body = lines.map((line) => truncateToWidth(line, contentWidth, ""));
-						const footerHint = `${ansiYellow("-/=")} ${theme.fg("dim", "page · ")}${ansiYellow("enter/s")} ${theme.fg("dim", "start · ")}${ansiYellow("d")} ${theme.fg("dim", "done · ")}${ansiYellow("x")} ${theme.fg("dim", "drop · ")}${ansiYellow("r")} ${theme.fg("dim", "remove · ")}${ansiYellow("c")} ${theme.fg("dim", "clear done · ")}${ansiYellow("e")} ${theme.fg("dim", "edit · ")}${ansiYellow("esc")} ${theme.fg("dim", "close")}`;
+						const footerHint = `${ansiYellow("-/=")} ${theme.fg("dim", "page · ")}${ansiYellow("s")} ${theme.fg("dim", "start · ")}${ansiYellow("d")} ${theme.fg("dim", "done · ")}${ansiYellow("x")} ${theme.fg("dim", "drop · ")}${ansiYellow("r")} ${theme.fg("dim", "remove · ")}${ansiYellow("c")} ${theme.fg("dim", "clear done · ")}${ansiYellow("e")} ${theme.fg("dim", "edit")}`;
 						const footer = [mutedRule(theme, contentWidth), ...wrapTextWithAnsi(footerHint, contentWidth)];
 						return framePopup([...body, ...footer], width, theme, "Tasks Manager");
 					},

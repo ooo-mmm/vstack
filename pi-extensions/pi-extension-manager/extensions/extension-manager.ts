@@ -1805,8 +1805,8 @@ function createManagerComponent(
 			requestRender();
 			return;
 		}
-		if ((matchesKey(data, "delete") || matchesKey(data, "ctrl+x")) && selected) {
-			if (matchesKey(data, "ctrl+x")) return done({ type: "reset-settings", itemId: selected.id });
+		if ((matchesKey(data, "delete") || matchesKey(data, "alt+x") || matchesKey(data, "ctrl+x")) && selected) {
+			if (matchesKey(data, "alt+x") || matchesKey(data, "ctrl+x")) return done({ type: "reset-settings", itemId: selected.id });
 			if (ui.pane === "settings" && settings.length > 0) {
 				const schema = settings[ui.settingSelected];
 				if (schema) return done({ type: "reset-setting", itemId: selected.id, settingKey: schema.key });
@@ -1886,10 +1886,10 @@ function createManagerComponent(
 		lines.push(renderTabBar(topTabs, ui.topTab, bodyWidth, theme));
 		lines.push("");
 		const primaryHint = ui.editing
-			? `${theme.fg("dim", "editing value · ")}${ansiYellow("←/→")} ${theme.fg("dim", "move · ")}${ansiYellow("alt+←/→")} ${theme.fg("dim", "word · ")}${ansiYellow("enter")} ${theme.fg("dim", "save · ")}${ansiYellow("esc")} ${theme.fg("dim", "cancel · ")}${ansiYellow("backspace/delete")} ${theme.fg("dim", "delete · ")}${ansiYellow("ctrl+u")} ${theme.fg("dim", "clear")}`
+			? `${theme.fg("dim", "editing value · ")}${ansiYellow("←/→")} ${theme.fg("dim", "move · ")}${ansiYellow("alt+←/→")} ${theme.fg("dim", "word · ")}${ansiYellow("backspace/delete")} ${theme.fg("dim", "delete")}`
 			: ui.showAudit
-			? `${theme.fg("dim", "diagnostics · ")}${ansiYellow("-/=")} ${theme.fg("dim", "page · ")}${ansiYellow("Alt+A")} ${theme.fg("dim", "back · ")}${ansiYellow("esc")} ${theme.fg("dim", "close")}`
-			: `${ansiYellow("tab")} ${theme.fg("dim", "switch tabs · ")}${ansiYellow("-/=")} ${theme.fg("dim", "page · ")}${ansiYellow("Alt+A")} ${theme.fg("dim", "diagnostics · ")}${ansiYellow("esc")} ${theme.fg("dim", "close")}`;
+			? `${theme.fg("dim", "diagnostics · ")}${ansiYellow("-/=")} ${theme.fg("dim", "page · ")}${ansiYellow("alt+a")} ${theme.fg("dim", "back")}`
+			: `${ansiYellow("tab")} ${theme.fg("dim", "switch tabs · ")}${ansiYellow("-/=")} ${theme.fg("dim", "page · ")}${ansiYellow("alt+a")} ${theme.fg("dim", "diagnostics")}`;
 		const footerLines = ["", ...wrapLine(primaryHint, bodyWidth)];
 		const availableRows = Math.max(1, layout.innerRows - lines.length - footerLines.length);
 		if (ui.showAudit) lines.push(...renderDiagnosticsViewport(inventory, ui, bodyWidth, theme, availableRows));
@@ -2034,7 +2034,7 @@ function renderExtensions(inventory: Inventory, ui: ManagerUiState, width: numbe
 	const searchText = ` > ${ui.search}${theme.inverse(" ")}`;
 	const searchLine = theme.bg("toolPendingBg", pad(searchText, width));
 	const filterLine = `${theme.fg("muted", "View")}: ${theme.fg("text", view)}  ${theme.fg("muted", "Filters")}: kind ${ui.kindFilter} · provider ${ui.providerFilter} · state ${ui.stateFilter} · scope ${ui.scopeFilter}`;
-	const hintLine = `${ansiYellow("Alt+K/P/S/O")} ${theme.fg("dim", "filters · ")}${ansiYellow("Alt+R")} ${theme.fg("dim", "raw resources · ")}${ansiYellow("Alt+T")} ${theme.fg("dim", "toggle provider · ")}${ansiYellow("Alt+U")} ${theme.fg("dim", "uninstall package · ")}${ansiYellow("delete")} ${theme.fg("dim", "reset setting · ")}${ansiYellow("ctrl+x")} ${theme.fg("dim", "reset extension · ")}${ansiYellow("←/→")} ${theme.fg("dim", "pane")}`;
+	const hintLine = `${ansiYellow("alt+k/p/s/o")} ${theme.fg("dim", "filters · ")}${ansiYellow("alt+r")} ${theme.fg("dim", "raw resources · ")}${ansiYellow("alt+t")} ${theme.fg("dim", "toggle provider · ")}${ansiYellow("alt+u")} ${theme.fg("dim", "uninstall package · ")}${ansiYellow("delete")} ${theme.fg("dim", "reset setting · ")}${ansiYellow("alt+x")} ${theme.fg("dim", "reset extension · ")}${ansiYellow("←/→")} ${theme.fg("dim", "pane")}`;
 	const lines = [searchLine, ...wrapLine(filterLine, width), "", ...wrapLine(hintLine, width), divider(width, theme)];
 	const tableRows = Math.max(1, rows - Math.max(0, lines.length - 5) - footerRows);
 	for (let i = 0; i < tableRows; i += 1) {
@@ -2479,7 +2479,7 @@ function createQuickSettingsComponent(pi: ExtensionAPI, ctx: ExtensionCommandCon
 			requestRender();
 			return;
 		}
-		if (matchesKey(data, "ctrl+x")) {
+		if (matchesKey(data, "alt+x") || matchesKey(data, "ctrl+x")) {
 			const row = selectedRow();
 			if (row) resetQuickSettingsForExtension(pi, ctx, inventory, rows, row.extensionId, row.packageName);
 			requestRender();
@@ -2505,8 +2505,8 @@ function createQuickSettingsComponent(pi: ExtensionAPI, ctx: ExtensionCommandCon
 			? theme.bg("toolPendingBg", pad(` ${theme.fg("dim", "Editing inline value")}`, bodyWidth))
 			: theme.bg("toolPendingBg", pad(` > ${ui.search}${theme.inverse(" ")}`, bodyWidth));
 		const footer = ui.editing
-			? `${theme.fg("dim", "editing value · ")}${ansiYellow("←/→")} ${theme.fg("dim", "move · ")}${ansiYellow("alt+←/→")} ${theme.fg("dim", "word · ")}${ansiYellow("enter")} ${theme.fg("dim", "save · ")}${ansiYellow("esc")} ${theme.fg("dim", "cancel · ")}${ansiYellow("backspace/delete")} ${theme.fg("dim", "delete · ")}${ansiYellow("ctrl+u")} ${theme.fg("dim", "clear")}`
-			: `${ansiYellow("tab")} ${theme.fg("dim", "switch extension tabs · ")}${ansiYellow("-/=")} ${theme.fg("dim", "page · ")}${ansiYellow("enter")} ${theme.fg("dim", "edit/toggle · ")}${ansiYellow("delete")} ${theme.fg("dim", "reset setting · ")}${ansiYellow("ctrl+x")} ${theme.fg("dim", "reset extension · ")}${ansiYellow("backspace")} ${theme.fg("dim", "clear · ")}${ansiYellow("esc")} ${theme.fg("dim", "close")}`;
+			? `${theme.fg("dim", "editing value · ")}${ansiYellow("←/→")} ${theme.fg("dim", "move · ")}${ansiYellow("alt+←/→")} ${theme.fg("dim", "word · ")}${ansiYellow("backspace/delete")} ${theme.fg("dim", "delete")}`
+			: `${ansiYellow("tab")} ${theme.fg("dim", "switch extension tabs · ")}${ansiYellow("-/=")} ${theme.fg("dim", "page · ")}${ansiYellow("delete")} ${theme.fg("dim", "reset setting · ")}${ansiYellow("alt+x")} ${theme.fg("dim", "reset extension · ")}${ansiYellow("backspace")} ${theme.fg("dim", "clear")}`;
 		lines.push(renderTabBar(tabs, ui.tab, bodyWidth, theme));
 		lines.push("");
 		lines.push(searchLine);
