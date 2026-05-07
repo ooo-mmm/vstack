@@ -2356,11 +2356,10 @@ interface QolSessionActionState {
 	result: QolSessionSearchResult;
 }
 
-interface QolSessionFocusState {
-	cursor: number;
+interface QolSessionContextConfirmState {
 	message: QolSessionUserMessage;
-	prompt: string;
 	result: QolSessionSearchResult;
+	returnScreen: "search" | "messages" | "actions";
 	type: "summarize" | "newSession";
 }
 
@@ -3309,11 +3308,13 @@ function isPrintableInput(data: string): boolean {
 }
 
 class QolSessionSearchComponent {
-	private screen: "search" | "messages" | "actions" | "focus" = "search";
+	private screen: "search" | "messages" | "actions" | "confirmContext" = "search";
 	private searchState: QolSessionSearchState;
 	private messagesState: QolSessionMessagesState | undefined;
 	private actionState: QolSessionActionState | undefined;
-	private focusState: QolSessionFocusState | undefined;
+	private actionReturnScreen: "search" | "messages" = "messages";
+	private contextConfirmState: QolSessionContextConfirmState | undefined;
+
 
 	constructor(
 		private readonly done: (action: QolSessionPaletteAction) => void,
@@ -3370,15 +3371,18 @@ class QolSessionSearchComponent {
 		const renderWidth = Math.min(Math.max(48, width), configured);
 		if (this.screen === "messages" && this.messagesState) return this.renderMessages(renderWidth, this.messagesState);
 		if (this.screen === "actions" && this.actionState) return this.renderActions(renderWidth, this.actionState);
-		if (this.screen === "focus" && this.focusState) return this.renderFocus(renderWidth, this.focusState);
+		if (this.screen === "confirmContext" && this.contextConfirmState) return this.renderContextConfirm(renderWidth, this.contextConfirmState);
 		return this.renderSearch(renderWidth);
 	}
 
 	handleInput(data: string): void {
-		if (this.screen === "messages") this.handleMessagesInput(data);
-		else if (this.screen === "actions") this.handleActionInput(data);
-		else if (this.screen === "focus") this.handleFocusInput(data);
-		else this.handleSearchInput(data);
+		if (this.screen === "messages" && this.messagesState) this.handleMessagesInput(data);
+		else if (this.screen === "actions" && this.actionState) this.handleActionInput(data);
+		else if (this.screen === "confirmContext" && this.contextConfirmState) this.handleContextConfirmInput(data);
+		else {
+			this.screen = "search";
+			this.handleSearchInput(data);
+		}
 		this.tui.requestRender();
 	}
 
@@ -3440,6 +3444,28 @@ class QolSessionSearchComponent {
 		return `Focus on prompt #${message.index}: ${message.text}`;
 	}
 
+	private openContextConfirm(type: "summarize" | "newSession", result: QolSessionSearchResult, message: QolSessionUserMessage, returnScreen: "search" | "messages" | "actions"): void {
+		this.contextConfirmState = { message, result, returnScreen, type };
+		this.screen = "confirmContext";
+	}
+
+	private returnFromContextConfirm(state: QolSessionContextConfirmState): void {
+		this.contextConfirmState = undefined;
+		if (state.returnScreen === "actions" && this.actionState) this.screen = "actions";
+		else if (state.returnScreen === "messages" && this.messagesState) this.screen = "messages";
+		else this.screen = "search";
+	}
+
+	private confirmContextAction(state: QolSessionContextConfirmState): void {
+		this.done({ customPrompt: this.selectedFocusText(state.message), message: state.message, result: state.result, type: state.type });
+	}
+
+	private returnFromActions(): void {
+		this.actionState = undefined;
+		if (this.actionReturnScreen === "messages" && this.messagesState) this.screen = "messages";
+		else this.screen = "search";
+	}
+
 	private handleSearchInput(data: string): void {
 		const state = this.searchState;
 		if (matchesKey(data, "escape")) {
@@ -3473,18 +3499,19 @@ class QolSessionSearchComponent {
 		}
 		if (matchesKey(data, "alt+i")) {
 			const hit = state.results[state.selected];
-			if (hit) this.done({ customPrompt: this.selectedFocusText(hit.message), message: hit.message, result: hit.result, type: "summarize" });
+			if (hit) this.openContextConfirm("summarize", hit.result, hit.message, "search");
 			return;
 		}
 		if (matchesKey(data, "alt+n")) {
 			const hit = state.results[state.selected];
-			if (hit) this.done({ customPrompt: this.selectedFocusText(hit.message), message: hit.message, result: hit.result, type: "newSession" });
+			if (hit) this.openContextConfirm("newSession", hit.result, hit.message, "search");
 			return;
 		}
 		if (matchesKey(data, "alt+a")) {
 			const hit = state.results[state.selected];
 			if (hit) {
 				this.actionState = { message: hit.message, result: hit.result };
+				this.actionReturnScreen = "search";
 				this.screen = "actions";
 			}
 			return;
@@ -3556,6 +3583,7 @@ class QolSessionSearchComponent {
 			const message = state.messages[state.selected];
 			if (!message) return;
 			this.actionState = { message, result: state.result };
+			this.actionReturnScreen = "messages";
 			this.screen = "actions";
 			return;
 		}
@@ -3575,12 +3603,12 @@ class QolSessionSearchComponent {
 		}
 		if (matchesKey(data, "alt+i")) {
 			const message = state.messages[state.selected];
-			if (message) this.done({ customPrompt: this.selectedFocusText(message), message, result: state.result, type: "summarize" });
+			if (message) this.openContextConfirm("summarize", state.result, message, "messages");
 			return;
 		}
 		if (matchesKey(data, "alt+n")) {
 			const message = state.messages[state.selected];
-			if (message) this.done({ customPrompt: this.selectedFocusText(message), message, result: state.result, type: "newSession" });
+			if (message) this.openContextConfirm("newSession", state.result, message, "messages");
 			return;
 		}
 		if (matchesKey(data, "up")) {
@@ -3612,7 +3640,7 @@ class QolSessionSearchComponent {
 		const state = this.actionState;
 		if (!state) return;
 		if (matchesKey(data, "escape") || matchesKey(data, "backspace")) {
-			this.screen = "messages";
+			this.returnFromActions();
 			return;
 		}
 		if (matchesKey(data, "alt+c")) {
@@ -3628,71 +3656,24 @@ class QolSessionSearchComponent {
 			return;
 		}
 		if (matchesKey(data, "alt+i")) {
-			this.done({ customPrompt: this.selectedFocusText(state.message), message: state.message, result: state.result, type: "summarize" });
+			this.openContextConfirm("summarize", state.result, state.message, "actions");
 			return;
 		}
 		if (matchesKey(data, "alt+n")) {
-			this.done({ customPrompt: this.selectedFocusText(state.message), message: state.message, result: state.result, type: "newSession" });
+			this.openContextConfirm("newSession", state.result, state.message, "actions");
 			return;
 		}
 	}
 
-	private handleFocusInput(data: string): void {
-		const state = this.focusState;
+	private handleContextConfirmInput(data: string): void {
+		const state = this.contextConfirmState;
 		if (!state) return;
-		if (matchesKey(data, "escape")) {
-			this.screen = "actions";
+		if (matchesKey(data, "escape") || matchesKey(data, "backspace")) {
+			this.returnFromContextConfirm(state);
 			return;
 		}
 		if (matchesKey(data, "return") || matchesKey(data, "enter")) {
-			this.done({ customPrompt: state.prompt.trim() || this.selectedFocusText(state.message), message: state.message, result: state.result, type: state.type });
-			return;
-		}
-		if (matchesKey(data, "left")) {
-			state.cursor = Math.max(0, state.cursor - 1);
-			return;
-		}
-		if (matchesKey(data, "right")) {
-			state.cursor = Math.min(state.prompt.length, state.cursor + 1);
-			return;
-		}
-		if (matchesKey(data, "home") || matchesKey(data, "ctrl+a")) {
-			state.cursor = 0;
-			return;
-		}
-		if (matchesKey(data, "end") || matchesKey(data, "ctrl+e")) {
-			state.cursor = state.prompt.length;
-			return;
-		}
-		if (matchesKey(data, "ctrl+u")) {
-			state.prompt = "";
-			state.cursor = 0;
-			return;
-		}
-		if (matchesKey(data, "ctrl+w") || matchesKey(data, "alt+backspace")) {
-			const before = state.prompt.slice(0, state.cursor);
-			const after = state.prompt.slice(state.cursor);
-			let i = before.length;
-			while (i > 0 && /\s/.test(before[i - 1]!)) i -= 1;
-			while (i > 0 && !/\s/.test(before[i - 1]!)) i -= 1;
-			state.prompt = `${before.slice(0, i)}${after}`;
-			state.cursor = i;
-			return;
-		}
-		if (matchesKey(data, "backspace")) {
-			if (state.cursor > 0) {
-				state.prompt = `${state.prompt.slice(0, state.cursor - 1)}${state.prompt.slice(state.cursor)}`;
-				state.cursor -= 1;
-			}
-			return;
-		}
-		if (matchesKey(data, "delete")) {
-			if (state.cursor < state.prompt.length) state.prompt = `${state.prompt.slice(0, state.cursor)}${state.prompt.slice(state.cursor + 1)}`;
-			return;
-		}
-		if (isPrintableInput(data)) {
-			state.prompt = `${state.prompt.slice(0, state.cursor)}${data}${state.prompt.slice(state.cursor)}`;
-			state.cursor += data.length;
+			this.confirmContextAction(state);
 		}
 	}
 
@@ -3723,7 +3704,7 @@ class QolSessionSearchComponent {
 			lines.push(row(`${ansiYellow("enter")} ${dim("prompts")}  ${ansiYellow("alt+c/f/r/i/n/a")} ${dim("actions")}  ${ansiYellow("tab")} ${dim("scope")}`));
 		} else {
 			lines.push(row(`${ansiYellow("-/=")} ${dim("page")}  ${ansiYellow("enter")} ${dim("all prompts")}  ${ansiYellow("alt+c")} ${dim("copy")}  ${ansiYellow("alt+f")} ${dim("fork")}  ${ansiYellow("alt+r")} ${dim("resume")}`));
-			lines.push(row(`${ansiYellow("alt+i")} ${dim("inject")}  ${ansiYellow("alt+n")} ${dim("new+ctx")}  ${ansiYellow("alt+a")} ${dim("actions")}  ${ansiYellow("tab")} ${dim("scope")}`));
+			lines.push(row(`${ansiYellow("alt+i")} ${dim("inject+ctx")}  ${ansiYellow("alt+n")} ${dim("new+ctx")}  ${ansiYellow("alt+a")} ${dim("actions")}  ${ansiYellow("tab")} ${dim("scope")}`));
 		}
 		lines.push(bottom());
 		return lines;
@@ -3848,7 +3829,7 @@ class QolSessionSearchComponent {
 		}
 		lines.push(divider(), empty());
 		lines.push(row(`${ansiYellow("-/=")} ${dim("page")}  ${ansiYellow("enter")} ${dim("prompt actions")}  ${ansiYellow("alt+c")} ${dim("copy")}  ${ansiYellow("alt+f")} ${dim("fork")}  ${ansiYellow("alt+r")} ${dim("resume")}`));
-		lines.push(row(`${ansiYellow("alt+i")} ${dim("inject")}  ${ansiYellow("alt+n")} ${dim("new+ctx")}`));
+		lines.push(row(`${ansiYellow("alt+i")} ${dim("inject+ctx")}  ${ansiYellow("alt+n")} ${dim("new+ctx")}`));
 		lines.push(bottom());
 		return lines;
 	}
@@ -3870,44 +3851,46 @@ class QolSessionSearchComponent {
 		const helpLines = [
 			"Fork session from here opens the source session at the point before this prompt and places the prompt in the editor; submit to branch from there.",
 			"Copy Prompt copies this prompt into your current editor.",
-			"Inject Context summarizes this session or prompt into the current session.",
-			"New Session + Context creates a fresh session and imports that summary there.",
+			"Inject + Context summarizes the source session into the current session, focused on this prompt.",
+			"New + Context creates a fresh session and imports that focused summary there.",
 		];
 		for (const help of helpLines) {
 			for (const line of wrapVisible(dim(help), inner, 2)) lines.push(row(line));
 		}
 		lines.push(empty(), divider(), empty());
 		lines.push(row(`${ansiYellow("alt+c")} ${dim("copy")}  ${ansiYellow("alt+f")} ${dim("fork")}  ${ansiYellow("alt+r")} ${dim("resume")}`));
-		lines.push(row(`${ansiYellow("alt+i")} ${dim("inject")}  ${ansiYellow("alt+n")} ${dim("new+ctx")}`));
+		lines.push(row(`${ansiYellow("alt+i")} ${dim("inject+ctx")}  ${ansiYellow("alt+n")} ${dim("new+ctx")}`));
 		lines.push(bottom());
 		return lines;
 	}
 
-	private renderFocus(width: number, state: QolSessionFocusState): string[] {
-		const { bottom, divider, empty, filledRow, inner, row, top } = boxParts(width, this.theme);
+	private renderContextConfirm(width: number, state: QolSessionContextConfirmState): string[] {
+		const { bottom, divider, empty, inner, row, top } = boxParts(width, this.theme);
 		const accent = (s: string) => this.theme.fg("accent", s);
 		const dim = (s: string) => this.theme.fg("dim", s);
 		const muted = (s: string) => this.theme.fg("muted", s);
-		const action = state.type === "newSession" ? "New Session + Context" : "Inject Context";
-		const lines: string[] = [top("Context Focus", action), empty()];
-		lines.push(row(`${accent(sessionResumeTitle(state.result))}  ${dim(`-> ${action}`)}`));
-		lines.push(row(muted(truncateToWidth(`Default focus: #${state.message.index} ${state.message.text}`, inner, "…"))));
+		const action = state.type === "newSession" ? "New + Context" : "Inject + Context";
+		const verb = state.type === "newSession" ? "create new session with context" : "inject context";
+		const lines: string[] = [top(action), empty()];
+		lines.push(row(`${accent(sessionResumeTitle(state.result))}  ${dim(`#${state.message.index}`)}`));
+		lines.push(row(muted(truncateToWidth(shortPathForUi(state.result.cwd || state.result.path), inner, "…"))));
 		lines.push(empty(), divider(), empty());
-		const prefix = "> ";
-		const textWidth = Math.max(10, inner - visibleWidth(prefix));
-		if (!state.prompt) {
-			lines.push(filledRow(`${prefix}${this.theme.inverse(" ")}${muted(" optional focus override; Enter uses the selected prompt")}`));
-		} else {
-			const cursorChar = state.prompt[state.cursor] ?? " ";
-			const text = `${state.prompt.slice(0, state.cursor)}${this.theme.inverse(cursorChar)}${state.prompt.slice(state.cursor + (state.cursor < state.prompt.length ? 1 : 0))}`;
-			const wrapped = wrapVisible(text, textWidth, 5);
-			for (let i = 0; i < wrapped.length; i++) lines.push(filledRow(`${i === 0 ? prefix : " ".repeat(visibleWidth(prefix))}${wrapped[i]}`));
+		const details = [
+			"This summarizes the entire source session, including messages after this prompt.",
+			"The selected prompt is used as the focus for the summary, not as a cutoff point.",
+			state.type === "newSession"
+				? "New + Context creates a fresh session and imports that focused summary there."
+				: "Inject + Context adds that focused summary to your current session.",
+		];
+		for (const detail of details) {
+			for (const line of wrapVisible(dim(detail), inner, 2)) lines.push(row(line));
 		}
 		lines.push(empty(), divider(), empty());
-		lines.push(row(`${ansiYellow("enter")} ${dim(action === "Inject Context" ? "inject context" : "create session with context")}`));
+		lines.push(row(`${ansiYellow("enter")} ${dim(verb)}  ${ansiYellow("backspace")} ${dim("back")}`));
 		lines.push(bottom());
 		return lines;
 	}
+
 }
 
 function wrapVisible(text: string, width: number, maxLines: number): string[] {
@@ -4095,7 +4078,7 @@ async function buildSessionSearchContextMessageWithLoader(ctx: ExtensionContext,
 
 async function injectSessionSearchContext(pi: ExtensionAPI, ctx: ExtensionContext, result: QolSessionSearchResult, customPrompt?: string): Promise<void> {
 	const title = sessionDisplayName(result);
-	const message = await buildSessionSearchContextMessageWithLoader(ctx, result, customPrompt, "Inject Context");
+	const message = await buildSessionSearchContextMessageWithLoader(ctx, result, customPrompt, "Inject + Context");
 	pi.sendMessage({ customType: SESSION_SEARCH_CONTEXT_TYPE, content: message.content, details: message.details, display: true }, { deliverAs: "followUp", triggerTurn: false });
 	ctx.ui.notify(`Session context injected: ${title}`, "info");
 }
@@ -4106,7 +4089,7 @@ function asCommandContext(ctx: ExtensionContext): (ExtensionContext & Partial<Ex
 
 async function createNewSessionWithSearchContext(pi: ExtensionAPI, ctx: ExtensionContext, result: QolSessionSearchResult, customPrompt?: string): Promise<void> {
 	const title = sessionDisplayName(result);
-	const message = await buildSessionSearchContextMessageWithLoader(ctx, result, customPrompt, "New Session + Context");
+	const message = await buildSessionSearchContextMessageWithLoader(ctx, result, customPrompt, "New + Context");
 
 	const commandCtx = asCommandContext(ctx);
 	if (typeof commandCtx.newSession === "function") {
@@ -4211,7 +4194,7 @@ async function openQolSessionSearch(pi: ExtensionAPI, ctx: ExtensionContext, ini
 			await injectSessionSearchContext(pi, ctx, action.result, action.customPrompt);
 		} catch (error) {
 			const message = stringifyError(error);
-			ctx.ui.notify(/cancelled/i.test(message) ? "Inject context cancelled" : `Inject context failed: ${message}`, /cancelled/i.test(message) ? "info" : "error");
+			ctx.ui.notify(/cancelled/i.test(message) ? "Inject + Context cancelled" : `Inject + Context failed: ${message}`, /cancelled/i.test(message) ? "info" : "error");
 			ctx.ui.setStatus(SESSION_SEARCH_STATUS_KEY, undefined);
 		}
 		return;
@@ -4221,7 +4204,7 @@ async function openQolSessionSearch(pi: ExtensionAPI, ctx: ExtensionContext, ini
 			await createNewSessionWithSearchContext(pi, ctx, action.result, action.customPrompt);
 		} catch (error) {
 			const message = stringifyError(error);
-			ctx.ui.notify(/cancelled/i.test(message) ? "New Session + Context cancelled" : `New Session + Context failed: ${message}`, /cancelled/i.test(message) ? "info" : "error");
+			ctx.ui.notify(/cancelled/i.test(message) ? "New + Context cancelled" : `New + Context failed: ${message}`, /cancelled/i.test(message) ? "info" : "error");
 			ctx.ui.setStatus(SESSION_SEARCH_STATUS_KEY, undefined);
 		}
 	}
