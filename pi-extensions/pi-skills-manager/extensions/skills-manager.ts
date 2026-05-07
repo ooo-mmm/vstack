@@ -919,7 +919,7 @@ class ScrollableSkillPreview implements Component {
 	private footer(innerWidth: number, visibleHeight: number, totalLines: number): string {
 		const maxScroll = Math.max(0, totalLines - visibleHeight);
 		const scroll = maxScroll > 0 ? this.theme.fg("dim", ` • ${this.scrollOffset + 1}-${Math.min(totalLines, this.scrollOffset + visibleHeight)}/${totalLines}`) : "";
-		const hints: Array<[string, string]> = [["↑↓", "scroll"], ["-/=", "page"]];
+		const hints: Array<[string, string]> = [["-/=", "page"]];
 		if (this.skill.enabled) hints.push(["enter", "insert"]);
 		hints.push(["ctrl+x", "enable/disable"]);
 		if (isDeletableSkill(this.skill)) hints.push(["ctrl+e", "edit"], ["ctrl+r", "rename"], ["backspace", "delete"]);
@@ -1310,7 +1310,7 @@ class SkillsManagerDialog implements Focusable {
 		root.addChild(list);
 		root.addChild(new Spacer(1));
 		const selected = this.getSelectedSkill();
-		const actions: Array<[string, string]> = [["↑↓", "select"], ["-/=", "page"]];
+		const actions: Array<[string, string]> = [["-/=", "page"]];
 		if (!selected) actions.push(["enter", "create"], ["esc", "close"]);
 		else { if (selected.enabled) actions.push(["enter", "insert"]); actions.push(["tab", "preview"], ["ctrl+x", "enable/disable"]); if (!this.browseQuery && isDeletableSkill(selected)) actions.push(["backspace", "delete"]); actions.push(["esc", "close"]); }
 		root.addChild(new Text(skillKeyHints(this.theme, actions), 1, 0));
@@ -1337,7 +1337,7 @@ class SkillsManagerDialog implements Focusable {
 		const footer = step.id === "description"
 			? skillKeyHints(this.theme, [["enter", "next"], ["ctrl+j", "newline"], ["alt+←", "back"], ["alt+→", "next"], ["esc", "cancel"]])
 			: step.id === "location"
-				? skillKeyHints(this.theme, [["↑↓", "choose"], ["enter", "create"], ["alt+←", "back"], ["esc", "cancel"]])
+				? skillKeyHints(this.theme, [["enter", "create"], ["alt+←", "back"], ["esc", "cancel"]])
 				: skillKeyHints(this.theme, [["enter", "next"], ["alt+←", "back"], ["alt+→", "next"], ["esc", "cancel"]]);
 		root.addChild(new Text(footer, 1, 0));
 		return renderFrame(this.theme, width, root.render(innerWidth));

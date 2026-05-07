@@ -1431,7 +1431,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 					syncOutputScroll();
 
 					const lines: string[] = [];
-					const footer = `${ansiYellow("←/→ tab")} ${theme.fg("dim", "pane · ")}${ansiYellow("↑↓")} ${theme.fg("dim", activePane === "tasks" ? "select · " : "scroll output · ")}${ansiYellow("s")} ${theme.fg("dim", "stop · ")}${ansiYellow("c")} ${theme.fg("dim", "clear · ")}${ansiYellow("f")} ${theme.fg("dim", "follow · ")}${ansiYellow("-/=")} ${theme.fg("dim", "page output · ")}${ansiYellow("esc")} ${theme.fg("dim", "close")}`;
+					const footer = `${ansiYellow("←/→ tab")} ${theme.fg("dim", "pane · ")}${ansiYellow("s")} ${theme.fg("dim", "stop · ")}${ansiYellow("c")} ${theme.fg("dim", "clear · ")}${ansiYellow("f")} ${theme.fg("dim", "follow · ")}${ansiYellow("-/=")} ${theme.fg("dim", "page output · ")}${ansiYellow("esc")} ${theme.fg("dim", "close")}`;
 
 					if (sorted.length === 0) {
 						lines.push(theme.fg("dim", "No background tasks yet. Use /bg run <command> or the bg_task tool."));

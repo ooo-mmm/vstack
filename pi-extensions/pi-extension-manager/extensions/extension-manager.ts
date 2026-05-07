@@ -1750,8 +1750,8 @@ function createManagerComponent(
 		const primaryHint = ui.editing
 			? `${theme.fg("dim", "editing value · ")}${ansiYellow("enter")} ${theme.fg("dim", "save · ")}${ansiYellow("esc")} ${theme.fg("dim", "cancel · ")}${ansiYellow("backspace")} ${theme.fg("dim", "delete · ")}${ansiYellow("ctrl+u")} ${theme.fg("dim", "clear")}`
 			: ui.showAudit
-			? `${theme.fg("dim", "diagnostics · ")}${ansiYellow("↑↓")} ${theme.fg("dim", "scroll · ")}${ansiYellow("-/=")} ${theme.fg("dim", "page · ")}${ansiYellow("Alt+A")} ${theme.fg("dim", "back · ")}${ansiYellow("esc")} ${theme.fg("dim", "close")}`
-			: `${ansiYellow("tab")} ${theme.fg("dim", "switch tabs · ")}${ansiYellow("↑↓")} ${theme.fg("dim", "navigate · ")}${ansiYellow("-/=")} ${theme.fg("dim", "page · ")}${ansiYellow("Alt+A")} ${theme.fg("dim", "diagnostics · ")}${ansiYellow("esc")} ${theme.fg("dim", "close")}`;
+			? `${theme.fg("dim", "diagnostics · ")}${ansiYellow("-/=")} ${theme.fg("dim", "page · ")}${ansiYellow("Alt+A")} ${theme.fg("dim", "back · ")}${ansiYellow("esc")} ${theme.fg("dim", "close")}`
+			: `${ansiYellow("tab")} ${theme.fg("dim", "switch tabs · ")}${ansiYellow("-/=")} ${theme.fg("dim", "page · ")}${ansiYellow("Alt+A")} ${theme.fg("dim", "diagnostics · ")}${ansiYellow("esc")} ${theme.fg("dim", "close")}`;
 		const footerLines = ["", ...wrapLine(primaryHint, bodyWidth)];
 		const availableRows = Math.max(1, layout.innerRows - lines.length - footerLines.length);
 		if (ui.showAudit) lines.push(...renderDiagnosticsViewport(inventory, ui, bodyWidth, theme, availableRows));
@@ -2378,7 +2378,7 @@ function createQuickSettingsComponent(pi: ExtensionAPI, ctx: ExtensionCommandCon
 			: theme.bg("toolPendingBg", pad(` > ${ui.search}${theme.inverse(" ")}`, bodyWidth));
 		const footer = ui.editing
 			? `${theme.fg("dim", "editing value · ")}${ansiYellow("enter")} ${theme.fg("dim", "save · ")}${ansiYellow("esc")} ${theme.fg("dim", "cancel · ")}${ansiYellow("backspace")} ${theme.fg("dim", "delete · ")}${ansiYellow("ctrl+u")} ${theme.fg("dim", "clear")}`
-			: `${ansiYellow("tab")} ${theme.fg("dim", "switch extension tabs · ")}${ansiYellow("↑↓")} ${theme.fg("dim", "navigate · ")}${ansiYellow("-/=")} ${theme.fg("dim", "page · ")}${ansiYellow("enter")} ${theme.fg("dim", "edit/toggle · ")}${ansiYellow("delete")} ${theme.fg("dim", "reset setting · ")}${ansiYellow("ctrl+x")} ${theme.fg("dim", "reset extension · ")}${ansiYellow("backspace")} ${theme.fg("dim", "clear · ")}${ansiYellow("esc")} ${theme.fg("dim", "close")}`;
+			: `${ansiYellow("tab")} ${theme.fg("dim", "switch extension tabs · ")}${ansiYellow("-/=")} ${theme.fg("dim", "page · ")}${ansiYellow("enter")} ${theme.fg("dim", "edit/toggle · ")}${ansiYellow("delete")} ${theme.fg("dim", "reset setting · ")}${ansiYellow("ctrl+x")} ${theme.fg("dim", "reset extension · ")}${ansiYellow("backspace")} ${theme.fg("dim", "clear · ")}${ansiYellow("esc")} ${theme.fg("dim", "close")}`;
 		lines.push(renderTabBar(tabs, ui.tab, bodyWidth, theme));
 		lines.push("");
 		lines.push(searchLine);

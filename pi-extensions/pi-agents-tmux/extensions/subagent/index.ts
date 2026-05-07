@@ -1594,7 +1594,7 @@ function createAgentsBrowserComponent(
 		if (ui.tab === "active" && !hasActive) ui.tab = ui.scope;
 		const tabLine = renderAgentBrowserTabs(ui.tab, hasActive, bodyWidth, theme);
 		if (ui.tab === "active") {
-			const footer = `${ansiYellow("tab")} ${theme.fg("dim", "view · ")}${ansiYellow("↑↓")} ${theme.fg("dim", "step · ")}${ansiYellow("-/=")} ${theme.fg("dim", "page · ")}${ansiYellow("←/→")} ${theme.fg("dim", "pane · ")}${ansiYellow("ctrl+e")} ${theme.fg("dim", "edit · ")}${ansiYellow("esc")} ${theme.fg("dim", "close")}`;
+			const footer = `${ansiYellow("tab")} ${theme.fg("dim", "view · ")}${ansiYellow("-/=")} ${theme.fg("dim", "page · ")}${ansiYellow("←/→")} ${theme.fg("dim", "pane · ")}${ansiYellow("ctrl+e")} ${theme.fg("dim", "edit · ")}${ansiYellow("esc")} ${theme.fg("dim", "close")}`;
 			const lines = [tabLine, "", ...renderActiveTabBody(activeItems, runtimeRoot, ui, bodyWidth, theme, layout), agentDivider(bodyWidth, theme), ...wrapTextWithAnsi(footer, bodyWidth)];
 			return agentFrame(lines, safeWidth, theme, layout.innerRows, "Agents");
 		}
@@ -1603,12 +1603,12 @@ function createAgentsBrowserComponent(
 			loadHistoryRecord(historyRecords[ui.historySelected]);
 			const arrowsLabel = ui.pane === "inspector" ? "sections · " : "pane · ";
 			const enterLabel = ui.pane === "list" ? "open · " : "edit file · ";
-			const footer = `${ansiYellow("tab")} ${theme.fg("dim", "view · ")}${ansiYellow("↑↓")} ${theme.fg("dim", "step · ")}${ansiYellow("-/=")} ${theme.fg("dim", "page · ")}${ansiYellow("←/→")} ${theme.fg("dim", arrowsLabel)}${ansiYellow("enter")} ${theme.fg("dim", enterLabel)}${ansiYellow("ctrl+e")} ${theme.fg("dim", "edit · ")}${ansiYellow("esc")} ${theme.fg("dim", "close")}`;
+			const footer = `${ansiYellow("tab")} ${theme.fg("dim", "view · ")}${ansiYellow("-/=")} ${theme.fg("dim", "page · ")}${ansiYellow("←/→")} ${theme.fg("dim", arrowsLabel)}${ansiYellow("enter")} ${theme.fg("dim", enterLabel)}${ansiYellow("ctrl+e")} ${theme.fg("dim", "edit · ")}${ansiYellow("esc")} ${theme.fg("dim", "close")}`;
 			const lines = [tabLine, "", ...renderHistoryTabBody(historyRecords, historyCache, ui, bodyWidth, theme, layout), agentDivider(bodyWidth, theme), ...wrapTextWithAnsi(footer, bodyWidth)];
 			return agentFrame(lines, safeWidth, theme, layout.innerRows, "Agents");
 		}
 		clamp();
-		const footer = `${ansiYellow("tab")} ${theme.fg("dim", "view · ")}${ansiYellow("↑↓")} ${theme.fg("dim", "step · ")}${ansiYellow("-/=")} ${theme.fg("dim", "page · ")}${ansiYellow("←/→")} ${theme.fg("dim", "pane · ")}${ansiYellow("enter")} ${theme.fg("dim", "insert · ")}${ansiYellow("ctrl+p/o/x")} ${theme.fg("dim", "pane ops · ")}${ansiYellow("esc")} ${theme.fg("dim", "close")}`;
+		const footer = `${ansiYellow("tab")} ${theme.fg("dim", "view · ")}${ansiYellow("-/=")} ${theme.fg("dim", "page · ")}${ansiYellow("←/→")} ${theme.fg("dim", "pane · ")}${ansiYellow("enter")} ${theme.fg("dim", "insert · ")}${ansiYellow("ctrl+p/o/x")} ${theme.fg("dim", "pane ops · ")}${ansiYellow("esc")} ${theme.fg("dim", "close")}`;
 		const lines = [
 			tabLine,
 			"",
@@ -4309,7 +4309,7 @@ function traceViewerLines(state: TraceViewerState, width: number, rows: number, 
 	const innerWidth = Math.max(1, width - 4);
 	const frameRows = Math.max(8, rows);
 	const item = state.items[state.selected] ?? state.items[0];
-	const help = `${ansiYellow("tab/←→")} ${theme.fg("dim", "sections · ")}${ansiYellow("↑↓")} ${theme.fg("dim", "scroll · ")}${ansiYellow("-/=")} ${theme.fg("dim", "page · ")}${ansiYellow("enter")} ${theme.fg("dim", "open · ")}${ansiYellow("esc")} ${theme.fg("dim", "close")}`;
+	const help = `${ansiYellow("tab/←→")} ${theme.fg("dim", "sections · ")}${ansiYellow("-/=")} ${theme.fg("dim", "page · ")}${ansiYellow("enter")} ${theme.fg("dim", "open · ")}${ansiYellow("esc")} ${theme.fg("dim", "close")}`;
 	const tabs = renderTraceTabBar(state.items, state.selected, innerWidth, theme);
 	const meta = [
 		item?.ref ? theme.fg("accent", item.ref) : "",

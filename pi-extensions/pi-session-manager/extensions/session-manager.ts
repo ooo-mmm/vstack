@@ -671,6 +671,7 @@ class SessionManagerOverlay implements Focusable {
 			});
 			this.filtered = nodes;
 		}
+		if (this.nameFilter === "named") this.filtered = this.filtered.filter((node) => isNamed(node.session));
 
 		if (resetSelection) {
 			this.selectedIndex = 0;
@@ -1122,7 +1123,7 @@ class SessionManagerOverlay implements Focusable {
 		const leftFixed = cursor + ui.dim(prefix) + marker;
 		const availableTitle = Math.max(8, inner - visibleWidth(leftFixed) - visibleWidth(right) - 2);
 		let title = truncateToWidth(titleRaw, availableTitle, "…");
-		if (selected) title = this.theme.bold(ui.accent(title));
+		if (selected) title = this.theme.bold(isNamed(session) ? ui.warning(title) : ui.accent(title));
 		else if (current) title = ui.accent(title);
 		else if (isNamed(session)) title = ui.warning(title);
 		const left = leftFixed + title;
@@ -1157,8 +1158,8 @@ class SessionManagerOverlay implements Focusable {
 			return lines;
 		}
 
-		const locationPrefix = ui.dim("Session Path: ");
-		const location = selected.path;
+		const locationPrefix = ui.dim("Session CWD: ");
+		const location = selected.cwd || selected.path;
 		lines.push(ui.row(locationPrefix + ui.muted(truncateToWidth(shortenPath(location), Math.max(10, inner - visibleWidth(locationPrefix)), "…"))));
 
 		const state = `${shown} shown · ${scope} · ${this.sortMode} sort · ${this.nameFilter === "named" ? "named only" : "all names"}${search ? ` · query “${truncateToWidth(search, 28, "…")}”` : ""}`;

@@ -824,7 +824,7 @@ async function openQuestionUi(ctx: ExtensionContext, pending: PendingQuestion): 
 				lines.push(panelLine("", innerWidth));
 				const footer = inputMode
 					? `${ansiYellow("enter")} ${theme.fg("dim", "submit text")}  ${ansiYellow("esc")} ${theme.fg("dim", "back")}`
-					: `${ansiYellow("↑↓")} ${theme.fg("dim", "select")}  ${ansiYellow("-/=")} ${theme.fg("dim", "page")}  ${ansiYellow("enter")} ${theme.fg("dim", question.multiple ? "next/submit" : "choose")}  ${ansiYellow("space")} ${theme.fg("dim", question.multiple ? "toggle/type" : question.allowCustom ? "type custom" : "-")}  ${ansiYellow("tab/←/→")} ${theme.fg("dim", "tabs")}`;
+					: `${ansiYellow("-/=")} ${theme.fg("dim", "page")}  ${ansiYellow("enter")} ${theme.fg("dim", question.multiple ? "next/submit" : "choose")}  ${ansiYellow("space")} ${theme.fg("dim", question.multiple ? "toggle/type" : question.allowCustom ? "type custom" : "-")}  ${ansiYellow("tab/←/→")} ${theme.fg("dim", "tabs")}`;
 				lines.push(panelLine(footer, innerWidth));
 				return framePopup(lines, width, theme, request.header, inputMode ? "esc back" : "esc");
 			};

@@ -394,7 +394,7 @@ async function openStashPopup(ctx: ExtensionContext): Promise<void> {
 				lines.push(panelLine("", innerWidth));
 				const status = confirmDeleteAll
 					? `${theme.fg("warning", "delete all stashed prompts?")} ${ansiYellow("enter")} ${theme.fg("dim", "confirm · ")}${ansiYellow("esc")} ${theme.fg("dim", "cancel")}`
-					: `${ansiYellow("↑↓")} ${theme.fg("dim", "select · ")}${ansiYellow("-/=")} ${theme.fg("dim", "page · ")}${ansiYellow("enter")} ${theme.fg("dim", "restore · ")}${ansiYellow("ctrl+d")} ${theme.fg("dim", "delete · ")}${ansiYellow("ctrl+x")} ${theme.fg("dim", "delete all · ")}${ansiYellow("esc")} ${theme.fg("dim", "close")}`;
+					: `${ansiYellow("-/=")} ${theme.fg("dim", "page · ")}${ansiYellow("enter")} ${theme.fg("dim", "restore · ")}${ansiYellow("ctrl+d")} ${theme.fg("dim", "delete · ")}${ansiYellow("ctrl+x")} ${theme.fg("dim", "delete all · ")}${ansiYellow("esc")} ${theme.fg("dim", "close")}`;
 				lines.push(panelLine(status, innerWidth));
 
 				return framePopup(lines, width, theme, "Prompt Stash", `${items.length} saved`);
