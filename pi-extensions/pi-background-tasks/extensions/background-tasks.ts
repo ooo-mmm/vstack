@@ -20,7 +20,7 @@ import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 
 const BG_COMMAND = "bg";
 const DEFAULT_BACKGROUND_BASH_SHORTCUT = "alt+.";
@@ -330,6 +330,23 @@ function compactText(value: string, maxChars = 80): string {
 
 function shellQuote(value: string): string {
 	return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function piAgentDir(): string {
+	const configured = process.env.PI_CODING_AGENT_DIR?.trim();
+	if (configured) return resolve(configured.startsWith("~/") ? join(homedir(), configured.slice(2)) : configured);
+	return join(homedir(), ".pi", "agent");
+}
+
+function taskEnv(): NodeJS.ProcessEnv {
+	const env = { ...process.env };
+	const binDir = join(piAgentDir(), "bin");
+	if (existsSync(binDir)) {
+		const current = env.PATH || "";
+		const parts = current.split(delimiter).filter(Boolean);
+		if (!parts.includes(binDir)) env.PATH = [binDir, ...parts].join(delimiter);
+	}
+	return env;
 }
 
 function normalizedCommand(command: string): string {
@@ -1196,7 +1213,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		const child = spawn(shell, [...args, command], {
 			cwd,
 			detached: process.platform !== "win32",
-			env: process.env,
+			env: taskEnv(),
 			stdio: ["ignore", "pipe", "pipe"],
 		});
 
