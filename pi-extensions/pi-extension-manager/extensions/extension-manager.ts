@@ -331,7 +331,7 @@ function managerLayout(terminalRows: number): PopupLayout {
 	return {
 		bodyRows,
 		innerRows,
-		listRows: Math.max(3, Math.min(LIST_ROWS, bodyRows - 3)),
+		listRows: Math.max(3, Math.min(LIST_ROWS, bodyRows - 6)),
 	};
 }
 
@@ -1512,10 +1512,7 @@ function createManagerComponent(
 	function clamp(): void {
 		const layout = getLayout();
 		const list = filteredItems(inventory.items, ui);
-		ui.selected = Math.max(0, Math.min(ui.selected, Math.max(0, list.length - 1)));
-		ui.scroll = Math.max(0, Math.min(ui.scroll, Math.max(0, list.length - layout.listRows)));
-		if (ui.selected < ui.scroll) ui.scroll = ui.selected;
-		if (ui.selected >= ui.scroll + layout.listRows) ui.scroll = ui.selected - layout.listRows + 1;
+		syncManagerListViewport(ui, list.length, layout.listRows);
 	}
 
 	function cycle<T extends string>(values: T[], current: string, delta: number): T {
@@ -1756,6 +1753,24 @@ function renderDiagnosticsViewport(inventory: Inventory, ui: ManagerUiState, wid
 	return [...visible, theme.fg("dim", [before, after].filter(Boolean).join(" · "))];
 }
 
+function syncManagerListViewport(ui: ManagerUiState, itemCount: number, visibleItemRows: number): void {
+	const rows = Math.max(1, visibleItemRows);
+	ui.selected = Math.max(0, Math.min(ui.selected, Math.max(0, itemCount - 1)));
+	if (ui.selected < ui.scroll) ui.scroll = ui.selected;
+	else if (ui.selected >= ui.scroll + rows) ui.scroll = ui.selected - rows + 1;
+	ui.scroll = Math.max(0, Math.min(ui.scroll, Math.max(0, itemCount - rows)));
+}
+
+function managerListItemRows(itemCount: number, scroll: number, tableRows: number): number {
+	let rows = Math.max(1, Math.min(LIST_ROWS, tableRows - 2)); // title + spacer
+	for (let i = 0; i < 3; i += 1) {
+		const topIndicatorRows = scroll > 0 ? 1 : 0;
+		const bottomIndicatorRows = itemCount > scroll + rows ? 1 : 0;
+		rows = Math.max(1, Math.min(LIST_ROWS, tableRows - 2 - topIndicatorRows - bottomIndicatorRows));
+	}
+	return rows;
+}
+
 function renderDiagnostics(inventory: Inventory, width: number, theme: Theme): string[] {
 	const counts = countBy(inventory.items, (item) => item.state);
 	const kinds = countBy(inventory.items, (item) => item.kind);
@@ -1781,12 +1796,10 @@ function renderDiagnostics(inventory: Inventory, width: number, theme: Theme): s
 
 function renderExtensions(inventory: Inventory, ui: ManagerUiState, width: number, theme: Theme, layout: PopupLayout, footerRows = 0): string[] {
 	const list = filteredItems(inventory.items, ui);
-	const selected = list[ui.selected];
 	const leftWidth = Math.max(Math.min(LEFT_MIN_WIDTH, Math.floor(width * 0.45)), Math.min(LEFT_MAX_WIDTH, Math.floor(width * 0.38)));
 	const rightWidth = Math.max(20, width - leftWidth - 3);
-	const left = renderList(list, ui, leftWidth, theme, layout.listRows);
 	const rows = layout.bodyRows;
-	const right = renderInspector(inventory, selected, rightWidth, theme, rows);
+	let selected = list[ui.selected];
 	const searchText = ` > ${ui.search}${theme.inverse(" ")}`;
 	const searchLine = theme.bg("toolPendingBg", pad(searchText, width));
 	const filterValue = (label: string, value: string): string => `${theme.fg("muted", `${label}:`)} ${value === "all" ? theme.fg("dim", value) : theme.fg("accent", label === "scope" ? scopeFilterLabel(value) : value)}`;
@@ -1799,6 +1812,13 @@ function renderExtensions(inventory: Inventory, ui: ManagerUiState, width: numbe
 	const hintLine = hintParts.join(theme.fg("dim", " · "));
 	const lines = [searchLine, ...wrapLine(filterLine, width), "", ...wrapLine(hintLine, width), divider(width, theme)];
 	const tableRows = Math.max(1, rows - Math.max(0, lines.length - 5) - footerRows);
+	let listRows = managerListItemRows(list.length, ui.scroll, tableRows);
+	syncManagerListViewport(ui, list.length, listRows);
+	listRows = managerListItemRows(list.length, ui.scroll, tableRows);
+	syncManagerListViewport(ui, list.length, listRows);
+	selected = list[ui.selected];
+	const left = renderList(list, ui, leftWidth, theme, listRows);
+	const right = renderInspector(inventory, selected, rightWidth, theme, rows);
 	for (let i = 0; i < tableRows; i += 1) {
 		lines.push(`${pad(left[i] ?? "", leftWidth)} ${theme.fg("dim", "│")} ${truncateToWidth(right[i] ?? "", rightWidth, "")}`);
 	}
