@@ -1814,9 +1814,9 @@ function itemToggleHintLabel(item: InventoryItem | undefined): string | undefine
 }
 
 function stateToken(item: InventoryItem): string {
-	if (item.state === "active") return ansiGreen("[on]");
-	if (item.state === "broken") return ansiRed("[err]");
-	return ansiYellow("[off]");
+	if (item.state === "active") return ansiGreen("●");
+	if (item.state === "broken") return ansiRed("×");
+	return ansiYellow("○");
 }
 
 function installSourceLabel(item: InventoryItem): string {
