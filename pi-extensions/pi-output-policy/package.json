@@ -1,6 +1,6 @@
 {
   "name": "@vanillagreen/pi-output-policy",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "OMP-style large-output policy for Pi tool results: minimization, bounded truncation, and spill-file preservation.",
   "license": "MIT",
   "keywords": [
