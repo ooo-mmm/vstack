@@ -1446,7 +1446,7 @@ fn agent_frontmatter_pi_heading() -> String {
     out.push_str("# Examples:\n");
     out.push_str("# rust = { color = \"orange\" }\n");
     out.push_str(
-        "# planner = { model = \"openai-codex/gpt-5.5:high\", deny-tools = [\"bash\"] }\n",
+        "# planner = { model = \"openai-codex/gpt-5.5:xhigh\", deny-tools = [\"bash\"] }\n",
     );
     out
 }

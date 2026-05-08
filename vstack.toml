@@ -13,7 +13,7 @@
 # Use these for installed vstack agents instead of editing generated agent files:
 #
 # [agent-frontmatter.pi]
-# planner = { color = "blue", model = "openai-codex/gpt-5.5:high", deny-tools = ["bash"] }
+# planner = { color = "blue", model = "openai-codex/gpt-5.5:xhigh", deny-tools = ["bash"] }
 #
 # The Pi `/agents` popup can edit model/deny-tools/tools/color for vstack-managed project
 # agents and writes those changes into `[agent-frontmatter.pi]` automatically.
