@@ -940,7 +940,7 @@ class SessionManagerOverlay implements Focusable {
 			return;
 		}
 
-		if (matchesKey(data, "alt+d") || this.keybindings.matches(data, "app.session.delete")) {
+		if (matchesKey(data, "delete") || matchesKey(data, "alt+d") || this.keybindings.matches(data, "app.session.delete")) {
 			const selected = this.selected();
 			if (selected) this.startDelete(selected);
 			this.requestRender();
@@ -1306,7 +1306,7 @@ class SessionManagerOverlay implements Focusable {
 		if (this.mode === "rename") return [warning("empty name clears title")];
 		return [
 			`${ansiYellow("-/=")} ${dim("page · ")}${ansiYellow("enter")} ${dim("resume · ")}${ansiYellow("alt+m")} ${dim("resume+model · ")}${ansiYellow("alt+r")} ${dim("rename")}`,
-			`${ansiYellow("tab")} ${dim("scope · ")}${ansiYellow("alt+s")} ${dim("sort · ")}${ansiYellow("alt+n")} ${dim("names · ")}${ansiYellow("alt+d")} ${dim("delete · ")}${ansiYellow("alt+x")} ${dim("delete all")}`,
+			`${ansiYellow("tab")} ${dim("scope · ")}${ansiYellow("alt+s")} ${dim("sort · ")}${ansiYellow("alt+n")} ${dim("names · ")}${ansiYellow("del")} ${dim("delete · ")}${ansiYellow("alt+x")} ${dim("delete all")}`,
 		];
 	}
 
