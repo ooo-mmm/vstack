@@ -3381,6 +3381,20 @@ function framedMessage(content: string, theme: Theme): Component {
 	};
 }
 
+function sectionHeading(theme: Theme, label: string): string {
+	return `${theme.fg("muted", "─── ")}${theme.fg("toolTitle", theme.bold(label))}${theme.fg("muted", " ───")}`;
+}
+
+function addWrappedSection(container: Container, theme: Theme, label: string, content: string, tone: "toolOutput" | "dim" | "muted" = "toolOutput"): void {
+	container.addChild(wrappedText(sectionHeading(theme, label)));
+	container.addChild(wrappedText(theme.fg(tone, content || "(none)")));
+}
+
+function addArtifactPathSection(container: Container, theme: Theme, label: string, filePath: string | undefined): void {
+	if (!filePath) return;
+	addWrappedSection(container, theme, label, compactPath(filePath, { maxChars: Number.POSITIVE_INFINITY }), "toolOutput");
+}
+
 function agentsCommandBullet(theme: Theme): string {
 	return theme.fg("accent", "● ");
 }
@@ -4609,29 +4623,20 @@ function renderPaneCompletionMessage(message: { content: string; details?: unkno
 	for (const [index, detail] of completions.entries()) {
 		if (index > 0) container.addChild(new Spacer(1));
 		container.addChild(wrappedText(agentStatusLine(theme, detail.agent, detail.status, paneCompletionTone(detail.status), theme.fg("dim", ` · ${detail.taskId}`))));
-		container.addChild(wrappedText(theme.fg("muted", "─── Summary ───")));
+		container.addChild(wrappedText(sectionHeading(theme, "Summary")));
 		container.addChild(wrappedText(detail.summary || "No summary provided."));
-		container.addChild(wrappedText(theme.fg("muted", "─── Files Changed ───")));
+		container.addChild(wrappedText(sectionHeading(theme, "Files Changed")));
 		container.addChild(wrappedText(detail.filesChanged.length ? detail.filesChanged.map((file) => `- ${file}`).join("\n") : "None reported"));
-		container.addChild(wrappedText(theme.fg("muted", "─── Validation ───")));
+		container.addChild(wrappedText(sectionHeading(theme, "Validation")));
 		container.addChild(wrappedText(detail.validation.length ? detail.validation.map((item) => `- ${item}`).join("\n") : "None reported"));
 		if (detail.notes) {
-			container.addChild(wrappedText(theme.fg("muted", "─── Notes ───")));
+			container.addChild(wrappedText(sectionHeading(theme, "Notes")));
 			container.addChild(wrappedText(detail.notes));
 		}
-		container.addChild(wrappedText(theme.fg("muted", "─── Artifacts ───")));
-		container.addChild(
-			wrappedText(
-				[
-					`Source: ${compactPath(detail.sourcePath, { maxChars: Number.POSITIVE_INFINITY })}`,
-					detail.archivePath ? `Archive: ${compactPath(detail.archivePath, { maxChars: Number.POSITIVE_INFINITY })}` : "",
-					detail.transcriptPath ? `Transcript: ${compactPath(detail.transcriptPath, { maxChars: Number.POSITIVE_INFINITY })}` : "",
-				]
-					.filter(Boolean)
-					.map((line) => theme.fg("dim", line))
-					.join("\n"),
-			),
-		);
+		container.addChild(wrappedText(sectionHeading(theme, "Artifacts")));
+		addArtifactPathSection(container, theme, "Source", detail.sourcePath);
+		addArtifactPathSection(container, theme, "Archive", detail.archivePath);
+		addArtifactPathSection(container, theme, "Transcript", detail.transcriptPath);
 	}
 	return framedComponent(container, theme);
 }
@@ -5205,9 +5210,9 @@ export default function (pi: ExtensionAPI) {
 			const completions = details?.completions ?? [];
 			if (completions.length === 1) {
 				const detail = completions[0]!;
-				return framedMessage(agentStatusLine(theme, detail.agent, detail.status, paneCompletionTone(detail.status)), theme);
+				return framedMessage(agentStatusLine(theme, detail.agent, detail.status, paneCompletionTone(detail.status), theme.fg("dim", " · ctrl+o expand")), theme);
 			}
-			if (completions.length > 1) return framedMessage(`${theme.fg("success", ICONS.check)} ${theme.fg("toolTitle", theme.bold(`${completions.length} agents completed`))}`, theme);
+			if (completions.length > 1) return framedMessage(`${theme.fg("success", ICONS.check)} ${theme.fg("toolTitle", theme.bold(`${completions.length} agents completed`))}${theme.fg("dim", " · ctrl+o expand")}`, theme);
 		}
 		return renderPaneCompletionMessage(message as { content: string; details?: unknown }, options as { expanded?: boolean } | undefined, theme);
 	});
@@ -6620,17 +6625,14 @@ export default function (pi: ExtensionAPI) {
 				const container = new Container();
 				container.addChild(wrappedText(queuedPaneLine(r)));
 				container.addChild(new Spacer(1));
-				container.addChild(wrappedText(theme.fg("muted", "─── Queued task ───")));
+				container.addChild(wrappedText(sectionHeading(theme, "Queued task")));
 				container.addChild(new Markdown(r.task.trim() || "(empty task)", 0, 0, mdTheme));
-				const artifacts = [
-					r.taskId ? `Task ID: ${r.taskId}` : "",
-					r.queuedTaskFile ? `Inbox: ${compactPath(r.queuedTaskFile, { maxChars: Number.POSITIVE_INFINITY })}` : "",
-					r.queuedOutboxFile ? `Completion: ${compactPath(r.queuedOutboxFile, { maxChars: Number.POSITIVE_INFINITY })}` : "",
-					r.transcriptPath ? `Transcript: ${compactPath(r.transcriptPath, { maxChars: Number.POSITIVE_INFINITY })}` : "",
-				].filter(Boolean);
-				if (artifacts.length > 0) {
+				if (r.taskId || r.queuedTaskFile || r.queuedOutboxFile || r.transcriptPath) {
 					container.addChild(new Spacer(1));
-					for (const line of artifacts) container.addChild(wrappedText(theme.fg("dim", line)));
+					if (r.taskId) addWrappedSection(container, theme, "Task ID", r.taskId, "dim");
+					addArtifactPathSection(container, theme, "Inbox", r.queuedTaskFile);
+					addArtifactPathSection(container, theme, "Completion", r.queuedOutboxFile);
+					addArtifactPathSection(container, theme, "Transcript", r.transcriptPath);
 				}
 				return container;
 			};
