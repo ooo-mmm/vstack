@@ -4917,6 +4917,7 @@ interface GetSubagentResultDetails {
 	taskId?: string;
 	notes?: string;
 	diagnostics?: string[];
+	completionMessageEmitted?: boolean;
 }
 
 interface SteerSubagentDetails {
@@ -5864,8 +5865,9 @@ export default function (pi: ExtensionAPI) {
 			const deadline = Date.now() + Math.max(0, Math.floor(params.timeoutMs ?? 30000));
 			let record: PaneTaskRecord | undefined;
 			let diagnostics: string[] = [];
+			let completionMessageEmitted = false;
 			do {
-				await pollPaneCompletions(runtimeRoot, pi, false);
+				completionMessageEmitted = (await pollPaneCompletions(runtimeRoot, pi, false)) > 0 || completionMessageEmitted;
 				const records = await readTaskRegistry(runtimeRoot);
 				record = params.taskId ? records[params.taskId] : latestTaskRecord(records, params.agent);
 				if (record) {
@@ -5886,7 +5888,7 @@ export default function (pi: ExtensionAPI) {
 			const diagnosticBlock = params.verbose && diagnostics.length > 0 ? `\n\n### Artifact diagnostics\n${diagnostics.map((line) => `- ${line}`).join("\n")}` : "";
 			return {
 				content: [{ type: "text", text: `${formatTaskRecordResult(record, params.verbose ?? false)}${diagnosticBlock}` }],
-				details: { agent: record.agent, paneId: record.paneId, summary: record.summary, status: record.status, taskId: record.taskId, notes: record.notes, diagnostics: record.diagnostics } satisfies GetSubagentResultDetails,
+				details: { agent: record.agent, paneId: record.paneId, summary: record.summary, status: record.status, taskId: record.taskId, notes: record.notes, diagnostics: record.diagnostics, completionMessageEmitted } satisfies GetSubagentResultDetails,
 			};
 		},
 		renderCall(_args, _theme, _context) {
@@ -5896,6 +5898,7 @@ export default function (pi: ExtensionAPI) {
 			const raw = (result.content as any[] | undefined)?.find?.((part: any) => part?.type === "text" && typeof part.text === "string")?.text ?? "";
 			const details = result.details as GetSubagentResultDetails | undefined;
 			if (context?.isError) return wrappedText(`${theme.fg("error", ICONS.times)} ${theme.fg("toolTitle", "Agent result lookup failed")}\n${theme.fg("muted", raw)}`);
+			if (details?.completionMessageEmitted) return new Container();
 			const target = details?.agent ? details.agent : "unknown";
 			const tone = details?.status === "completed" ? "success" : details?.status === "failed" ? "error" : "warning";
 			// One-liner only, expanded or not. The full task record is reachable
@@ -6563,7 +6566,7 @@ export default function (pi: ExtensionAPI) {
 			const transcriptLine = (r: SingleResult) => (r.transcriptPath ? theme.fg("dim", `Transcript: ${compactPath(r.transcriptPath)}`) : "");
 			const queuedPaneLine = (r: SingleResult, dashboard = false) => {
 				if (!r.taskId || !r.paneId) return "";
-				const suffix = `${theme.fg("dim", ` · pane${dashboard ? " · dashboard" : ""}`)}${theme.fg("dim", " · ctrl+p expand")}`;
+				const suffix = `${theme.fg("dim", ` · pane${dashboard ? " · dashboard" : ""}`)}${theme.fg("dim", " · ctrl+o expand")}`;
 				return agentStatusLine(theme, r.agent, "Queued task", "warning", suffix);
 			};
 			const queuedTaskPreviewComponent = (r: SingleResult, dashboard = false): Component => ({
@@ -6592,9 +6595,9 @@ export default function (pi: ExtensionAPI) {
 				container.addChild(new Markdown(r.task.trim() || "(empty task)", 0, 0, mdTheme));
 				const artifacts = [
 					r.taskId ? `Task ID: ${r.taskId}` : "",
-					r.queuedTaskFile ? `Inbox: ${compactPath(r.queuedTaskFile)}` : "",
-					r.queuedOutboxFile ? `Completion: ${compactPath(r.queuedOutboxFile)}` : "",
-					r.transcriptPath ? `Transcript: ${compactPath(r.transcriptPath)}` : "",
+					r.queuedTaskFile ? `Inbox: ${compactPath(r.queuedTaskFile, { maxChars: Number.POSITIVE_INFINITY })}` : "",
+					r.queuedOutboxFile ? `Completion: ${compactPath(r.queuedOutboxFile, { maxChars: Number.POSITIVE_INFINITY })}` : "",
+					r.transcriptPath ? `Transcript: ${compactPath(r.transcriptPath, { maxChars: Number.POSITIVE_INFINITY })}` : "",
 				].filter(Boolean);
 				if (artifacts.length > 0) {
 					container.addChild(new Spacer(1));
