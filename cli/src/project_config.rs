@@ -73,6 +73,10 @@ fn is_agent_frontmatter_override(value: &toml::Value) -> bool {
         "deny-tools",
         "tools",
         "pane",
+        "background",
+        "effort",
+        "isolation",
+        "memory",
         "mode",
         "sandbox-mode",
         "model-reasoning-effort",
@@ -506,6 +510,10 @@ fn render_inline_table_fields(fields: &[(String, String)]) -> String {
         "deny-tools",
         "tools",
         "pane",
+        "background",
+        "effort",
+        "isolation",
+        "memory",
         "mode",
         "sandbox-mode",
         "model-reasoning-effort",
@@ -950,7 +958,8 @@ fn project_config_header() -> String {
     out.push_str("# every install and refresh.\n");
     out.push_str("#\n");
     out.push_str("# Skills live in [agent-skills]. Generated frontmatter\n");
-    out.push_str("# overrides like model, deny-tools, optional tools, color, and pane live in\n");
+    out.push_str("# overrides like model, effort, deny-tools, optional tools, color, pane,\n");
+    out.push_str("# and Claude background/isolation/memory live in\n");
     out.push_str("# [agent-frontmatter] or [agent-frontmatter.pi].\n");
     out.push_str("#\n");
     out.push_str("# After editing, run:  vstack refresh\n");
@@ -1387,15 +1396,17 @@ fn agent_frontmatter_heading() -> String {
     out.push_str(
         "# deny-tools for maintainable restrictions; use tools only for strict allowlists.\n",
     );
-    out.push_str("# Supported fields: color, model, deny-tools, tools, pane, mode,\n");
-    out.push_str("# sandbox-mode, model-reasoning-effort. Unknown fields ignored.\n");
+    out.push_str("# Supported fields: color, model, effort, deny-tools, tools, pane,\n");
+    out.push_str("# background, isolation, memory, mode, sandbox-mode, model-reasoning-effort.\n");
+    out.push_str("# Unknown fields ignored. Claude: effort/background/isolation/memory.\n");
+    out.push_str("# Pi: pane/model suffix. Codex: model-reasoning-effort.\n");
     out.push_str("# Examples:\n");
     out.push_str("# rust = { color = \"green\" }\n");
-    out.push_str("# planner = { model = \"openai/gpt-5.5\", color = \"blue\" }\n");
+    out.push_str("# planner = { model = \"opus\", effort = \"xhigh\", background = true, isolation = \"worktree\", memory = \"none\", color = \"blue\" }\n");
     out.push_str(
         "# reviewer-perf = { tools = [\"read\", \"grep\", \"find\", \"ls\", \"bash\"] }\n",
     );
-    out.push_str("# scout = { deny-tools = [\"bash\"] }\n");
+    out.push_str("# scout = { deny-tools = [\"bash\"], isolation = \"none\" }\n");
     out.push_str("#\n");
     out
 }
@@ -1997,13 +2008,13 @@ rust = "Always run clippy before committing."
             dir.join("vstack.toml"),
             r#"
 [agent-frontmatter]
-researcher = { color = "purple", model = "generic-model" }
+researcher = { color = "purple", model = "generic-model", effort = "high", background = false, isolation = "none", memory = "project" }
 
 [agent-frontmatter.pi]
 researcher = { model = "openai-codex/gpt-5.5:xhigh", tools = "read, grep, web_research" }
 
 [agent-frontmatter.claude]
-researcher = { model = "opus[1m]" }
+researcher = { model = "opus[1m]", effort = "xhigh", background = true, isolation = "worktree" }
 "#,
         )
         .unwrap();
@@ -2018,6 +2029,10 @@ researcher = { model = "opus[1m]" }
         );
         let claude = config.frontmatter_for("researcher", "claude-code");
         assert_eq!(claude.model.as_deref(), Some("opus[1m]"));
+        assert_eq!(claude.effort.as_deref(), Some("xhigh"));
+        assert_eq!(claude.background, Some(true));
+        assert_eq!(claude.isolation.as_deref(), Some("worktree"));
+        assert_eq!(claude.memory.as_deref(), Some("project"));
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -2174,7 +2189,7 @@ rust = "Always use thiserror for errors."
         assert!(!updated.contains("beta\n\"\"\""));
         assert!(updated.contains("Agent Frontmatter"));
         assert!(updated.contains("Pi-specific frontmatter overrides"));
-        assert!(updated.contains("# planner = { model = \"openai/gpt-5.5\", color = \"blue\" }"));
+        assert!(updated.contains("# planner = { model = \"opus\", effort = \"xhigh\", background = true, isolation = \"worktree\", memory = \"none\", color = \"blue\" }"));
         assert!(updated.contains(
             "# reviewer-perf = { tools = [\"read\", \"grep\", \"find\", \"ls\", \"bash\"] }"
         ));

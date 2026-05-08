@@ -12,9 +12,13 @@
 # Project-level `vstack.toml` files also support generated-frontmatter overrides.
 # Use these for installed vstack agents instead of editing generated agent files:
 #
+# [agent-frontmatter]
+# planner = { color = "blue", model = "opus", effort = "xhigh", background = true, isolation = "worktree", memory = "none" }
+#
 # [agent-frontmatter.pi]
 # planner = { color = "blue", model = "openai-codex/gpt-5.5:xhigh", deny-tools = ["bash"] }
 #
+# Claude Code supports effort/background/isolation/memory. Pi uses model suffixes and pane.
 # The Pi `/agents` popup can edit model/deny-tools/tools/color for vstack-managed project
 # agents and writes those changes into `[agent-frontmatter.pi]` automatically.
 

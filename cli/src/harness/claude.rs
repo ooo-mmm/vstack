@@ -35,6 +35,19 @@ pub fn generate_agent(
         .unwrap_or_else(|| agent.model_id("claude-code"));
     output.push_str(&format!("model: {}\n", model));
 
+    if let Some(effort) = claude_effort_for(agent, &frontmatter) {
+        output.push_str(&format!("effort: {}\n", effort));
+    }
+    if let Some(background) = claude_background_for(agent, &frontmatter) {
+        output.push_str(&format!("background: {}\n", background));
+    }
+    if let Some(isolation) = claude_isolation_for(&frontmatter) {
+        output.push_str(&format!("isolation: {}\n", isolation));
+    }
+    if let Some(memory) = claude_memory_for(&frontmatter) {
+        output.push_str(&format!("memory: {}\n", memory));
+    }
+
     if let Some(tools) = claude_tools_override(frontmatter.tools.as_deref()) {
         if !tools.is_empty() {
             output.push_str(&format!("tools: {}\n", tools.join(", ")));
@@ -90,6 +103,51 @@ pub fn generate_agent(
 
     std::fs::write(&path, &output)?;
     Ok(path)
+}
+
+fn claude_effort_for(
+    agent: &Agent,
+    frontmatter: &agent::AgentFrontmatterOverrides,
+) -> Option<String> {
+    frontmatter
+        .effort
+        .clone()
+        .or_else(|| agent::effort_for_model(&agent.model).map(String::from))
+        .filter(|effort| !is_none_value(effort))
+}
+
+fn claude_background_for(
+    agent: &Agent,
+    frontmatter: &agent::AgentFrontmatterOverrides,
+) -> Option<bool> {
+    frontmatter.background.or_else(|| {
+        let pane = frontmatter.pane.unwrap_or_else(|| {
+            matches!(agent.role, AgentRole::Engineer) || agent.name.eq_ignore_ascii_case("planner")
+        });
+        pane.then_some(true)
+    })
+}
+
+fn claude_isolation_for(frontmatter: &agent::AgentFrontmatterOverrides) -> Option<String> {
+    let isolation = frontmatter
+        .isolation
+        .clone()
+        .unwrap_or_else(|| "worktree".into());
+    (!is_none_value(&isolation)).then_some(isolation)
+}
+
+fn claude_memory_for(frontmatter: &agent::AgentFrontmatterOverrides) -> Option<String> {
+    frontmatter
+        .memory
+        .clone()
+        .filter(|memory| !is_none_value(memory))
+}
+
+fn is_none_value(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "" | "none" | "false" | "off" | "no"
+    )
 }
 
 fn claude_tools_override(override_tools: Option<&[String]>) -> Option<Vec<String>> {
@@ -227,6 +285,9 @@ mod tests {
             .expect("generate ok");
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(!content.contains("\ntools:"));
+        assert!(content.contains("effort: high"));
+        assert!(content.contains("isolation: worktree"));
+        assert!(!content.contains("memory:"));
         assert!(content.contains("disallowedTools: Task"));
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -285,6 +346,65 @@ mod tests {
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(!content.contains("\ntools:"));
         assert!(content.contains("disallowedTools: Bash, Task, Write"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn generate_agent_emits_claude_runtime_frontmatter() {
+        let dir = std::env::temp_dir().join(format!(
+            "vstack_claude_agent_runtime_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let mut agent = agent_fixture("planner", AgentRole::Analyst);
+        agent.model = "opus".into();
+        let extras = AgentExtras {
+            frontmatter: AgentFrontmatterOverrides {
+                memory: Some("project".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let path = generate_agent(&agent, &dir, &[], &[], &[], &extras).expect("generate ok");
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("model: opus[1m]"));
+        assert!(content.contains("effort: xhigh"));
+        assert!(content.contains("background: true"));
+        assert!(content.contains("isolation: worktree"));
+        assert!(content.contains("memory: project"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn generate_agent_allows_disabling_claude_runtime_defaults() {
+        let dir = std::env::temp_dir().join(format!(
+            "vstack_claude_agent_runtime_disable_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let agent = agent_fixture("rust", AgentRole::Engineer);
+        let extras = AgentExtras {
+            frontmatter: AgentFrontmatterOverrides {
+                effort: Some("none".into()),
+                background: Some(false),
+                isolation: Some("none".into()),
+                memory: Some("none".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let path = generate_agent(&agent, &dir, &[], &[], &[], &extras).expect("generate ok");
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(!content.contains("effort:"));
+        assert!(content.contains("background: false"));
+        assert!(!content.contains("isolation:"));
+        assert!(!content.contains("memory:"));
 
         let _ = std::fs::remove_dir_all(&dir);
     }

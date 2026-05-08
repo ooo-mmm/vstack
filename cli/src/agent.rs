@@ -106,6 +106,17 @@ impl Agent {
     }
 }
 
+/// Canonical reasoning effort associated with vstack's model tiers.
+/// Harnesses may map this to their own field/syntax.
+pub fn effort_for_model(model: &str) -> Option<&'static str> {
+    match model.to_lowercase().as_str() {
+        "opus" => Some("xhigh"),
+        "sonnet" => Some("high"),
+        "haiku" => Some("medium"),
+        _ => None,
+    }
+}
+
 /// Discover all agent files in a directory
 pub fn discover_agents(dir: &Path) -> Result<Vec<Agent>> {
     let mut agents = Vec::new();
@@ -232,6 +243,14 @@ pub struct AgentFrontmatterOverrides {
     pub deny_tools: Option<Vec<String>>,
     /// Pi persistent pane flag.
     pub pane: Option<bool>,
+    /// Claude Code background subagent flag.
+    pub background: Option<bool>,
+    /// Claude Code effort level override.
+    pub effort: Option<String>,
+    /// Claude Code isolation mode, for example `worktree`.
+    pub isolation: Option<String>,
+    /// Claude Code persistent memory scope: `user`, `project`, or `local`.
+    pub memory: Option<String>,
     /// OpenCode mode override.
     pub mode: Option<String>,
     /// Codex sandbox mode override.
@@ -276,6 +295,10 @@ impl AgentFrontmatterOverrides {
             tools: harness.tools.clone().or_else(|| self.tools.clone()),
             deny_tools: merge_optional_tool_lists(&self.deny_tools, &harness.deny_tools),
             pane: harness.pane.or(self.pane),
+            background: harness.background.or(self.background),
+            effort: harness.effort.clone().or_else(|| self.effort.clone()),
+            isolation: harness.isolation.clone().or_else(|| self.isolation.clone()),
+            memory: harness.memory.clone().or_else(|| self.memory.clone()),
             mode: harness.mode.clone().or_else(|| self.mode.clone()),
             sandbox_mode: harness
                 .sandbox_mode

@@ -30,7 +30,7 @@ cli/src/
 ├── installer.rs         Symlink/copy logic, per-harness hook installation, removal
 ├── harness/
 │   ├── mod.rs           Harness enum, detection, routing
-│   ├── claude.rs        → .claude/agents/*.md (tools/disallowedTools + skills + hooks frontmatter, "Required Skills")
+│   ├── claude.rs        → .claude/agents/*.md (tools/disallowedTools + effort/background/isolation/memory + skills + hooks frontmatter, "Required Skills")
 │   ├── cursor.rs        → .cursor/rules/*.mdc (description + alwaysApply + skills section)
 │   ├── opencode.rs      → .opencode/agents/*.md (YAML frontmatter + skills section)
 │   ├── codex.rs         → .codex/agents/*.toml (developer_instructions + skills section)
@@ -153,11 +153,14 @@ rust = "Always run clippy before committing."
 # Generated-frontmatter overrides. Top-level entries apply where supported.
 [agent-frontmatter]
 rust = { color = "green" }
-planner = { model = "openai/gpt-5.5", color = "blue" }
+planner = { model = "opus", effort = "xhigh", color = "blue" }
 reviewer-perf = { tools = ["read", "grep", "find", "ls", "bash"] }
 
 # Harness-specific generated-frontmatter overrides win over top-level entries.
 # Use exact model/tool ids for the target harness when formats differ.
+[agent-frontmatter.claude]
+planner = { background = true, isolation = "worktree", memory = "none" }
+
 [agent-frontmatter.pi]
 researcher = { model = "openai-codex/gpt-5.5:xhigh", deny-tools = ["bash"] }
 
@@ -166,17 +169,17 @@ researcher = { model = "openai-codex/gpt-5.5:xhigh", deny-tools = ["bash"] }
 trading-design = "Dark theme, green/red accents."
 ```
 
-## Per-Harness Model Mapping
+## Per-Harness Model/Effort Mapping
 
-| Canonical | Claude Code | OpenCode | Codex | Pi |
-|-----------|-------------|----------|-------|-----|
-| `opus` | `opus[1m]` | `openai/gpt-5.5` | `gpt-5.5` (xhigh) | `openai-codex/gpt-5.5:xhigh` |
-| `sonnet` | `sonnet` | `openai/gpt-5.5` | `gpt-5.5` (high) | `openai-codex/gpt-5.5:high` |
-| `haiku` | `haiku` | `openai/gpt-5.5` | `gpt-5.5` (medium) | `openai-codex/gpt-5.5:medium` |
+| Canonical | Claude Code | Claude effort | OpenCode | Codex | Pi |
+|-----------|-------------|---------------|----------|-------|-----|
+| `opus` | `opus[1m]` | `xhigh` | `openai/gpt-5.5` | `gpt-5.5` (xhigh) | `openai-codex/gpt-5.5:xhigh` |
+| `sonnet` | `sonnet` | `high` | `openai/gpt-5.5` | `gpt-5.5` (high) | `openai-codex/gpt-5.5:high` |
+| `haiku` | `haiku` | `medium` | `openai/gpt-5.5` | `gpt-5.5` (medium) | `openai-codex/gpt-5.5:medium` |
 
 ## Per-Harness Tool Overrides
 
-- Prefer `deny-tools` for tool restrictions. Claude Code writes it as native `disallowedTools`; Pi emits `deny-tools` for `pi-agents-tmux`, whose default is active parent tools minus denials. Pi `tools` is omitted by default and remains supported only for rare strict allowlists.
+- Prefer `deny-tools` for tool restrictions. Claude Code writes it as native `disallowedTools` and supports `effort`, `background`, `isolation`, and `memory`; Pi emits `deny-tools` for `pi-agents-tmux`, whose default is active parent tools minus denials. Pi `tools` is omitted by default and remains supported only for rare strict allowlists.
 - OpenCode uses `permission` for tool access; vstack currently maps role to `mode` and does not emit per-agent permissions.
 - Cursor and Codex do not use the same agent `tools` frontmatter.
 
