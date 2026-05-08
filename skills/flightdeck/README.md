@@ -49,6 +49,8 @@ See `SKILL.md § Configuration` for the canonical list. Common overrides:
 | `FLIGHTDECK_FORCE_MERGE_AFTER_SECS` | `240` | UNKNOWN-state wait threshold before considering force-merge |
 | `FLIGHTDECK_STATE_DIR` | `tmp` | Master-state file directory |
 | `FLIGHTDECK_AUTO_MERGE` | `1` | Set `0` to escalate `merge-now` instead of auto-answering |
+| `FLIGHTDECK_LAUNCH_MODEL` | unset | Default `open-terminal --model` override when the workflow/user does not pass `--model` |
+| `FLIGHTDECK_LAUNCH_EFFORT` | unset | Default `open-terminal --effort` / thinking override when the workflow/user does not pass `--effort` |
 | `FLIGHTDECK_OC_FOLLOWUP_PROMPT` | unset | Override the default `/orchestration start <ISSUE>` followup fired post-spawn (for tests / alt workflows) |
 
 ## Scripts
@@ -57,7 +59,7 @@ Every script in `scripts/` appears in `SKILL.md`'s Scripts table. No hidden scri
 
 | Script | What it does |
 |--------|--------------|
-| `open-terminal` | Launch worktree(s) with auto-detected harness — never hand-roll tmux/terminal commands |
+| `open-terminal` | Launch worktree(s) with selected harness plus optional `--model`/`--effort` overrides — never hand-roll tmux/terminal commands |
 | `parallel-groups` | Read/manage parallel issue groups |
 | `flightdeck-state` | Atomic CRUD on `tmp/flightdeck-state-<TMUX_SESSION>.json` (init/get/set/append/increment/archive/master-busy). `init` sweeps stale `.tmp.<PID>` orphans; `archive` rotates terminated state to `<file>-<terminated_at>.json.archive`; `master-busy lock\|unlock\|check` writes the daemon's busy-lockfile atomically |
 | `flightdeck-daemon` | External bash wake driver. Per-pane subscribers across all four harnesses (opencode/claude/pi/codex) emit normalized turn-end events into the wake-events log; daemon drains and wakes master via `tmux paste-buffer` on canonical classifier tags. Adapter-unavailable panes fall back to the legacy capture-pane + bell + hash-stable loop. Actions: `start \| stop \| status \| events \| ack` |

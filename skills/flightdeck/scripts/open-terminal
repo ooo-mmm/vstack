@@ -1,20 +1,25 @@
 #!/usr/bin/env bash
-# Launch worktree(s) for one or more issues with auto-detected harness and terminal.
+# Launch worktree(s) for one or more issues with selected harness, model/effort overrides, and terminal.
 #
 # Usage:
-#   open-terminal ISSUE-1 [--tmux | --ghostty] [--cmd "command {issue}"]
-#   open-terminal ISSUE-1 ISSUE-2 ... [--tmux | --ghostty] [--cmd "command {issue}"]
+#   open-terminal ISSUE-1 [--tmux | --ghostty] [--harness claude] [--model MODEL] [--effort LEVEL]
+#   open-terminal ISSUE-1 ISSUE-2 ... [--tmux | --ghostty] [--harness codex] [--model MODEL] [--effort LEVEL]
 #   open-terminal <group_id> [--tmux | --ghostty] [--cmd "command {issue}"]
 #
 # Options:
-#   --cmd "..."    Command to run in each worktree. Use {issue} as placeholder
-#                  for the issue ID. If omitted, auto-detects harness (claude/codex/opencode).
-#   --tmux         Open tmux windows (requires active tmux session)
-#   --ghostty      Open Ghostty terminals
-#   (default)      Auto-detect: tmux if $TMUX set, else ghostty/GUI terminal
+#   --harness NAME  Harness to launch: claude, codex, opencode, pi, omp
+#   --model MODEL   Model override for this launch/session
+#   --effort LEVEL  Effort/thinking override for this launch/session
+#   --cmd "..."     Command to run in each worktree. Use {issue} as placeholder
+#                   for the issue ID. Overrides --harness/--model/--effort.
+#   --tmux          Open tmux windows (requires active tmux session)
+#   --ghostty       Open Ghostty terminals
+#   (default)       Auto-detect: tmux if $TMUX set, else ghostty/GUI terminal
 #
 # Environment:
 #   GH_ISSUE_PATTERN          - Regex pattern matching issue IDs (default: "[A-Z]+-[0-9]+")
+#   FLIGHTDECK_LAUNCH_MODEL   - Default model override when --model is omitted
+#   FLIGHTDECK_LAUNCH_EFFORT  - Default effort/thinking override when --effort is omitted
 #   OPEN_TERMINAL_NO_BYPASS=1 - Do not pass per-harness permission-bypass flags to spawned
 #                               agents. Default off (bypass enabled). Inner agents need bypass
 #                               to silently spawn sub-agent panes via tmux without prompting
@@ -59,6 +64,8 @@ ISSUES=()
 USE_CHANNELS="${FLIGHTDECK_CLAUDE_CHANNELS:-0}"
 GROUP_ID=""
 CMD_TEMPLATE=""
+MODEL_OVERRIDE=""
+EFFORT_OVERRIDE=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -66,6 +73,10 @@ while [[ $# -gt 0 ]]; do
     --ghostty) TERMINAL_MODE="ghostty"; shift ;;
     --harness) HARNESS="$2"; shift 2 ;;
     --harness=*) HARNESS="${1#--harness=}"; shift ;;
+    --model) MODEL_OVERRIDE="$2"; shift 2 ;;
+    --model=*) MODEL_OVERRIDE="${1#--model=}"; shift ;;
+    --effort|--thinking) EFFORT_OVERRIDE="$2"; shift 2 ;;
+    --effort=*|--thinking=*) EFFORT_OVERRIDE="${1#*=}"; shift ;;
     --cmd) CMD_TEMPLATE="$2"; shift 2 ;;
     --use-channels) USE_CHANNELS=1; shift ;;
     --no-channels)  USE_CHANNELS=0; shift ;;
@@ -73,20 +84,31 @@ while [[ $# -gt 0 ]]; do
       echo "Usage: open-terminal ISSUE-1 [ISSUE-2 ...] [options]"
       echo ""
       echo "Options:"
-      echo "  --harness <name>    Harness to launch: claude, codex, opencode, omp"
+      echo "  --harness <name>    Harness to launch: claude, codex, opencode, pi, omp"
+      echo "  --model <model>     Model override for this launch/session"
+      echo "  --effort <level>    Effort/thinking override: minimal, low, medium, high, xhigh, max"
       echo "  --tmux              Open tmux windows (requires active tmux session)"
       echo "  --ghostty           Open Ghostty terminals"
-      echo "  --cmd \"command\"     Custom command ({issue} is replaced). Overrides --harness."
+      echo "  --cmd \"command\"     Custom command ({issue} is replaced). Overrides --harness/--model/--effort."
       echo "  (default terminal)  Auto-detect: tmux if \$TMUX set, else GUI terminal"
       echo ""
       echo "Harness launch commands (with permission bypass enabled by default):"
       echo "  claude   → claude -n ISSUE --dangerously-skip-permissions --model 'opus[1m]' --effort max '/orchestration start ISSUE'"
-      echo "  codex    → codex '\$orchestration start ISSUE'"
-      echo "  opencode → opencode --prompt '/orchestration start ISSUE'"
+      echo "  codex    → codex -m MODEL -c model_reasoning_effort=EFFORT '\$orchestration start ISSUE'"
+      echo "  opencode → opencode --model MODEL --prompt '/orchestration start ISSUE' (effort unsupported by this launcher)"
       echo "  omp      → omp '/skill:orchestration start ISSUE'"
+      echo "  pi       → pi --model MODEL --thinking EFFORT '/skill:orchestration start ISSUE'"
+      echo ""
+      echo "Recommended defaults for implementation panes:"
+      echo "  claude:   --model 'opus[1m]' --effort max"
+      echo "  codex:    --model gpt-5.5 --effort xhigh"
+      echo "  opencode: --model openai/gpt-5.5"
+      echo "  pi:       --model openai/gpt-5.5 --effort xhigh"
       echo ""
       echo "Environment:"
       echo "  GH_ISSUE_PATTERN          Regex for issue IDs (default: [A-Z]+-[0-9]+)"
+      echo "  FLIGHTDECK_LAUNCH_MODEL   Default model override when --model is omitted"
+      echo "  FLIGHTDECK_LAUNCH_EFFORT  Default effort/thinking override when --effort is omitted"
       echo "  OPEN_TERMINAL_NO_BYPASS=1 Disable per-harness permission-bypass flags (default: off)"
       exit 0
       ;;
@@ -160,20 +182,141 @@ bypass_flag_for_harness() {
   esac
 }
 
+shell_join() {
+  local out="" arg
+  for arg in "$@"; do
+    local quoted
+    printf -v quoted '%q' "$arg"
+    if [[ -z "$out" ]]; then
+      out="$quoted"
+    else
+      out+=" $quoted"
+    fi
+  done
+  printf '%s\n' "$out"
+}
+
+launch_model_for_harness() {
+  local harness="$1"
+  if [[ -n "$MODEL_OVERRIDE" ]]; then
+    echo "$MODEL_OVERRIDE"
+    return
+  fi
+  if [[ -n "${FLIGHTDECK_LAUNCH_MODEL:-}" ]]; then
+    echo "$FLIGHTDECK_LAUNCH_MODEL"
+    return
+  fi
+  case "$harness" in
+    # Preserve historical Claude behavior: spawned implementation panes
+    # default to the strongest Claude model unless the caller overrides it.
+    claude) echo "opus[1m]" ;;
+    *) echo "" ;;
+  esac
+}
+
+launch_effort_for_harness() {
+  local harness="$1"
+  if [[ -n "$EFFORT_OVERRIDE" ]]; then
+    echo "$EFFORT_OVERRIDE"
+    return
+  fi
+  if [[ -n "${FLIGHTDECK_LAUNCH_EFFORT:-}" ]]; then
+    echo "$FLIGHTDECK_LAUNCH_EFFORT"
+    return
+  fi
+  case "$harness" in
+    # Preserve historical Claude behavior.
+    claude) echo "max" ;;
+    *) echo "" ;;
+  esac
+}
+
+normalize_openai_effort() {
+  case "$1" in
+    max) echo "xhigh" ;;
+    *) echo "$1" ;;
+  esac
+}
+
+add_launch_args() {
+  local harness="$1"
+  local -n out_args="$2"
+  local model effort
+  model="$(launch_model_for_harness "$harness")"
+  effort="$(launch_effort_for_harness "$harness")"
+
+  case "$harness" in
+    claude)
+      [[ -n "$model" ]] && out_args+=(--model "$model")
+      [[ -n "$effort" ]] && out_args+=(--effort "$effort")
+      ;;
+    codex)
+      [[ -n "$model" ]] && out_args+=(-m "$model")
+      if [[ -n "$effort" && "$effort" != "off" ]]; then
+        out_args+=(-c "model_reasoning_effort=$(normalize_openai_effort "$effort")")
+      fi
+      ;;
+    pi)
+      [[ -n "$model" ]] && out_args+=(--model "$model")
+      if [[ -n "$effort" ]]; then
+        out_args+=(--thinking "$(normalize_openai_effort "$effort")")
+      fi
+      ;;
+    opencode)
+      [[ -n "$model" ]] && out_args+=(--model "$model")
+      if [[ -n "$effort" ]]; then
+        echo "  warning: opencode effort override '$effort' is not supported by open-terminal; using opencode defaults" >&2
+      fi
+      ;;
+    omp)
+      # No standardized model/effort flags for omp in this launcher.
+      if [[ -n "$model" || -n "$effort" ]]; then
+        echo "  warning: omp model/effort overrides are not supported by open-terminal; using omp defaults" >&2
+      fi
+      ;;
+  esac
+}
+
+launch_metadata_json_args() {
+  local harness="$1"
+  local model effort
+  model="$(launch_model_for_harness "$harness")"
+  effort="$(launch_effort_for_harness "$harness")"
+  jq -nc --arg model "$model" --arg effort "$effort" '{model:$model, effort:$effort}'
+}
+
 detect_start_cmd() {
   local issue="$1"
   if [[ -n "$CMD_TEMPLATE" ]]; then
     echo "${CMD_TEMPLATE//\{issue\}/$issue}"
     return
   fi
-  local bypass
+  local cmd=() launch_args=() bypass
+  add_launch_args "$HARNESS" launch_args
   bypass="$(bypass_flag_for_harness "$HARNESS")"
   case "$HARNESS" in
-    claude)   echo "claude -n \"$issue\" ${bypass} --model 'opus[1m]' --effort max '/orchestration start $issue'" ;;
-    codex)    echo "codex '\$orchestration start $issue'" ;;
-    opencode) echo "opencode --prompt '/orchestration start $issue'" ;;
-    omp)      echo "omp '/skill:orchestration start $issue'" ;;
-    pi)       echo "pi '/skill:orchestration start $issue'" ;;
+    claude)
+      cmd=(claude -n "$issue")
+      [[ -n "$bypass" ]] && cmd+=("$bypass")
+      cmd+=("${launch_args[@]}" "/orchestration start $issue")
+      shell_join "${cmd[@]}"
+      ;;
+    codex)
+      cmd=(codex "${launch_args[@]}" "\$orchestration start $issue")
+      shell_join "${cmd[@]}"
+      ;;
+    opencode)
+      cmd=(opencode "${launch_args[@]}" --prompt "/orchestration start $issue")
+      shell_join "${cmd[@]}"
+      ;;
+    omp)
+      cmd=(omp "/skill:orchestration start $issue")
+      shell_join "${cmd[@]}"
+      ;;
+    pi)
+      cmd=(pi "${launch_args[@]}" "/skill:orchestration start $issue")
+      shell_join "${cmd[@]}"
+      ;;
     *)        echo "" ;;
   esac
 }
@@ -272,9 +415,11 @@ start_oc_server() {
 create_oc_session() {
   local bin="$1" url="$2" wt_path="$3"
   local bootstrap="reply with READY and nothing else"
+  local launch_args=()
+  add_launch_args opencode launch_args
   local out
   if ! out=$( cd "$wt_path" && timeout --kill-after=10 60 "$bin" run --attach "$url" \
-               --agent build --format json "$bootstrap" 2>&1); then
+               "${launch_args[@]}" --agent build --format json "$bootstrap" 2>&1); then
     echo "  oc-attach-unavailable: opencode run --attach (session create) exit non-zero" >&2
     [[ -n "$out" ]] && printf '%s\n' "$out" | head -n 20 >&2
     return 1
@@ -316,10 +461,12 @@ fire_orchestration_async() {
   else
     prompt="/orchestration start $issue"
   fi
+  local launch_args=()
+  add_launch_args opencode launch_args
   # Outer redirect detaches the subshell's FDs from anything the caller
   # might be capturing — same hazard as start_oc_server.
   ( cd "$wt_path" && setsid nohup "$bin" run --attach "$url" \
-      --session "$sid" --format json "$prompt" \
+      "${launch_args[@]}" --session "$sid" --format json "$prompt" \
       </dev/null >>"$log".orch 2>&1 ) </dev/null >/dev/null 2>&1 &
   disown 2>/dev/null || true
 }
@@ -397,17 +544,19 @@ spawn_oc_attach_tmux() {
   tmux send-keys -t "$pane_id" Enter
   echo "  Opened tmux window '$issue' in $wt_path (pane $pane_id)"
 
-  local spawn_file abs_wt
+  local spawn_file abs_wt launch_meta
   spawn_file=$(oc_spawn_file "$issue")
   abs_wt=$(cd "$wt_path" && pwd)
+  launch_meta=$(launch_metadata_json_args opencode)
   jq -nc \
     --arg url "http://127.0.0.1:$port" \
     --arg sid "$sid" \
     --arg dir "$abs_wt" \
+    --argjson launch "$launch_meta" \
     --argjson port "$port" \
     --argjson server_pid "$server_pid" \
     --arg ts "$(date -Iseconds)" \
-    '{url:$url, session_id:$sid, directory:$dir, port:$port, server_pid:$server_pid, allocated_at:$ts}' \
+    '{url:$url, session_id:$sid, directory:$dir, port:$port, server_pid:$server_pid, launch:$launch, allocated_at:$ts}' \
     > "$spawn_file"
 
   # Fire the actual orchestration workflow as a backgrounded follow-up.
@@ -512,8 +661,13 @@ cc_write_mcp_config() {
 # dismissed via a delayed tmux send-keys after the pane opens.
 build_claude_channel_cmd() {
   local bin="$1" mcp_path="$2" uuid="$3" issue="$4" bypass="$5"
-  printf "%s -n %q %s --model 'opus[1m]' --effort max --session-id %s --mcp-config %q --dangerously-load-development-channels server:webhook -- '/orchestration start %s'" \
-    "$bin" "$issue" "$bypass" "$uuid" "$mcp_path" "$issue"
+  local cmd=("$bin" -n "$issue")
+  local launch_args=()
+  [[ -n "$bypass" ]] && cmd+=("$bypass")
+  add_launch_args claude launch_args
+  cmd+=("${launch_args[@]}" --session-id "$uuid" --mcp-config "$mcp_path" \
+    --dangerously-load-development-channels server:webhook -- "/orchestration start $issue")
+  shell_join "${cmd[@]}"
 }
 
 # Tmux-mode claude channels spawn. Returns 0 on success with bridge
@@ -575,19 +729,21 @@ spawn_cc_channel_tmux() {
   ) &
   disown 2>/dev/null || true
 
-  local spawn_file abs_wt transcript
+  local spawn_file abs_wt transcript launch_meta
   spawn_file=$(cc_spawn_file "$issue")
   abs_wt=$(cd "$wt_path" && pwd)
   transcript=$(cc_transcript_path "$wt_path" "$uuid")
+  launch_meta=$(launch_metadata_json_args claude)
   jq -nc \
     --arg url "http://127.0.0.1:$port" \
     --arg uuid "$uuid" \
     --arg dir "$abs_wt" \
     --arg transcript "$transcript" \
     --arg mcp "$mcp_path" \
+    --argjson launch "$launch_meta" \
     --argjson port "$port" \
     --arg ts "$(date -Iseconds)" \
-    '{url:$url, session_uuid:$uuid, directory:$dir, transcript:$transcript, mcp_config:$mcp, port:$port, allocated_at:$ts}' \
+    '{url:$url, session_uuid:$uuid, directory:$dir, transcript:$transcript, mcp_config:$mcp, port:$port, launch:$launch, allocated_at:$ts}' \
     > "$spawn_file"
 
   echo "  cc-channel: port=$port uuid=$uuid transcript=$transcript"
@@ -629,7 +785,9 @@ spawn_pi_bridge_tmux() {
   # Pi's slash grammar requires the `/skill:` prefix for native skill
   # expansion (`_expandSkillCommand` only matches `/skill:`). Bare
   # `/orchestration` would fall through to the LLM as raw text.
-  local cmd; cmd="$pi_bin -e $ext_path '/skill:orchestration start $issue'"
+  local cmd launch_args=()
+  add_launch_args pi launch_args
+  cmd=$(shell_join "$pi_bin" "${launch_args[@]}" -e "$ext_path" "/skill:orchestration start $issue")
   if ! open_tmux "$wt_path" "$issue" "$cmd"; then
     return 1
   fi
@@ -653,16 +811,18 @@ spawn_pi_bridge_tmux() {
   socket_path=$(jq -r '.data.socketPath // ""' <<< "$state" 2>/dev/null)
   session_id=$(jq -r '.data.sessionId // ""' <<< "$state" 2>/dev/null)
 
-  local spawn_file abs_wt
+  local spawn_file abs_wt launch_meta
   spawn_file=$(pi_spawn_file "$issue")
   abs_wt=$(cd "$wt_path" && pwd)
+  launch_meta=$(launch_metadata_json_args pi)
   jq -nc \
     --argjson pid "$pid" \
     --arg socket "$socket_path" \
     --arg session_id "$session_id" \
     --arg dir "$abs_wt" \
+    --argjson launch "$launch_meta" \
     --arg ts "$(date -Iseconds)" \
-    '{pid:$pid, socket:$socket, session_id:$session_id, directory:$dir, allocated_at:$ts}' \
+    '{pid:$pid, socket:$socket, session_id:$session_id, directory:$dir, launch:$launch, allocated_at:$ts}' \
     > "$spawn_file"
 
   echo "  pi-bridge: pid=$pid socket=$socket_path session=$session_id"
@@ -709,7 +869,9 @@ spawn_cx_remote_tmux() {
   : "${pre_threads_json:=[]}"
 
   # Spawn the per-pane TUI bound to the shared server.
-  local cmd; cmd="$cx_bin --remote $ws_url"
+  local cmd launch_args=()
+  add_launch_args codex launch_args
+  cmd=$(shell_join "$cx_bin" "${launch_args[@]}" --remote "$ws_url")
   if ! open_tmux "$wt_path" "$issue" "$cmd"; then
     return 1
   fi
@@ -737,15 +899,17 @@ spawn_cx_remote_tmux() {
     return 1
   fi
 
-  local spawn_file abs_wt
+  local spawn_file abs_wt launch_meta
   spawn_file=$(cx_spawn_file "$issue")
   abs_wt=$(cd "$wt_path" && pwd)
+  launch_meta=$(launch_metadata_json_args codex)
   jq -nc \
     --arg url "$ws_url" \
     --arg thread_id "$thread_id" \
     --arg dir "$abs_wt" \
+    --argjson launch "$launch_meta" \
     --arg ts "$(date -Iseconds)" \
-    '{url:$url, thread_id:$thread_id, directory:$dir, allocated_at:$ts}' \
+    '{url:$url, thread_id:$thread_id, directory:$dir, launch:$launch, allocated_at:$ts}' \
     > "$spawn_file"
 
   echo "  cx-bridge: url=$ws_url thread=$thread_id"

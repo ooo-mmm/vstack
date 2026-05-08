@@ -115,7 +115,7 @@ Lessons distilled from real multi-issue session experience are grouped by domain
 
 | Script | Purpose |
 |--------|---------|
-| `open-terminal` | Launch worktree(s) for one or more issues with auto-detected harness — **never hand-roll tmux/terminal commands; use this for every session spawn** |
+| `open-terminal` | Launch worktree(s) for one or more issues with selected harness plus optional model/effort overrides — **never hand-roll tmux/terminal commands; use this for every session spawn** |
 | `parallel-groups` | Read/manage parallel issue groups |
 | `flightdeck-state` | Master-state CRUD wrapper — atomic init/get/set/append/increment/archive for `tmp/flightdeck-state-<TMUX_SESSION>.json`. `init` sweeps stale `.tmp.<PID>` orphans from prior crashed writes; `archive` rotates a terminated state file to `<file>-<terminated_at>.json.archive` so the next session in the same tmux name starts clean. `master-busy lock\|unlock\|check` writes/clears the daemon's master-busy lockfile atomically (temp+mv) |
 | `flightdeck-daemon` | External bash wake driver. Per-pane subscribers — opencode HTTP-attach (Phase 1), claude JSONL tail (Phase 2), pi-bridge stream (Phase 3), codex-bridge stream (Phase 4) — emit normalized turn-end events into a wake-events log; daemon main loop drains and routes canonical-tag events through wake_master. Panes without adapter metadata fall through to the legacy capture-pane / bell / hash-stable loop. Coalesces multiple ready panes into one wake. Writes events JSONL master can drain. Actions: `start \| stop \| status \| events \| ack` |
@@ -175,6 +175,8 @@ State enum: `state ∈ {waiting, prompting, submitting, merge-ready, merged, abo
 | `FLIGHTDECK_DEBOUNCE_CYCLES` | `2` | Consecutive poll cycles required for "all-done" termination check |
 | `FLIGHTDECK_AUTO_MERGE` | `1` | When `0`, the `merge-now` handler escalates instead of auto-answering. For sessions where the human gate is desired (compliance, big-blast-radius PRs) |
 | `FLIGHTDECK_HIJACK_GRACE_SECS` | `90` | Seconds after spawn that master tolerates no orchestration `workflow-state-<ISSUE>.json` before escalating "orchestration-never-started". Catches hijacked panes / failed launches. |
+| `FLIGHTDECK_LAUNCH_MODEL` | unset | Default `open-terminal --model` override when the workflow/user does not pass `--model`. |
+| `FLIGHTDECK_LAUNCH_EFFORT` | unset | Default `open-terminal --effort` / thinking override when the workflow/user does not pass `--effort`. |
 
 ## Workflows
 

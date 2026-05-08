@@ -127,8 +127,16 @@ Always create as a parent + sub-issue pair. Parent coordinates, child implements
 
 4. **Create worktree**: `WT_PATH=$(.agents/skills/worktree/scripts/worktree create [ISSUE_ID])`
 
-5. **Launch**: Ask user which harness to launch: `claude` | `codex` | `opencode` | `I'll launch it myself`
-   - **Harness selected**: `.agents/skills/flightdeck/scripts/open-terminal [ISSUE_ID] --harness [HARNESS]`
-   - **Manual**: Show the command and worktree path so the user can run it themselves.
+5. **Launch**: Ask user for harness/model/effort profile. Recommend one of:
+   - Claude max: `--harness claude --model 'opus[1m]' --effort max`
+   - Codex xhigh: `--harness codex --model gpt-5.5 --effort xhigh`
+   - Pi xhigh: `--harness pi --model openai/gpt-5.5 --effort xhigh`
+   - OpenCode model only: `--harness opencode --model openai/gpt-5.5` (no effort flag wired)
+   - Harness defaults: `--harness [HARNESS]`
+   - `I'll launch it myself`
+
+   If the user chooses custom values, pass exactly those flags. If the user chooses harness defaults, omit `--model` and `--effort`.
+   - **Profile selected**: `.agents/skills/flightdeck/scripts/open-terminal [ISSUE_ID] [LAUNCH_FLAGS]`
+   - **Manual**: Show the recommended command and worktree path so the user can run it themselves.
 
 → end

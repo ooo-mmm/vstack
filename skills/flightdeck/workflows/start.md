@@ -256,6 +256,36 @@ Terminate the consultation agent if it's still running.
 
 ## 4. Delegate to Specialist Agent(s)
 
+### 4.0 Select Launch Profile
+
+Use this whenever § 4.3 or § 4.4 launches a pane through `open-terminal`.
+
+1. **Recommend a default profile** by issue complexity:
+
+   | Work type | Recommended profile | Command flags |
+   |-----------|---------------------|---------------|
+   | Normal/complex implementation | Claude Code, strongest reasoning | `--harness claude --model 'opus[1m]' --effort max` |
+   | OpenAI/Codex-preferred implementation | Codex, strongest reasoning | `--harness codex --model gpt-5.5 --effort xhigh` |
+   | Pi-native orchestration / Pi extension work | Pi, strongest OpenAI reasoning | `--harness pi --model openai/gpt-5.5 --effort xhigh` |
+   | OpenCode-preferred implementation | OpenCode, strong model | `--harness opencode --model openai/gpt-5.5` |
+   | User wants their configured defaults | Harness default | `--harness [HARNESS]` only |
+
+   Notes:
+   - `open-terminal` maps effort per harness: Claude → `--effort`, Codex → `-c model_reasoning_effort=...`, Pi → `--thinking`. `max` maps to `xhigh` for Codex/Pi. OpenCode effort is not wired by this launcher; do not invent a flag.
+   - If the user chooses a model/effort different from the recommendation, pass exactly their values.
+   - If the user chooses harness defaults, omit `--model` and `--effort`.
+
+2. **Ask user** for launch profile. Include the recommendation first, then: `Claude max` | `Codex xhigh` | `Pi xhigh` | `OpenCode model only` | `Harness defaults` | `I'll launch it myself` | custom model/effort.
+
+3. **Capture** `[HARNESS]`, optional `[MODEL]`, optional `[EFFORT]`. Build `[LAUNCH_FLAGS]` as:
+   ```bash
+   --harness [HARNESS] [--model MODEL] [--effort EFFORT]
+   ```
+
+4. **For parallel launches**, ask whether to use one profile for all selected issues or choose per issue.
+   - **One profile** → one `open-terminal [ISSUES...] [LAUNCH_FLAGS]` command.
+   - **Per issue** → run one `open-terminal [ISSUE] [LAUNCH_FLAGS_FOR_ISSUE]` command per issue. This is intentional: each pane/session can use a different harness/model/effort.
+
 ### 4.1 Check Issue Type
 
 **Route**:
@@ -298,9 +328,9 @@ Worktree creation is idempotent: existing worktrees are reused (rebased onto lat
 
 5. **Create worktree**: `WT_PATH=$(.agents/skills/worktree/scripts/worktree create [ISSUE_ID])`
 
-6. **Launch**: Ask user which harness to launch: `claude` | `codex` | `opencode` | `pi` | `I'll launch it myself`
-   - **Harness selected**: `.agents/skills/flightdeck/scripts/open-terminal [ISSUE_ID] --harness [HARNESS]`, then `⤵ workflows/watch.md [ISSUE_ID] § 1-9 → § 1` — `watch.md § 1` spawns `flightdeck-daemon` (idempotent, flock-protected) which drives wake delivery for the rest of the session. Enter master oversight loop until the spawned pane reaches a terminal state, then return to dashboard.
-   - **Manual**: Show the command and worktree path so the user can run it themselves. → § 1.
+6. **Launch**: Run § 4.0 to select `[LAUNCH_FLAGS]`.
+   - **Profile selected**: `.agents/skills/flightdeck/scripts/open-terminal [ISSUE_ID] [LAUNCH_FLAGS]`, then `⤵ workflows/watch.md [ISSUE_ID] § 1-9 → § 1` — `watch.md § 1` spawns `flightdeck-daemon` (idempotent, flock-protected) which drives wake delivery for the rest of the session. Enter master oversight loop until the spawned pane reaches a terminal state, then return to dashboard.
+   - **Manual**: Show the recommended command and worktree path so the user can run it themselves. → § 1.
    - **I'll launch it myself** → § 1.
 
 ### 4.4 Launch Issue(s)
@@ -315,10 +345,10 @@ Worktree creation is idempotent: existing worktrees are reused (rebased onto lat
    If you are using a desktop app (no terminal), switch to the worktree(s) yourself and run `/orchestration start [ISSUE_ID]` (or `$orchestration start [ISSUE_ID]` on Codex, `/skill:orchestration start [ISSUE_ID]` on Pi).
    </output_format>
 
-3. **Ask user** which harness and: `Launch [N] issues` | `Select subset` | `I'll launch them myself` | `Cancel`
-   - **Launch**: `.agents/skills/flightdeck/scripts/open-terminal [ISSUE_IDS] --harness [HARNESS]`, then `⤵ workflows/watch.md [ISSUE_IDS] § 1-9 → § 1` — `watch.md § 1` spawns the daemon for the session and drives wake delivery for the spawned set.
-   - **Select subset**: Ask user with individual issues as options (multiSelect) → `.agents/skills/flightdeck/scripts/open-terminal [SELECTED_ISSUES] --harness [HARNESS]`, then `⤵ workflows/watch.md [SELECTED_ISSUES] § 1-9 → § 1`.
-   - **Manual**: Show the command so the user can run it themselves. → § 1.
+3. **Ask user**: `Launch [N] issues` | `Select subset` | `I'll launch them myself` | `Cancel`
+   - **Launch**: Run § 4.0 for all `[ISSUE_IDS]`. If one profile: `.agents/skills/flightdeck/scripts/open-terminal [ISSUE_IDS] [LAUNCH_FLAGS]`. If per issue: run one `open-terminal [ISSUE] [LAUNCH_FLAGS_FOR_ISSUE]` per issue. Then `⤵ workflows/watch.md [ISSUE_IDS] § 1-9 → § 1` — `watch.md § 1` spawns the daemon for the session and drives wake delivery for the spawned set.
+   - **Select subset**: Ask user with individual issues as options (multiSelect), then run § 4.0 for `[SELECTED_ISSUES]`. If one profile: `.agents/skills/flightdeck/scripts/open-terminal [SELECTED_ISSUES] [LAUNCH_FLAGS]`. If per issue: run one `open-terminal [ISSUE] [LAUNCH_FLAGS_FOR_ISSUE]` per issue. Then `⤵ workflows/watch.md [SELECTED_ISSUES] § 1-9 → § 1`.
+   - **Manual**: Show the recommended command(s) so the user can run them themselves. → § 1.
    - **Cancel** → § 1
 
 4. **→ § 1** (restart dashboard in current session, only reached on Manual / Cancel paths).
