@@ -14,925 +14,71 @@ import {
 	type ExtensionContext,
 	type Theme,
 } from "@earendil-works/pi-coding-agent";
-import { type Component, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { spawn } from "node:child_process";
-import type { ChildProcess } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
-import { delimiter, dirname, join, resolve } from "node:path";
-
-const BG_COMMAND = "bg";
-const DEFAULT_BACKGROUND_BASH_SHORTCUT = "alt+.";
-const DEFAULT_BG_SHORTCUT = "alt+shift+h";
-const CONFIG_ID = "@vanillagreen/pi-background-tasks";
-const DEFAULT_WIDGET_TOGGLE_SHORTCUT = "alt+h";
-const BG_MESSAGE_TYPE = "vstack-background-tasks:event";
-const BG_WIDGET_KEY = "vstack-background-tasks";
-const BG_INSTALL_SYMBOL = Symbol.for("vstack.background-tasks.installed");
-const VSTACK_MODAL_LOCK_SYMBOL = Symbol.for("vstack.pi.modal-lock");
-
-// Nerd Font glyphs (Font Awesome subset). Status icons use these instead of
-// unicode dingbats so chat output renders consistently regardless of any
-// emoji-presentation fallback in the user's font stack.
-const ICONS = {
-	check: "\uf00c", // nf-fa-check
-	times: "\uf00d", // nf-fa-times
-} as const;
-
-const DEFAULT_TIMEOUT_MS = 0;
-const DEFAULT_OUTPUT_SETTLE_MS = 1_500;
-const DEFAULT_FORCE_KILL_GRACE_MS = 5_000;
-const DEFAULT_OUTPUT_BUFFER_MAX_CHARS = 1_000_000;
-const DEFAULT_OUTPUT_ALERT_MAX_CHARS = 10_000;
-const DEFAULT_LOG_TAIL_MAX_CHARS = 50_000;
-const DEFAULT_FORCED_BACKGROUND_WINDOW_MS = 5 * 60 * 1_000;
-const DASHBOARD_WIDTH = 96;
-const DASHBOARD_MAX_HEIGHT = "75%";
-const DASHBOARD_PADDING_X = 2;
-const ANSI_GREEN_FG = "\x1b[32m";
-const ANSI_YELLOW_FG = "\x1b[33m";
-const ANSI_FG_RESET = "\x1b[39m";
-
-function ansiGreen(text: string): string { return `${ANSI_GREEN_FG}${text}${ANSI_FG_RESET}`; }
-function ansiYellow(text: string): string { return `${ANSI_YELLOW_FG}${text}${ANSI_FG_RESET}`; }
-const DASHBOARD_PADDING_Y = 1;
-const DASHBOARD_MIN_FRAME_ROWS = 14;
-const DASHBOARD_FRAME_VERTICAL_OVERHEAD = 2 + DASHBOARD_PADDING_Y * 2;
-const TASK_PANE_MIN_WIDTH = 30;
-const TASK_PANE_MAX_WIDTH = 42;
-const WIDGET_PADDING_X = 1;
-const TOOL_PREVIEW_TASKS = 3;
-const TOOL_PREVIEW_LINES = 12;
-const WIDGET_COMPACT_TASKS = 3;
-const DEFAULT_WIDGET_FINISHED_RETENTION_MS = 15_000;
-
-const liveSnapshots = new Map<string, BackgroundTaskSnapshot>();
-
-type BackgroundTaskStatus = "running" | "completed" | "failed" | "stopped" | "timed_out";
-type TaskEventType = "output" | "exit";
-
-interface VstackModalLock {
-	depth: number;
-}
-
-type ManagedTask = BackgroundTaskSnapshot & {
-	child: ChildProcess;
-	closed: boolean;
-	forceKillTimer: ReturnType<typeof setTimeout> | null;
-	lastAnnouncedLength: number;
-	matcher: ((text: string) => boolean) | null;
-	notifyOnExit: boolean;
-	notifyOnOutput: boolean;
-	output: string;
-	outputTimer: ReturnType<typeof setTimeout> | null;
-	stopReason: "user" | "timeout" | "shutdown" | null;
-	timeoutTimer: ReturnType<typeof setTimeout> | null;
-};
-
-interface BackgroundTaskSnapshot {
-	id: string;
-	title: string;
-	command: string;
-	cwd: string;
-	pid: number;
-	logFile: string;
-	startedAt: number;
-	updatedAt: number;
-	lastOutputAt: number | null;
-	expiresAt: number | null;
-	status: BackgroundTaskStatus;
-	exitCode: number | null;
-	notifyOnExit: boolean;
-	notifyOnOutput: boolean;
-	notifyPattern?: string;
-	outputBytes: number;
-}
-
-interface BackgroundTaskEventDetails {
-	eventAt: number;
-	eventType: TaskEventType;
-	matchedPattern?: string;
-	newOutputTail?: string;
-	outputTail: string;
-	task: BackgroundTaskSnapshot;
-}
-
-interface BackgroundLogTruncation {
-	direction: "tail";
-	fullOutputPath: string;
-	shownChars: number;
-	totalChars: number;
-	truncated: true;
-}
-
-interface SpawnTaskOptions {
-	command: string;
-	cwd?: string;
-	notifyOnExit?: boolean;
-	notifyOnOutput?: boolean;
-	notifyPattern?: string;
-	timeoutSeconds?: number;
-	title?: string;
-}
-
-function clamp(value: number, min: number, max: number): number {
-	return Math.max(min, Math.min(max, value));
-}
-
-type VstackConfig = Record<string, unknown>;
-
-function expandHome(input: string): string {
-	if (input === "~") return homedir();
-	if (input.startsWith("~/")) return join(homedir(), input.slice(2));
-	return input;
-}
-
-function projectSettingsPath(cwd: string): string {
-	let current = resolve(cwd);
-	while (true) {
-		const candidate = join(current, ".pi", "settings.json");
-		if (existsSync(candidate)) return candidate;
-		if (existsSync(join(current, ".pi")) || existsSync(join(current, ".git")) || existsSync(join(current, ".vstack-lock.json"))) return candidate;
-		const parent = dirname(current);
-		if (parent === current) return join(resolve(cwd), ".pi", "settings.json");
-		current = parent;
-	}
-}
-
-function piSettingsPaths(cwd = process.cwd()): string[] {
-	const userDir = resolve(expandHome(process.env.PI_CODING_AGENT_DIR?.trim() || "~/.pi/agent"));
-	return [join(userDir, "settings.json"), projectSettingsPath(cwd)];
-}
-
-function readVstackConfig(cwd?: string): VstackConfig {
-	const merged: VstackConfig = {};
-	for (const path of piSettingsPaths(cwd)) {
-		if (!existsSync(path)) continue;
-		try {
-			const parsed = JSON.parse(readFileSync(path, "utf8"));
-			const config = parsed?.vstack?.extensionManager?.config?.[CONFIG_ID];
-			if (config && typeof config === "object" && !Array.isArray(config)) Object.assign(merged, config);
-		} catch {
-			// Ignore malformed optional manager config; keep safe defaults.
-		}
-	}
-	return merged;
-}
-
-function settingNumber(key: string, fallback: number, cwd?: string): number {
-	const value = readVstackConfig(cwd)[key];
-	const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : Number.NaN;
-	return Number.isFinite(parsed) ? parsed : fallback;
-}
-
-function settingBoolean(key: string, fallback: boolean, cwd?: string): boolean {
-	const value = readVstackConfig(cwd)[key];
-	return typeof value === "boolean" ? value : fallback;
-}
-
-function settingString(key: string, fallback: string, cwd?: string): string {
-	const value = readVstackConfig(cwd)[key];
-	return typeof value === "string" && value.trim().length > 0 ? value.trim() : fallback;
-}
-
-function settingEnum<T extends string>(key: string, allowed: readonly T[], fallback: T, cwd?: string): T {
-	const value = readVstackConfig(cwd)[key];
-	return typeof value === "string" && (allowed as readonly string[]).includes(value) ? (value as T) : fallback;
-}
-
-function taskDir(): string {
-	const configured = settingString("taskDir", "");
-	return process.env.PI_BG_TASK_DIR?.trim() || (configured ? resolve(expandHome(configured)) : join(tmpdir(), "vstack-pi-bg"));
-}
-
-function safeLabel(input: string): string {
-	return input.replaceAll(/[^a-z0-9-]+/gi, "-").replaceAll(/^-+|-+$/g, "").slice(0, 48) || "task";
-}
-
-function logFilePath(id: string, now: number = Date.now()): string {
-	const dir = taskDir();
-	mkdirSync(dir, { recursive: true, mode: 0o700 });
-	return join(dir, `${safeLabel(id)}-${now}.log`);
-}
-
-function tailText(text: string, maxChars: number = settingNumber("outputAlertMaxChars", DEFAULT_OUTPUT_ALERT_MAX_CHARS)): string {
-	if (text.length <= maxChars) return text;
-	return `[...truncated]\n${text.slice(-maxChars)}`;
-}
-
-function taskLogTruncation(output: string, logFile: string, cwd?: string): BackgroundLogTruncation | undefined {
-	const maxChars = Math.max(1, Math.floor(settingNumber("logTailMaxChars", DEFAULT_LOG_TAIL_MAX_CHARS, cwd)));
-	if (output.length <= maxChars) return undefined;
-	return { direction: "tail", fullOutputPath: logFile, shownChars: maxChars, totalChars: output.length, truncated: true };
-}
-
-function formatTaskLog(output: string, logFile: string, cwd?: string): string {
-	if (!output) return "(empty)";
-	const truncation = taskLogTruncation(output, logFile, cwd);
-	if (!truncation) return output;
-	return `[...truncated]\n${output.slice(-truncation.shownChars)}\n\n[Background log truncated. Showing last ${truncation.shownChars} of ${truncation.totalChars} character(s). Full log: ${logFile}]`;
-}
-
-function trimOutputBuffer(output: string, lastAnnouncedLength: number): { output: string; lastAnnouncedLength: number } {
-	const maxChars = settingNumber("outputBufferMaxChars", DEFAULT_OUTPUT_BUFFER_MAX_CHARS);
-	if (output.length <= maxChars) return { output, lastAnnouncedLength };
-	const overflow = output.length - maxChars;
-	return {
-		lastAnnouncedLength: Math.max(0, lastAnnouncedLength - overflow),
-		output: output.slice(-maxChars),
-	};
-}
-
-function formatDuration(ms: number): string {
-	const safe = Math.max(0, ms);
-	if (safe < 1_000) return `${safe}ms`;
-	const seconds = safe / 1_000;
-	if (seconds < 60) return `${seconds.toFixed(seconds >= 10 ? 0 : 1)}s`;
-	const minutes = Math.floor(seconds / 60);
-	const remSeconds = Math.floor(seconds % 60);
-	if (minutes < 60) return remSeconds > 0 ? `${minutes}m ${remSeconds}s` : `${minutes}m`;
-	const hours = Math.floor(minutes / 60);
-	const remMinutes = minutes % 60;
-	return remMinutes > 0 ? `${hours}h ${remMinutes}m` : `${hours}h`;
-}
-
-function formatRelativeTime(timestamp: number, now: number = Date.now()): string {
-	const diff = timestamp - now;
-	const abs = Math.abs(diff);
-	const suffix = diff >= 0 ? "from now" : "ago";
-	if (abs < 1_000) return diff >= 0 ? "now" : "just now";
-	if (abs < 60_000) return `${Math.floor(abs / 1_000)}s ${suffix}`;
-	if (abs < 3_600_000) return `${Math.floor(abs / 60_000)}m ${suffix}`;
-	if (abs < 86_400_000) return `${Math.floor(abs / 3_600_000)}h ${suffix}`;
-	return `${Math.floor(abs / 86_400_000)}d ${suffix}`;
-}
-
-function parseOutputMatcher(pattern: string | undefined): ((text: string) => boolean) | null {
-	const needle = pattern?.trim();
-	if (!needle) return null;
-
-	const regexMatch = needle.match(/^\/(.*)\/([gimsuy]*)$/);
-	if (regexMatch) {
-		try {
-			const regex = new RegExp(regexMatch[1], regexMatch[2]);
-			return (text: string) => {
-				regex.lastIndex = 0;
-				return regex.test(text);
-			};
-		} catch {
-			// Invalid regex falls through to substring matching.
-		}
-	}
-
-	const lower = needle.toLowerCase();
-	return (text: string) => text.toLowerCase().includes(lower);
-}
-
-function summarizeTaskStatus(status: BackgroundTaskStatus, exitCode: number | null): string {
-	switch (status) {
-		case "running":
-			return "running";
-		case "completed":
-			return `completed (exit ${exitCode ?? 0})`;
-		case "failed":
-			return `failed (exit ${exitCode ?? "?"})`;
-		case "timed_out":
-			return exitCode === null ? "timed out" : `timed out (exit ${exitCode})`;
-		case "stopped":
-			return exitCode === null ? "stopped" : `stopped (exit ${exitCode})`;
-	}
-}
-
-function taskDisplayName(task: Pick<BackgroundTaskSnapshot, "title" | "command">): string {
-	return task.title.trim() || task.command.trim();
-}
-
-function buildTaskSummaryLine(task: BackgroundTaskSnapshot, now: number = Date.now()): string {
-	const activityAt = task.lastOutputAt ?? task.updatedAt;
-	return `${task.id} · ${summarizeTaskStatus(task.status, task.exitCode)} · pid ${task.pid} · ${taskDisplayName(
-		task,
-	)} · ${formatRelativeTime(activityAt, now)}`;
-}
-
-function taskActivityAt(task: Pick<BackgroundTaskSnapshot, "lastOutputAt" | "updatedAt">): number {
-	return task.lastOutputAt ?? task.updatedAt;
-}
-
-function taskElapsedMs(task: Pick<BackgroundTaskSnapshot, "startedAt" | "status" | "updatedAt">, now: number = Date.now()): number {
-	return (task.status === "running" ? now : task.updatedAt) - task.startedAt;
-}
-
-function compactText(value: string, maxChars = 80): string {
-	const compact = value.replace(/\s+/g, " ").trim();
-	return compact.length > maxChars ? `${compact.slice(0, Math.max(0, maxChars - 1))}…` : compact;
-}
-
-function shellQuote(value: string): string {
-	return `'${value.replace(/'/g, `'\\''`)}'`;
-}
-
-function piAgentDir(): string {
-	const configured = process.env.PI_CODING_AGENT_DIR?.trim();
-	if (configured) return resolve(configured.startsWith("~/") ? join(homedir(), configured.slice(2)) : configured);
-	return join(homedir(), ".pi", "agent");
-}
-
-function taskEnv(): NodeJS.ProcessEnv {
-	const env = { ...process.env };
-	const binDir = join(piAgentDir(), "bin");
-	if (existsSync(binDir)) {
-		const current = env.PATH || "";
-		const parts = current.split(delimiter).filter(Boolean);
-		if (!parts.includes(binDir)) env.PATH = [binDir, ...parts].join(delimiter);
-	}
-	return env;
-}
-
-function normalizedCommand(command: string): string {
-	return command.replace(/\s+/g, " ").trim();
-}
-
-function parsePatternList(raw: string): RegExp[] {
-	const patterns: RegExp[] = [];
-	for (const line of raw.split(/\r?\n/)) {
-		const trimmed = line.trim();
-		if (!trimmed || trimmed.startsWith("#")) continue;
-		const match = trimmed.match(/^\/(.*)\/([gimsuy]*)$/);
-		try {
-			patterns.push(match ? new RegExp(match[1], match[2]) : new RegExp(trimmed, "i"));
-		} catch {
-			// Ignore malformed optional user patterns; built-in safe patterns still apply.
-		}
-	}
-	return patterns;
-}
-
-function matchesAnyRegex(command: string, patterns: RegExp[]): boolean {
-	for (const pattern of patterns) {
-		pattern.lastIndex = 0;
-		if (pattern.test(command)) return true;
-	}
-	return false;
-}
-
-function loopIterationCount(command: string): number | null {
-	const match = command.match(/\$\(\s*seq\s+(?:(\d+)\s+)?(\d+)\s*\)/i);
-	if (!match) return null;
-	const start = match[1] ? Number.parseInt(match[1], 10) : 1;
-	const end = Number.parseInt(match[2] ?? "", 10);
-	if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
-	return Math.abs(end - start) + 1;
-}
-
-function sleepSeconds(command: string): number | null {
-	const match = command.match(/\bsleep\s+((?:\d+(?:\.\d+)?)|(?:\.\d+))\s*([smhd])?\b/i);
-	if (!match) return null;
-	const value = Number.parseFloat(match[1] ?? "");
-	if (!Number.isFinite(value)) return null;
-	const unit = (match[2] ?? "s").toLowerCase();
-	if (unit === "d") return value * 86_400;
-	if (unit === "h") return value * 3_600;
-	if (unit === "m") return value * 60;
-	return value;
-}
-
-function looksLikeSessionMonitor(command: string): boolean {
-	return /\b(?:pi-bridge|tmux|capture-pane|list-panes|has-session|delegate-state|subagent|session)\b/i.test(command);
-}
-
-interface BashBackgroundDecision {
-	forced: boolean;
-	notifyOnExit: boolean;
-	notifyOnOutput: boolean;
-	notifyPattern?: string;
-	reason: string;
-	title: string;
-}
-
-function autoBackgroundDecision(command: string, cwd?: string): BashBackgroundDecision | null {
-	const normalized = normalizedCommand(command);
-	if (!normalized) return null;
-	if (matchesAnyRegex(normalized, parsePatternList(settingString("autoBackgroundPatterns", "", cwd)))) {
-		return {
-			forced: false,
-			notifyOnExit: true,
-			notifyOnOutput: false,
-			reason: "matched configured auto-background pattern",
-			title: `auto: ${compactText(normalized, 72)}`,
-		};
-	}
-
-	if (/(?:^|[;&|]\s*)watch(?:\s|$)/i.test(normalized)) {
-		return {
-			forced: false,
-			notifyOnExit: true,
-			notifyOnOutput: false,
-			reason: "watch-style command",
-			title: `watch: ${compactText(normalized, 72)}`,
-		};
-	}
-
-	if (/\b(?:tail|journalctl)\b[^\n;|&]*\s-[^\s;|&]*f\b/i.test(normalized)) {
-		return {
-			forced: false,
-			notifyOnExit: true,
-			notifyOnOutput: false,
-			reason: "follow-mode log command",
-			title: `follow: ${compactText(normalized, 72)}`,
-		};
-	}
-
-	const delaySeconds = sleepSeconds(normalized);
-	if (delaySeconds !== null && delaySeconds >= 5 && looksLikeSessionMonitor(normalized)) {
-		return {
-			forced: false,
-			notifyOnExit: true,
-			notifyOnOutput: false,
-			reason: "delayed session/tmux monitoring command",
-			title: `monitor: ${compactText(normalized, 72)}`,
-		};
-	}
-
-	const hasShellLoop = /\b(?:for|while|until)\b/i.test(normalized) && /\bdo\b/i.test(normalized) && /\bdone\b/i.test(normalized);
-	const hasSleep = /\bsleep\s+(?:\d+(?:\.\d+)?|\.\d+)/i.test(normalized);
-	if (hasShellLoop && hasSleep) {
-		const iterations = loopIterationCount(normalized);
-		const looksLikeMonitor = looksLikeSessionMonitor(normalized);
-		const longFiniteLoop = iterations !== null && iterations >= 30;
-		const openEndedLoop = /\bwhile\s+(?:true|:)\b/i.test(normalized) || /\buntil\b/i.test(normalized);
-		if (looksLikeMonitor || longFiniteLoop || openEndedLoop) {
-			return {
-				forced: false,
-				notifyOnExit: true,
-				notifyOnOutput: false,
-				reason: looksLikeMonitor ? "session/tmux monitoring loop" : "long-running polling loop",
-				title: `monitor: ${compactText(normalized, 72)}`,
-			};
-		}
-	}
-
-	return null;
-}
-
-function forcedBackgroundDecision(command: string, cwd?: string): BashBackgroundDecision {
-	return {
-		forced: true,
-		notifyOnExit: true,
-		notifyOnOutput: settingBoolean("forcedBackgroundNotifyOnOutput", false, cwd),
-		reason: "requested by background shortcut",
-		title: `shortcut: ${compactText(normalizedCommand(command), 72)}`,
-	};
-}
-
-function bashBackgroundAckText(task: BackgroundTaskSnapshot, decision: BashBackgroundDecision): string {
-	return [
-		`Started ${task.id} (pid ${task.pid}) in the background.`,
-		`Reason: ${decision.reason}.`,
-		`Command: ${task.command}`,
-		`Cwd: ${task.cwd}`,
-		`Log: ${task.logFile}`,
-		`Wakeups: exit=${task.notifyOnExit ? "yes" : "no"}, output=${task.notifyOnOutput ? (task.notifyPattern ?? "yes") : "no"}`,
-		"Continue the turn without waiting. Use bg_task list/log/stop to inspect or terminate this task.",
-	].join("\n");
-}
-
-function bashBackgroundAck(task: BackgroundTaskSnapshot, decision: BashBackgroundDecision): string {
-	const text = bashBackgroundAckText(task, decision);
-	return `printf '%s\\n' ${shellQuote(text)}`;
-}
-
-function formatShortcutHint(shortcut: string): string {
-	return shortcut
-		.split("+")
-		.map((part) => (part.length === 1 ? part.toUpperCase() : part.charAt(0).toUpperCase() + part.slice(1).toLowerCase()))
-		.join("+");
-}
-
-function lineCount(text: string): number {
-	if (!text) return 0;
-	return text.split(/\r?\n/).length;
-}
-
-function takeTailLines(text: string, maxLines: number): { hidden: number; lines: string[]; total: number } {
-	const lines = text.trimEnd().length > 0 ? text.trimEnd().split(/\r?\n/) : [];
-	const limit = Math.max(1, Math.floor(maxLines));
-	return { hidden: Math.max(0, lines.length - limit), lines: lines.slice(-limit), total: lines.length };
-}
-
-function outputLineLimit(cwd?: string): number {
-	return Math.max(1, Math.floor(settingNumber("toolExpandedLogLines", 80, cwd)));
-}
-
-function activePill(theme: Theme, label: string): string {
-	return theme.fg("accent", theme.inverse(theme.bold(label)));
-}
-
-function inactivePill(theme: Theme, label: string): string {
-	return theme.bg("selectedBg", theme.fg("accent", label));
-}
-
-function taskSnapshot(task: ManagedTask): BackgroundTaskSnapshot {
-	return {
-		command: task.command,
-		cwd: task.cwd,
-		exitCode: task.exitCode,
-		expiresAt: task.expiresAt,
-		id: task.id,
-		lastOutputAt: task.lastOutputAt,
-		logFile: task.logFile,
-		notifyOnExit: task.notifyOnExit,
-		notifyOnOutput: task.notifyOnOutput,
-		notifyPattern: task.notifyPattern,
-		outputBytes: task.outputBytes,
-		pid: task.pid,
-		startedAt: task.startedAt,
-		status: task.status,
-		title: task.title,
-		updatedAt: task.updatedAt,
-	};
-}
-
-function rememberSnapshot(task: ManagedTask): BackgroundTaskSnapshot {
-	const snapshot = taskSnapshot(task);
-	liveSnapshots.set(snapshot.id, snapshot);
-	return snapshot;
-}
-
-function latestSnapshot(snapshot: BackgroundTaskSnapshot | undefined): BackgroundTaskSnapshot | undefined {
-	if (!snapshot) return undefined;
-	return liveSnapshots.get(snapshot.id) ?? snapshot;
-}
-
-function latestSnapshots(snapshots: BackgroundTaskSnapshot[]): BackgroundTaskSnapshot[] {
-	return snapshots.map((snapshot) => latestSnapshot(snapshot) ?? snapshot);
-}
-
-function resolveTaskByToken<T extends Pick<BackgroundTaskSnapshot, "id" | "pid">>(
-	tasks: Iterable<T>,
-	token: string | number | undefined,
-): T | null {
-	if (token === undefined || token === null || token === "") return null;
-	const normalized = String(token).trim();
-	if (!normalized) return null;
-	for (const task of tasks) {
-		if (task.id === normalized || String(task.pid) === normalized) return task;
-	}
-	return null;
-}
-
-function padAnsi(text: string, width: number): string {
-	const truncated = truncateToWidth(text, width, "");
-	return `${truncated}${" ".repeat(Math.max(0, width - visibleWidth(truncated)))}`;
-}
-
-function splitOutputLines(output: string): string[] {
-	const text = tailText(output, settingNumber("logTailMaxChars", DEFAULT_LOG_TAIL_MAX_CHARS)).trimEnd();
-	if (text.length === 0) return ["(no output yet)"];
-	const lines = text.split(/\r?\n/);
-	const maxLines = Math.max(20, Math.floor(settingNumber("dashboardOutputMaxLines", 800)));
-	if (lines.length <= maxLines) return lines;
-	return [`… ${lines.length - maxLines} older line(s) omitted from dashboard; use bg_task log or the Log file for full output`, ...lines.slice(-maxLines)];
-}
-
-function acquireVstackModalLock(): () => void {
-	const host = globalThis as unknown as Record<PropertyKey, unknown>;
-	const existing = host[VSTACK_MODAL_LOCK_SYMBOL] as VstackModalLock | undefined;
-	const lock = existing && typeof existing.depth === "number" ? existing : { depth: 0 };
-	host[VSTACK_MODAL_LOCK_SYMBOL] = lock;
-	lock.depth += 1;
-	let released = false;
-	return () => {
-		if (released) return;
-		released = true;
-		lock.depth = Math.max(0, lock.depth - 1);
-	};
-}
-
-function dashboardContentWidth(width: number): number {
-	return Math.max(1, width - 2 - DASHBOARD_PADDING_X * 2);
-}
-
-function frameDashboard(lines: string[], width: number, theme: Theme, title = "", right = ""): string[] {
-	if (width < 8) return lines.map((line) => truncateToWidth(line, width, ""));
-
-	const border = (text: string) => theme.fg("borderAccent", text);
-	const contentWidth = dashboardContentWidth(width);
-	const blank = `${border("┃")}${" ".repeat(width - 2)}${border("┃")}`;
-	const top = () => {
-		if (!title) return `${border("┏")}${border("━".repeat(width - 2))}${border("┓")}`;
-		const rightPlain = right ? ` ${right} ` : "";
-		const titleBudget = Math.max(1, width - 2 - visibleWidth(rightPlain) - 1);
-		const titlePlain = ` ${truncateToWidth(title, Math.max(1, titleBudget - 2), "…")} `;
-		const fill = Math.max(1, width - 2 - visibleWidth(titlePlain) - visibleWidth(rightPlain));
-		return `${border("┏")}${ansiGreen(titlePlain)}${border("━".repeat(fill))}${right ? theme.fg("dim", rightPlain) : ""}${border("┓")}`;
-	};
-	const framed = [top()];
-
-	for (let i = 0; i < DASHBOARD_PADDING_Y; i += 1) framed.push(blank);
-	for (const line of lines) {
-		const content = padAnsi(line, contentWidth);
-		framed.push(`${border("┃")}${" ".repeat(DASHBOARD_PADDING_X)}${content}${" ".repeat(DASHBOARD_PADDING_X)}${border("┃")}`);
-	}
-	for (let i = 0; i < DASHBOARD_PADDING_Y; i += 1) framed.push(blank);
-	framed.push(`${border("┗")}${border("━".repeat(width - 2))}${border("┛")}`);
-	return framed.map((line) => truncateToWidth(line, width, ""));
-}
-
-function frameWidget(lines: string[], width: number, theme: Theme): string[] {
-	const safeWidth = Math.max(1, width);
-	if (safeWidth < 8) return lines.map((line) => truncateToWidth(line, safeWidth, ""));
-	const border = (text: string) => theme.fg("borderAccent", text);
-	const contentWidth = Math.max(1, safeWidth - 2 - WIDGET_PADDING_X * 2);
-	return [
-		`${border("┏")}${border("━".repeat(safeWidth - 2))}${border("┓")}`,
-		...lines.map((line) => `${border("┃")}${" ".repeat(WIDGET_PADDING_X)}${padAnsi(line, contentWidth)}${" ".repeat(WIDGET_PADDING_X)}${border("┃")}`),
-		`${border("┗")}${border("━".repeat(safeWidth - 2))}${border("┛")}`,
-	].map((line) => truncateToWidth(line, safeWidth, ""));
-}
-
-class RenderedLines {
-	private cachedLines?: string[];
-	private cachedWidth?: number;
-
-	constructor(private readonly text: string) {}
-
-	invalidate(): void {
-		this.cachedLines = undefined;
-		this.cachedWidth = undefined;
-	}
-
-	render(width: number): string[] {
-		if (this.cachedLines && this.cachedWidth === width) return this.cachedLines;
-		const targetWidth = Math.max(1, width);
-		this.cachedLines = wrapAnsiLines(this.text, targetWidth);
-		this.cachedWidth = width;
-		return this.cachedLines;
-	}
-}
-
-function renderLines(text: string): RenderedLines {
-	return new RenderedLines(text);
-}
-
-function renderEmpty() {
-	return { invalidate() {}, render: () => [] as string[] };
-}
-
-type TreeBranch = "├" | "└" | "│";
-
-function bgTreeGlyph(branch: TreeBranch, cwd?: string): string {
-	const style = readVstackConfig(cwd).treeStyle === "ascii" ? "ascii" : "unicode";
-	if (style === "ascii") {
-		if (branch === "│") return "|  ";
-		return branch === "└" ? "`-- " : "|-- ";
-	}
-	if (branch === "│") return "│  ";
-	return `${branch}─ `;
-}
-
-function bgTree(theme: Theme, branch: TreeBranch = "├", cwd?: string): string {
-	return theme.fg("muted", bgTreeGlyph(branch, cwd));
-}
-
-function bgToolLabel(theme: Theme, label: string): string {
-	return theme.fg("text", theme.bold(label));
-}
-
-function bgStatusColor(status: BackgroundTaskStatus): "success" | "error" | "warning" | "muted" {
-	if (status === "running") return "warning";
-	if (status === "completed") return "success";
-	if (status === "failed" || status === "timed_out") return "error";
-	return "muted";
-}
-
-function bgStatusIcon(status: BackgroundTaskStatus, theme: Theme): string {
-	if (status === "running") return theme.fg("warning", "●");
-	if (status === "completed") return theme.fg("success", ICONS.check);
-	if (status === "failed" || status === "timed_out") return theme.fg("error", ICONS.times);
-	return theme.fg("muted", "■");
-}
-
-function bgStatusText(task: Pick<BackgroundTaskSnapshot, "status" | "exitCode">, theme: Theme): string {
-	return theme.fg(bgStatusColor(task.status), summarizeTaskStatus(task.status, task.exitCode));
-}
-
-function renderToolTaskRow(task: BackgroundTaskSnapshot, theme: Theme, branch: TreeBranch, cwd?: string): string {
-	return `${bgTree(theme, branch, cwd)}${bgStatusIcon(task.status, theme)} ${theme.fg("accent", task.id)} ${bgStatusText(task, theme)}${theme.fg(
-		"dim",
-		` · pid ${task.pid} · ${compactText(taskDisplayName(task), 56)} · ${formatRelativeTime(taskActivityAt(task))}`,
-	)}`;
-}
-
-function renderTaskDetails(task: BackgroundTaskSnapshot, theme: Theme, cwd?: string): string[] {
-	const current = latestSnapshot(task) ?? task;
-	const lines = [
-		`${bgTree(theme, "├", cwd)}${theme.fg("muted", "Status")}: ${bgStatusText(current, theme)} ${theme.fg("dim", `· pid ${current.pid}`)}`,
-		`${bgTree(theme, "├", cwd)}${theme.fg("muted", "Title")}: ${taskDisplayName(current)}`,
-		`${bgTree(theme, "├", cwd)}${theme.fg("muted", "Command")}: ${current.command}`,
-		`${bgTree(theme, "├", cwd)}${theme.fg("muted", "Cwd")}: ${current.cwd}`,
-		`${bgTree(theme, "├", cwd)}${theme.fg("muted", "Log")}: ${current.logFile}`,
-	];
-	if (current.status === "running" && current.expiresAt != null) lines.push(`${bgTree(theme, "├", cwd)}${theme.fg("muted", "Timeout")}: ${formatRelativeTime(current.expiresAt)}`);
-	lines.push(
-		`${bgTree(theme, "└", cwd)}${theme.fg("muted", "Wakeups")}: exit=${current.notifyOnExit ? "yes" : "no"}, output=${
-			current.notifyOnOutput ? (current.notifyPattern ?? "yes") : "no"
-		}`,
-	);
-	return lines;
-}
-
-function toolRenderMode(cwd?: string): "compact" | "stacked" {
-	return settingEnum("toolRenderMode", ["compact", "stacked"] as const, "stacked", cwd);
-}
-
-function makeToolResult(text: string, details: Record<string, unknown> = {}): AgentToolResult<unknown> {
-	return { content: [{ type: "text", text }], details };
-}
-
-function backgroundRule(theme: Theme, width: number): string {
-	const rule = "─".repeat(Math.max(1, width));
-	for (const token of ["borderMuted", "muted", "dim"] as const) {
-		try {
-			const styled = theme.fg(token, rule);
-			const textStyled = theme.fg("text", rule);
-			if (styled !== rule && styled !== textStyled) return styled;
-		} catch {
-			// Try the next token/fallback below.
-		}
-	}
-	return `\x1b[90m${rule}\x1b[39m`;
-}
-
-function wrapAnsiLines(text: string, width: number): string[] {
-	const targetWidth = Math.max(1, width);
-	return text.split(/\r?\n/).flatMap((line) => {
-		const wrapped = wrapTextWithAnsi(line, targetWidth);
-		return wrapped.length > 0 ? wrapped : [""];
-	});
-}
-
-function renderRuledBackgroundMessage(text: string, theme: Theme): Component {
-	return {
-		invalidate() {},
-		render(width: number): string[] {
-			const rule = backgroundRule(theme, width);
-			return [rule, ...wrapAnsiLines(text, width), rule];
-		},
-	};
-}
-
-function renderBackgroundMessage(text: string, theme: Theme): Component {
-	return renderRuledBackgroundMessage(text, theme);
-}
-
-function isBackgroundTaskEventDetails(value: unknown): value is BackgroundTaskEventDetails {
-	if (!value || typeof value !== "object") return false;
-	const candidate = value as Partial<BackgroundTaskEventDetails>;
-	return (
-		(candidate.eventType === "output" || candidate.eventType === "exit") &&
-		Boolean(candidate.task) &&
-		typeof candidate.outputTail === "string"
-	);
-}
-
-function renderTaskEventMessage(
-	message: { content?: unknown; details?: unknown },
-	expanded: boolean,
-	theme: Theme,
-): Component {
-	if (!isBackgroundTaskEventDetails(message.details)) {
-		return renderBackgroundMessage(String(message.content ?? "Background task update"), theme);
-	}
-
-	const details = message.details;
-	const task = latestSnapshot(details.task) ?? details.task;
-	if (!expanded) {
-		const prefix = details.eventType === "exit" ? theme.fg("success", "●") : theme.fg("accent", "●");
-		const label = details.eventType === "exit"
-			? `${theme.fg("toolTitle", theme.bold("Background task "))}${theme.fg("success", "finished")}`
-			: theme.fg("toolTitle", theme.bold("Background task output"));
-		return renderRuledBackgroundMessage(
-			`${prefix} ${label} ${theme.fg("accent", task.id)}${theme.fg("dim", ` · ${compactText(taskDisplayName(task), 64)} · ctrl+o details`)}`,
-			theme,
-		);
-	}
-
-	const headingLabel = details.eventType === "exit"
-		? `${theme.fg("toolTitle", theme.bold("Background task "))}${theme.fg("success", "finished ")}`
-		: bgToolLabel(theme, "Background task output ");
-	const headingIcon = details.eventType === "exit" ? theme.fg("success", "●") : theme.fg("accent", "●");
-	const lines = [
-		`${headingIcon} ${headingLabel}${theme.fg("accent", task.id)}${theme.fg(
-			"dim",
-			` · ${compactText(taskDisplayName(task), 72)}`,
-		)}`,
-		...renderTaskDetails(task, theme),
-	];
-	if (details.matchedPattern) lines.push(`${bgTree(theme, "└")}${theme.fg("muted", "Pattern")}: ${details.matchedPattern}`);
-
-	const preview = details.eventType === "output" ? details.newOutputTail || details.outputTail : details.outputTail;
-	const output = takeTailLines(preview, outputLineLimit());
-	lines.push("", theme.fg("accent", theme.bold("Recent output")));
-	if (output.hidden > 0) lines.push(`${bgTree(theme, "│")}${theme.fg("muted", `… ${output.hidden} older line(s); full log: ${task.logFile}`)}`);
-	lines.push(...(output.lines.length ? output.lines : ["(no output yet)"]).map((line) => `${bgTree(theme, "│")}${theme.fg("dim", line)}`));
-	if (output.total >= outputLineLimit()) lines.push(`${bgTree(theme, "└")}${theme.fg("muted", `Full background log: ${task.logFile}`)}`);
-	return renderRuledBackgroundMessage(lines.join("\n"), theme);
-}
-
-function bgToolAction(args: any, details: any): string {
-	return typeof details?.action === "string" ? details.action : typeof args?.action === "string" ? args.action : "status";
-}
-
-function renderBgToolPartial(args: any, theme: Theme, cwd?: string): RenderedLines {
-	const action = bgToolAction(args, undefined);
-	const target = args?.id ?? args?.pid ?? "tasks";
-	const verb = action === "spawn" ? "starting" : action === "log" ? "tailing" : action === "stop" ? "stopping" : action === "clear" ? "clearing" : "checking";
-	const title = action === "spawn" ? compactText(String(args?.title || args?.command || "background task"), 72) : String(target);
-	return renderLines(`${theme.fg("warning", "● ")}${bgToolLabel(theme, `Background task ${verb}`)} ${theme.fg("accent", title)}${theme.fg("dim", "…")}`);
-}
-
-function renderBgTaskList(tasks: BackgroundTaskSnapshot[], theme: Theme, expanded: boolean, cwd?: string): string {
-	tasks = latestSnapshots(tasks);
-	const running = tasks.filter((task) => task.status === "running").length;
-	const failed = tasks.filter((task) => task.status === "failed" || task.status === "timed_out").length;
-	const finished = tasks.length - running;
-	const status = failed > 0 ? theme.fg("warning", ` · ${failed} failed`) : running > 0 ? theme.fg("warning", ` · ${running} running`) : theme.fg("success", " · idle");
-	let text = `${theme.fg("accent", "● ")}${bgToolLabel(theme, "Background tasks")}${theme.fg("dim", ` ${running} running · ${finished} finished`)}${status}`;
-	if (tasks.length === 0) return `${text}${theme.fg("dim", " · none")}`;
-	if (toolRenderMode(cwd) === "compact" && !expanded) return `${text}${theme.fg("dim", " · ctrl+o details")}`;
-	const shown = tasks.slice(0, expanded ? tasks.length : TOOL_PREVIEW_TASKS);
-	shown.forEach((task, index) => {
-		const isLast = index === shown.length - 1 && shown.length === tasks.length;
-		text += `\n${renderToolTaskRow(task, theme, isLast ? "└" : "├", cwd)}`;
-	});
-	const hidden = tasks.length - shown.length;
-	if (hidden > 0) text += `\n${bgTree(theme, "└", cwd)}${theme.fg("muted", `… ${hidden} more · ctrl+o to expand`)}`;
-	return text;
-}
-
-function renderBgLogResult(task: BackgroundTaskSnapshot | undefined, output: string, theme: Theme, expanded: boolean, cwd?: string): string {
-	task = latestSnapshot(task);
-	const taskLabel = task ? `${theme.fg("accent", task.id)} ${bgStatusText(task, theme)}` : theme.fg("accent", "log");
-	const outputLines = takeTailLines(output, expanded ? outputLineLimit(cwd) : TOOL_PREVIEW_LINES);
-	let text = `${theme.fg("accent", "● ")}${bgToolLabel(theme, "Background log ")}${taskLabel}${theme.fg(
-		"dim",
-		` · ${lineCount(output)} line${lineCount(output) === 1 ? "" : "s"}${expanded ? "" : " · ctrl+o to expand"}`,
-	)}`;
-	if (expanded && task) text += `\n${renderTaskDetails(task, theme, cwd).join("\n")}`;
-	if (expanded && output) {
-		if (outputLines.hidden > 0) text += `\n${bgTree(theme, "│", cwd)}${theme.fg("muted", `… ${outputLines.hidden} older line(s); full log: ${task?.logFile ?? "available in details"}`)}`;
-		text += `\n${outputLines.lines.map((line) => `${bgTree(theme, "│", cwd)}${theme.fg("dim", line)}`).join("\n")}`;
-		if (task) text += `\n${bgTree(theme, "└", cwd)}${theme.fg("muted", `Full background log: ${task.logFile}`)}`;
-	} else if (!expanded && output && toolRenderMode(cwd) === "stacked") {
-		if (outputLines.lines.length > 0) text += `\n${bgTree(theme, "└", cwd)}${theme.fg("muted", compactText(outputLines.lines[outputLines.lines.length - 1] ?? "", 120))}`;
-	}
-	return text;
-}
-
-function renderBgToolResult(result: any, options: any, theme: Theme, context: any): RenderedLines | ReturnType<typeof renderEmpty> {
-	if (options?.isPartial) return renderBgToolPartial(context?.args ?? {}, theme, context?.cwd);
-	const action = bgToolAction(context?.args ?? {}, result?.details);
-	const cwd = context?.cwd;
-	const expanded = Boolean(options?.expanded);
-	const details = result?.details ?? {};
-	const raw = typeof result?.content?.find === "function" ? result.content.find((part: any) => part?.type === "text")?.text ?? "" : "";
-
-	if (context?.isError || result?.isError) {
-		const first = raw.split(/\r?\n/)[0] || "background task failed";
-		return renderLines(`${theme.fg("error", `${ICONS.times} `)}${bgToolLabel(theme, "Background task")} ${theme.fg("error", first)}`);
-	}
-
-	if (action === "list") return renderEmpty();
-
-	if (action === "spawn") {
-		const task = details.task as BackgroundTaskSnapshot | undefined;
-		if (!task) return renderLines(`${theme.fg("warning", "● ")}${bgToolLabel(theme, "Background task started")}`);
-		let text = `${theme.fg("warning", "● ")}${bgToolLabel(theme, "Background task started ")}${theme.fg("accent", task.id)}${theme.fg(
-			"dim",
-			` · pid ${task.pid} · ${compactText(taskDisplayName(task), 72)}${expanded ? "" : " · ctrl+o details"}`,
-		)}`;
-		if (expanded) text += `\n${renderTaskDetails(task, theme, cwd).join("\n")}`;
-		return renderLines(text);
-	}
-
-	if (action === "log") return renderLines(renderBgLogResult(details.task as BackgroundTaskSnapshot | undefined, raw, theme, expanded, cwd));
-
-	if (action === "stop") {
-		const task = latestSnapshot(details.task as BackgroundTaskSnapshot | undefined);
-		const label = task ? `${theme.fg("accent", task.id)} ${bgStatusText(task, theme)}` : theme.fg("muted", compactText(raw, 80));
-		let text = `${theme.fg("warning", "● ")}${bgToolLabel(theme, "Background task stop ")}${label}`;
-		if (expanded && task) text += `\n${renderTaskDetails(task, theme, cwd).join("\n")}`;
-		return renderLines(text);
-	}
-
-	if (action === "clear") {
-		const removed = Number(details.removed ?? 0);
-		return renderLines(`${theme.fg("success", "● ")}${bgToolLabel(theme, "Background tasks cleared")}${theme.fg("dim", ` · removed ${removed} finished`)}`);
-	}
-
-	return raw ? renderLines(raw) : renderEmpty();
-}
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+
+import {
+	autoBackgroundDecision,
+	bashBackgroundAck,
+	bashBackgroundAckText,
+	forcedBackgroundDecision,
+} from "./auto-background.js";
+import {
+	BG_COMMAND,
+	BG_INSTALL_SYMBOL,
+	BG_MESSAGE_TYPE,
+	BG_WIDGET_KEY,
+	DEFAULT_BACKGROUND_BASH_SHORTCUT,
+	DEFAULT_BG_SHORTCUT,
+	DEFAULT_FORCE_KILL_GRACE_MS,
+	DEFAULT_FORCED_BACKGROUND_WINDOW_MS,
+	DEFAULT_OUTPUT_ALERT_MAX_CHARS,
+	DEFAULT_OUTPUT_SETTLE_MS,
+	DEFAULT_TIMEOUT_MS,
+	DEFAULT_WIDGET_FINISHED_RETENTION_MS,
+	DEFAULT_WIDGET_TOGGLE_SHORTCUT,
+	WIDGET_COMPACT_TASKS,
+} from "./constants.js";
+import { openDashboard } from "./dashboard.js";
+import {
+	buildTaskSummaryLine,
+	compactText,
+	formatDuration,
+	formatRelativeTime,
+	formatShortcutHint,
+	formatTaskLog,
+	parseOutputMatcher,
+	summarizeTaskStatus,
+	tailText,
+	taskDisplayName,
+	taskLogTruncation,
+	trimOutputBuffer,
+} from "./format.js";
+import {
+	bgStatusIcon,
+	bgTree,
+	frameWidget,
+	makeToolResult,
+	renderBgToolResult,
+	renderEmpty,
+	renderTaskEventMessage,
+} from "./render.js";
+import { logFilePath, settingBoolean, settingEnum, settingNumber, settingString, taskEnv } from "./settings.js";
+import {
+	forgetSnapshot,
+	rememberSnapshot,
+	resolveTaskByToken,
+	taskSnapshot,
+} from "./snapshot.js";
+import type {
+	BackgroundTaskEventDetails,
+	BackgroundTaskSnapshot,
+	BackgroundTaskStatus,
+	ManagedTask,
+	SpawnTaskOptions,
+	TaskEventType,
+} from "./types.js";
 
 export default function backgroundTasks(pi: ExtensionAPI): void {
 	const guard = pi as unknown as Record<PropertyKey, unknown>;
@@ -978,6 +124,14 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		requestWidgetRender = null;
 	};
 
+	const widgetFinishedRetentionMs = (cwd?: string): number =>
+		Math.max(0, Math.floor(settingNumber("widgetFinishedRetentionSeconds", DEFAULT_WIDGET_FINISHED_RETENTION_MS / 1_000, cwd) * 1_000));
+
+	const widgetTasks = (now: number = Date.now()): ManagedTask[] => {
+		const retention = widgetFinishedRetentionMs(activeCtx?.cwd);
+		return sortedTasks().filter((task) => task.status === "running" || now - task.updatedAt <= retention);
+	};
+
 	const renderWidgetLines = (theme: Theme): string[] => {
 		const sorted = widgetTasks();
 		const running = sorted.filter((task) => task.status === "running");
@@ -1005,13 +159,6 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		return lines;
 	};
 
-	const widgetFinishedRetentionMs = (cwd?: string): number => Math.max(0, Math.floor(settingNumber("widgetFinishedRetentionSeconds", DEFAULT_WIDGET_FINISHED_RETENTION_MS / 1_000, cwd) * 1_000));
-
-	const widgetTasks = (now: number = Date.now()): ManagedTask[] => {
-		const retention = widgetFinishedRetentionMs(activeCtx?.cwd);
-		return sortedTasks().filter((task) => task.status === "running" || now - task.updatedAt <= retention);
-	};
-
 	const syncWidget = (ctx: ExtensionContext) => {
 		activeCtx = ctx;
 		if (tasks.size === 0 || widgetTasks().length === 0 || !ctx.hasUI || widgetMode === "hidden" || !settingBoolean("showWidget", true, ctx.cwd)) {
@@ -1027,8 +174,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 
 				const ensureTimer = () => {
 					const visible = widgetTasks();
-					const shouldTick = visible.some((task) => task.status === "running") || visible.some((task) => task.status !== "running");
-					if (!shouldTick) {
+					if (visible.length === 0) {
 						if (timer) clearInterval(timer);
 						timer = null;
 						clearWidget();
@@ -1078,10 +224,9 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 			outputTail: tailText(getTaskOutput(task), settingNumber("outputAlertMaxChars", DEFAULT_OUTPUT_ALERT_MAX_CHARS, activeCtx?.cwd)),
 			task: rememberSnapshot(task),
 		};
-		const headline =
-			eventType === "exit"
-				? `Background task ${task.id} finished.`
-				: `Background task ${task.id} emitted new output.`;
+		const headline = eventType === "exit"
+			? `Background task ${task.id} finished.`
+			: `Background task ${task.id} emitted new output.`;
 
 		pi.sendMessage(
 			{
@@ -1288,7 +433,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 			if (task.status === "running") continue;
 			clearTaskTimers(task);
 			tasks.delete(id);
-			liveSnapshots.delete(id);
+			forgetSnapshot(id);
 			removed += 1;
 		}
 		refreshUi();
@@ -1301,9 +446,11 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		return sorted.map((task) => buildTaskSummaryLine(taskSnapshot(task))).join("\n\n");
 	};
 
-	const resolveTask = (id?: string, pid?: number): ManagedTask | null => resolveTaskByToken(tasks.values(), id ?? pid);
+	const resolveTask = (id?: string, pid?: number): ManagedTask | null =>
+		resolveTaskByToken<ManagedTask>(tasks.values(), id ?? pid);
 
-	const forcedBackgroundWindowMs = (cwd?: string): number => Math.max(1_000, settingNumber("forcedBackgroundWindowSeconds", DEFAULT_FORCED_BACKGROUND_WINDOW_MS / 1_000, cwd) * 1_000);
+	const forcedBackgroundWindowMs = (cwd?: string): number =>
+		Math.max(1_000, settingNumber("forcedBackgroundWindowSeconds", DEFAULT_FORCED_BACKGROUND_WINDOW_MS / 1_000, cwd) * 1_000);
 
 	const consumeForcedBackground = (cwd?: string): boolean => {
 		if (forceNextBashBackgroundAt == null) return false;
@@ -1325,241 +472,20 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		ctx.ui.notify(note, "info");
 	};
 
-	const backgroundBashCommand = (command: string, cwd: string | undefined, decision: BashBackgroundDecision): ManagedTask => {
-		return spawnTask({
-			command,
-			cwd,
-			notifyOnExit: decision.notifyOnExit,
-			notifyOnOutput: decision.notifyOnOutput,
-			notifyPattern: decision.notifyPattern,
-			title: decision.title,
-		});
-	};
-
-	const decisionForBashCommand = (command: string, cwd?: string): BashBackgroundDecision | null => {
+	const decisionForBashCommand = (command: string, cwd?: string) => {
 		if (!command.trim()) return null;
 		if (consumeForcedBackground(cwd)) return forcedBackgroundDecision(command, cwd);
 		if (!settingBoolean("autoBackgroundBash", true, cwd)) return null;
 		return autoBackgroundDecision(command, cwd);
 	};
 
-	const openDashboard = async (
-		ctx: ExtensionCommandContext | ExtensionContext,
-		initialTask: ManagedTask | null = null,
-	): Promise<void> => {
-		if (!ctx.hasUI) {
-			ctx.ui.notify(formatTaskListText(), "info");
-			return;
-		}
-
-		const releaseModalLock = acquireVstackModalLock();
-		try {
-		await ctx.ui.custom(
-			(tui, theme, _keybindings, done) => {
-				let selectedId: string | null = initialTask?.id ?? sortedTasks()[0]?.id ?? null;
-				let taskScroll = 0;
-				let outputScroll = 0;
-				let followOutput = true;
-				let activePane: "tasks" | "output" = "tasks";
-				let timer: ReturnType<typeof setInterval> | null = null;
-
-				const ensureDashboardTimer = () => {
-					const hasRunning = sortedTasks().some((task) => task.status === "running");
-					if (!hasRunning) {
-						if (timer) clearInterval(timer);
-						timer = null;
-						return;
-					}
-					if (timer) return;
-					timer = setInterval(() => tui.requestRender(), 1_000);
-					timer.unref?.();
-				};
-
-				const selectedTask = (): ManagedTask | null => {
-					const sorted = sortedTasks();
-					if (sorted.length === 0) return null;
-					const current = selectedId ? tasks.get(selectedId) : undefined;
-					if (current) return current;
-					selectedId = sorted[0]?.id ?? null;
-					return selectedId ? (tasks.get(selectedId) ?? null) : null;
-				};
-
-				const dashboardFrameRows = (): number => {
-					const rows = Number(tui.terminal?.rows ?? 32);
-					return Math.max(DASHBOARD_MIN_FRAME_ROWS, Math.floor(Math.max(1, rows) * 0.72));
-				};
-				const dashboardInnerRows = (): number => Math.max(4, dashboardFrameRows() - DASHBOARD_FRAME_VERTICAL_OVERHEAD);
-				const dashboardBodyRows = (): number => Math.max(1, dashboardInnerRows() - 2);
-				const taskRows = (): number => Math.max(1, dashboardBodyRows() - 1);
-				const outputRows = (): number => Math.max(3, dashboardBodyRows() - 10);
-
-				const getOutputLines = (task: ManagedTask | null): string[] => splitOutputLines(task ? getTaskOutput(task) : "");
-				const maxOutputScroll = (task: ManagedTask | null): number => Math.max(0, getOutputLines(task).length - outputRows());
-
-				const syncTaskScroll = () => {
-					const sorted = sortedTasks();
-					const index = Math.max(
-						0,
-						sorted.findIndex((task) => task.id === selectedId),
-					);
-					const rows = taskRows();
-					const max = Math.max(0, sorted.length - rows);
-					if (index < taskScroll) taskScroll = index;
-					if (index >= taskScroll + rows) taskScroll = index - rows + 1;
-					taskScroll = clamp(taskScroll, 0, max);
-				};
-
-				const syncOutputScroll = (forceBottom = false) => {
-					const max = maxOutputScroll(selectedTask());
-					if (forceBottom || followOutput) outputScroll = max;
-					else outputScroll = clamp(outputScroll, 0, max);
-				};
-
-				const moveSelection = (delta: number) => {
-					const sorted = sortedTasks();
-					if (sorted.length === 0) {
-						selectedId = null;
-						return;
-					}
-					const currentIndex = Math.max(
-						0,
-						sorted.findIndex((task) => task.id === selectedId),
-					);
-					selectedId = sorted[clamp(currentIndex + delta, 0, sorted.length - 1)]?.id ?? null;
-					syncTaskScroll();
-					syncOutputScroll(true);
-					tui.requestRender();
-				};
-
-				const moveOutput = (delta: number) => {
-					followOutput = false;
-					outputScroll = clamp(outputScroll + delta, 0, maxOutputScroll(selectedTask()));
-					if (outputScroll >= maxOutputScroll(selectedTask())) followOutput = true;
-					tui.requestRender();
-				};
-
-				const renderLines = (width: number): string[] => {
-					const sorted = sortedTasks();
-					const running = sorted.filter((task) => task.status === "running").length;
-					const selected = selectedTask();
-					const bodyRows = dashboardBodyRows();
-					const taskViewportRows = taskRows();
-					const outputViewportRows = outputRows();
-					syncTaskScroll();
-					syncOutputScroll();
-
-					const lines: string[] = [];
-					const footer = `${ansiYellow("←/→ tab")} ${theme.fg("dim", "pane · ")}${ansiYellow("s")} ${theme.fg("dim", "stop · ")}${ansiYellow("c")} ${theme.fg("dim", "clear · ")}${ansiYellow("f")} ${theme.fg("dim", "follow · ")}${ansiYellow("-/=")} ${theme.fg("dim", "page output")}`;
-
-					if (sorted.length === 0) {
-						lines.push(theme.fg("dim", "No background tasks yet. Use /bg run <command> or the bg_task tool."));
-						while (lines.length < bodyRows) lines.push("");
-						lines.push("", ...wrapTextWithAnsi(footer, Math.max(1, width)));
-						return lines.map((line) => truncateToWidth(line, width, ""));
-					}
-
-					const taskPaneWidth = clamp(Math.floor(width * 0.34), TASK_PANE_MIN_WIDTH, TASK_PANE_MAX_WIDTH);
-					const detailPaneWidth = Math.max(24, width - taskPaneWidth - 3);
-					const left: string[] = [];
-					const right: string[] = [];
-
-					left.push(`${activePane === "tasks" ? activePill(theme, " Tasks ") : inactivePill(theme, " Tasks ")} ${theme.fg("dim", `(${sorted.length})`)}`);
-					left.push("");
-					if (taskScroll > 0) left.push(theme.fg("dim", `↑ ${taskScroll} earlier task(s)`));
-					for (const task of sorted.slice(taskScroll, taskScroll + taskViewportRows)) {
-						const isSelected = task.id === selected?.id;
-						const row = ` ${bgStatusIcon(task.status, theme)} ${theme.fg("accent", task.id)} ${theme.fg(
-							isSelected ? "text" : "dim",
-							`${summarizeTaskStatus(task.status, task.exitCode)} · ${compactText(taskDisplayName(task), Math.max(12, taskPaneWidth - 24))}`,
-						)}`;
-						left.push(isSelected ? theme.bg("selectedBg", padAnsi(row, taskPaneWidth)) : row);
-					}
-					const hiddenBelow = Math.max(0, sorted.length - (taskScroll + taskViewportRows));
-					if (hiddenBelow > 0) left.push(theme.fg("dim", `↓ ${hiddenBelow} more task(s)`));
-
-					if (!selected) {
-						right.push(theme.fg("dim", "Select a task to inspect output."));
-					} else {
-						const outputLines = getOutputLines(selected);
-						const visibleOutput = outputLines.slice(outputScroll, outputScroll + outputViewportRows);
-						right.push(`${activePane === "output" ? activePill(theme, ` Watch ${selected.id} `) : inactivePill(theme, ` Watch ${selected.id} `)} ${theme.fg("dim", followOutput ? "follow" : `line ${outputScroll + 1}`)}`);
-						right.push("");
-						right.push(`${theme.fg("muted", "Status")}: ${bgStatusText(taskSnapshot(selected), theme)} · pid ${selected.pid}`);
-						right.push(`${theme.fg("muted", "Started")}: ${formatRelativeTime(selected.startedAt)} · ${formatDuration(taskElapsedMs(selected))} elapsed`);
-						if (selected.expiresAt != null) right.push(`${theme.fg("muted", "Expiry")}: ${formatRelativeTime(selected.expiresAt)}`);
-						right.push(`${theme.fg("muted", "Command")}: ${selected.command}`);
-						right.push(`${theme.fg("muted", "Cwd")}: ${selected.cwd}`);
-						right.push(`${theme.fg("muted", "Log")}: ${selected.logFile}`);
-						right.push(
-							`${theme.fg("muted", "Wakeups")}: exit=${selected.notifyOnExit ? "yes" : "no"}, output=${
-								selected.notifyOnOutput ? (selected.notifyPattern ?? "yes") : "no"
-							}`,
-						);
-						right.push("", theme.fg("muted", theme.bold("Output")));
-						if (outputScroll > 0) right.push(theme.fg("dim", `↑ ${outputScroll} older line(s)`));
-						right.push(...visibleOutput);
-						const below = Math.max(0, outputLines.length - (outputScroll + outputViewportRows));
-						if (below > 0) right.push(theme.fg("dim", `↓ ${below} newer line(s)`));
-					}
-
-					const rowCount = Math.min(bodyRows, Math.max(left.length, right.length));
-					for (let i = 0; i < rowCount; i += 1) {
-						lines.push(`${padAnsi(left[i] ?? "", taskPaneWidth)}${theme.fg("dim", " │ ")}${truncateToWidth(right[i] ?? "", detailPaneWidth, "")}`);
-					}
-					while (lines.length < bodyRows) lines.push("");
-					lines.push("", ...wrapTextWithAnsi(footer, Math.max(1, width)));
-					return lines.map((line) => truncateToWidth(line, width, ""));
-				};
-
-				return {
-					dispose() {
-						if (timer) clearInterval(timer);
-						timer = null;
-					},
-					handleInput(data: string) {
-						if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
-							done(undefined);
-							return;
-						}
-						if (matchesKey(data, "left")) { activePane = "tasks"; tui.requestRender(); return; }
-						if (matchesKey(data, "right")) { activePane = "output"; tui.requestRender(); return; }
-						if (matchesKey(data, "tab")) { activePane = activePane === "tasks" ? "output" : "tasks"; tui.requestRender(); return; }
-						if (matchesKey(data, "up")) return activePane === "tasks" ? moveSelection(-1) : moveOutput(-1);
-						if (matchesKey(data, "down")) return activePane === "tasks" ? moveSelection(1) : moveOutput(1);
-						if (matchesKey(data, "home")) { if (activePane === "tasks") return moveSelection(-Number.MAX_SAFE_INTEGER); followOutput = false; outputScroll = 0; tui.requestRender(); return; }
-						if (matchesKey(data, "end")) { if (activePane === "tasks") return moveSelection(Number.MAX_SAFE_INTEGER); syncOutputScroll(true); tui.requestRender(); return; }
-						if (matchesKey(data, "-") || matchesKey(data, "pageup") || matchesKey(data, "shift+up")) return moveOutput(-outputRows());
-						if (matchesKey(data, "=") || matchesKey(data, "pagedown") || matchesKey(data, "shift+down")) return moveOutput(outputRows());
-						if (data === "f") {
-							followOutput = !followOutput;
-							syncOutputScroll(followOutput);
-							tui.requestRender();
-							return;
-						}
-						if (data === "s") {
-							requestStop(selectedTask(), "user");
-							tui.requestRender();
-							return;
-						}
-						if (data === "c") {
-							clearFinishedTasks();
-							tui.requestRender();
-						}
-					},
-					invalidate() {},
-					render(width: number) {
-						ensureDashboardTimer();
-						const sorted = sortedTasks();
-						const running = sorted.filter((task) => task.status === "running").length;
-						return frameDashboard(renderLines(dashboardContentWidth(width)), width, theme, "Background Tasks", `${running} running · ${sorted.length - running} finished`);
-					},
-				};
-			},
-			{ overlay: true, overlayOptions: { anchor: "center", maxHeight: DASHBOARD_MAX_HEIGHT, width: DASHBOARD_WIDTH } },
-		);
-		} finally {
-			releaseModalLock();
-		}
+	const dashboardDeps = {
+		clearFinishedTasks,
+		formatTaskListText,
+		getTask: (id: string) => tasks.get(id) ?? null,
+		getTaskOutput,
+		requestStop: (task: ManagedTask | null, reason: "user") => requestStop(task, reason),
+		sortedTasks,
 	};
 
 	pi.registerMessageRenderer(BG_MESSAGE_TYPE, (message, { expanded }, theme) => renderTaskEventMessage(message, expanded, theme));
@@ -1602,7 +528,14 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		const decision = decisionForBashCommand(command, ctx.cwd);
 		if (!decision) return undefined;
 
-		const task = backgroundBashCommand(command, ctx.cwd, decision);
+		const task = spawnTask({
+			command,
+			cwd: ctx.cwd,
+			notifyOnExit: decision.notifyOnExit,
+			notifyOnOutput: decision.notifyOnOutput,
+			notifyPattern: decision.notifyPattern,
+			title: decision.title,
+		});
 		event.input.command = bashBackgroundAck(rememberSnapshot(task), decision);
 		if (ctx.hasUI) {
 			const label = decision.forced ? "Shortcut moved bash to background" : "Auto-backgrounded bash";
@@ -1617,7 +550,14 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		const decision = decisionForBashCommand(command, event?.cwd ?? ctx.cwd);
 		if (!decision) return undefined;
 
-		const task = backgroundBashCommand(command, event?.cwd ?? ctx.cwd, decision);
+		const task = spawnTask({
+			command,
+			cwd: event?.cwd ?? ctx.cwd,
+			notifyOnExit: decision.notifyOnExit,
+			notifyOnOutput: decision.notifyOnOutput,
+			notifyPattern: decision.notifyPattern,
+			title: decision.title,
+		});
 		const output = bashBackgroundAckText(rememberSnapshot(task), decision);
 		if (ctx.hasUI) {
 			const label = decision.forced ? "Shortcut moved user bash to background" : "Auto-backgrounded user bash";
@@ -1784,7 +724,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 			activeCtx = ctx;
 			const trimmed = args.trim();
 			if (!trimmed) {
-				await openDashboard(ctx);
+				await openDashboard(ctx, dashboardDeps);
 				return;
 			}
 			if (trimmed === "list") {
@@ -1812,7 +752,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 					return;
 				}
 				if (trimmed.startsWith("log ")) ctx.ui.notify(formatTaskLog(getTaskOutput(task), task.logFile, ctx.cwd), "info");
-				else await openDashboard(ctx, task);
+				else await openDashboard(ctx, dashboardDeps, task);
 				return;
 			}
 			if (trimmed.startsWith("stop ")) {
@@ -1876,7 +816,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 			description: "Open the background task dashboard",
 			handler: async (ctx) => {
 				activeCtx = ctx as ExtensionContext;
-				await openDashboard(ctx as ExtensionContext);
+				await openDashboard(ctx as ExtensionContext, dashboardDeps);
 			},
 		});
 	}
@@ -1885,7 +825,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 			description: "Open the background task dashboard",
 			handler: async (ctx) => {
 				activeCtx = ctx as ExtensionContext;
-				await openDashboard(ctx as ExtensionContext);
+				await openDashboard(ctx as ExtensionContext, dashboardDeps);
 			},
 		});
 	}
