@@ -202,7 +202,7 @@ Edit `skills/<name>/SKILL.md` directly. No separate `rules/` directories or per-
 
 ## Pi APPEND_SYSTEM.md load order
 
-Pi auto-discovers exactly one `APPEND_SYSTEM.md`: it checks `<cwd>/.pi/APPEND_SYSTEM.md` first and falls back to `~/.pi/agent/APPEND_SYSTEM.md` only if the project file is missing. The two are not concatenated — a project file shadows the global one entirely. To keep both visible inside a project, mirror the global blocks into the project file (or omit the project file).
+Pi core auto-discovers exactly one `APPEND_SYSTEM.md`: it checks `<cwd>/.pi/APPEND_SYSTEM.md` first and falls back to `~/.pi/agent/APPEND_SYSTEM.md` only if the project file is missing. The two are not concatenated by Pi core. The Claude bridge can opt into forwarding both global and project files with `includeAppendSystemPromptMd`.
 
 ## Pi Extension UI Rules
 
