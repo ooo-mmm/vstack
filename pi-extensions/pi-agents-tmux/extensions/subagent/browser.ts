@@ -112,6 +112,14 @@ function isAgentBrowserTextInput(data: string): boolean {
 	return data.length === 1 && data >= " " && data !== "\x7f";
 }
 
+function isAgentBrowserCancelInput(data: string): boolean {
+	// After terminal/tmux resize events, stdin can occasionally deliver raw control
+	// bytes in chunks that `matchesKey()` does not normalize. Always honor Ctrl+C
+	// if the byte is present anywhere in the input chunk so the popup cannot trap
+	// the session in raw-mode focus.
+	return data.includes("\x03") || matchesKey(data, "escape") || matchesKey(data, "ctrl+c");
+}
+
 function compactAgentPath(filePath: string): string {
 	const home = os.homedir();
 	return filePath.startsWith(home) ? `~${filePath.slice(home.length)}` : filePath;
@@ -1202,6 +1210,29 @@ function createAgentsBrowserComponent(
 	getActiveItems: () => SubagentDashboardItem[],
 	runtimeRoot: string,
 ) {
+	let closed = false;
+	let resizeTimer: ReturnType<typeof setTimeout> | undefined;
+	const scheduleResizeRender = () => {
+		if (closed) return;
+		requestRender();
+		if (resizeTimer) clearTimeout(resizeTimer);
+		resizeTimer = setTimeout(() => {
+			resizeTimer = undefined;
+			if (!closed) requestRender();
+		}, 80);
+		resizeTimer.unref?.();
+	};
+	const cleanup = () => {
+		closed = true;
+		if (resizeTimer) clearTimeout(resizeTimer);
+		resizeTimer = undefined;
+		process.off("SIGWINCH", scheduleResizeRender);
+	};
+	const finish = (action: AgentBrowserAction) => {
+		cleanup();
+		done(action);
+	};
+	process.on("SIGWINCH", scheduleResizeRender);
 	const filtered = () => filterAgentsForBrowser(discovery.agents, ui.search, statuses);
 	const selectedAgent = () => filtered()[ui.selected];
 	const clamp = () => {
@@ -1264,32 +1295,32 @@ function createAgentsBrowserComponent(
 		ui.selected = 0;
 		ui.scroll = 0;
 		ui.inspectorScroll = 0;
-		done({ type: "reload" });
+		finish({ type: "reload" });
 	};
 	const insertSelected = () => {
 		const agent = selectedAgent();
-		if (agent) done({ type: "insert", agentName: agent.name });
+		if (agent) finish({ type: "insert", agentName: agent.name });
 	};
 	const startSelected = () => {
 		const agent = selectedAgent();
-		if (agent) done({ type: "start", agentName: agent.name });
+		if (agent) finish({ type: "start", agentName: agent.name });
 	};
 	const attachSelected = () => {
 		const agent = selectedAgent();
-		if (agent) done({ type: "attach", agentName: agent.name });
+		if (agent) finish({ type: "attach", agentName: agent.name });
 	};
 	const stopSelected = () => {
 		const agent = selectedAgent();
-		if (agent) done({ type: "stop", agentName: agent.name });
+		if (agent) finish({ type: "stop", agentName: agent.name });
 	};
 	const editFrontmatterSelected = () => {
 		const agent = selectedAgent();
-		if (agent) done({ type: "editFrontmatter", agentName: agent.name });
+		if (agent) finish({ type: "editFrontmatter", agentName: agent.name });
 	};
 	function handleInput(data: string): void {
-		if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
+		if (isAgentBrowserCancelInput(data)) {
 			if (ui.tab !== "active" && ui.search) { ui.search = ""; ui.selected = 0; ui.scroll = 0; requestRender(); return; }
-			done({ type: "close" });
+			finish({ type: "close" });
 			return;
 		}
 		if (matchesKey(data, "tab")) return switchTab(1);
