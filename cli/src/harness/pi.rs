@@ -39,7 +39,7 @@ pub fn generate_agent(
         .model
         .clone()
         .unwrap_or_else(|| pi_model_for(&agent.model));
-    let deny_tools = pi_deny_tools_for(&frontmatter);
+    let deny_tools = pi_deny_tools_for(agent, &frontmatter);
     let tools = pi_tools_frontmatter_override(&frontmatter, &deny_tools);
 
     let mut output = String::new();
@@ -63,9 +63,9 @@ pub fn generate_agent(
     {
         output.push_str(&format!("color: {}\n", color));
     }
-    let pane = frontmatter
-        .pane
-        .unwrap_or_else(|| matches!(agent.role, AgentRole::Engineer));
+    let pane = frontmatter.pane.unwrap_or_else(|| {
+        matches!(agent.role, AgentRole::Engineer) || agent.name.eq_ignore_ascii_case("planner")
+    });
     if pane {
         output.push_str("pane: true\n");
     }
@@ -162,22 +162,24 @@ fn pi_tools_frontmatter_override(
         .map(|tools| subtract_denied_pi_tools(tools, deny_tools))
 }
 
-fn pi_deny_tools_for(frontmatter: &agent::AgentFrontmatterOverrides) -> Vec<String> {
+fn pi_deny_tools_for(agent: &Agent, frontmatter: &agent::AgentFrontmatterOverrides) -> Vec<String> {
     let tools = frontmatter
         .deny_tools
         .clone()
-        .unwrap_or_else(pi_default_deny_tools_for);
+        .unwrap_or_else(|| pi_default_deny_tools_for(agent));
     dedupe_pi_tool_names(tools)
 }
 
-fn pi_default_deny_tools_for() -> Vec<String> {
-    let tools = vec![
+fn pi_default_deny_tools_for(agent: &Agent) -> Vec<String> {
+    let mut tools = vec![
         "subagent".into(),
         "get_subagent_result".into(),
         "steer_subagent".into(),
         "stop_subagent".into(),
-        "question".into(),
     ];
+    if !agent.name.eq_ignore_ascii_case("planner") {
+        tools.push("question".into());
+    }
     tools
 }
 
@@ -327,6 +329,32 @@ mod tests {
         assert!(content.contains("rust-arch"));
         assert!(content.contains("## Additional Instructions"));
         assert!(content.contains("Never edit this file directly"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn generate_planner_runs_in_pane_and_keeps_question_available() {
+        let dir =
+            std::env::temp_dir().join(format!("vstack_pi_agent_planner_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let agent = agent_fixture("planner", AgentRole::Engineer, "sonnet");
+        let extras = AgentExtras::default();
+        let path = generate_agent(&agent, &dir, &[], &[], &[], &extras).expect("generate ok");
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("pane: true"));
+        let deny_line = content
+            .lines()
+            .find(|line| line.starts_with("deny-tools:"))
+            .expect("deny-tools line");
+        assert!(deny_line.contains("subagent"));
+        assert!(deny_line.contains("get_subagent_result"));
+        assert!(deny_line.contains("steer_subagent"));
+        assert!(deny_line.contains("stop_subagent"));
+        assert!(!deny_line.contains("question"));
 
         let _ = std::fs::remove_dir_all(&dir);
     }
