@@ -46,13 +46,18 @@ type SessionInfo = Awaited<ReturnType<typeof SessionManager.list>>[number];
 type Scope = "current" | "all";
 type SortMode = "threaded" | "recent" | "relevance";
 type NameFilter = "all" | "named";
-type Mode = "browse" | "loading" | "rename" | "confirm-delete" | "confirm-delete-all" | "deleting";
+type Mode = "browse" | "loading" | "rename" | "confirm-delete" | "confirm-delete-all" | "confirm-model" | "deleting";
 
 type SessionAction = { type: "resume"; path: string; title: string; keepCurrentModel?: boolean } | { type: "cancel" };
 type SessionManagerContext = ExtensionCommandContext | ExtensionContext;
 const pendingSessionManagerActions = new Map<string, SessionAction>();
 let pendingSessionManagerActionCounter = 0;
 const sessionUserMessagesCache = new Map<string, SessionUserMessage[]>();
+
+interface ModelInfo {
+	provider: string;
+	id: string;
+}
 
 function pinSessionModel(sessionPath: string, model: NonNullable<ExtensionContext["model"]>, thinkingLevel?: string): void {
 	const manager = SessionManager.open(sessionPath);
@@ -65,6 +70,28 @@ function pinSessionModel(sessionPath: string, model: NonNullable<ExtensionContex
 		const lastThinking = [...branch].reverse().find((entry: any) => entry?.type === "thinking_level_change") as { thinkingLevel?: string } | undefined;
 		if (lastThinking?.thinkingLevel !== thinkingLevel) manager.appendThinkingLevelChange(thinkingLevel as any);
 	}
+}
+
+function sessionModelInfo(sessionPath: string): ModelInfo | undefined {
+	try {
+		const model = SessionManager.open(sessionPath).buildSessionContext().model;
+		if (!model?.provider || !model?.modelId) return undefined;
+		return { provider: model.provider, id: model.modelId };
+	} catch {
+		return undefined;
+	}
+}
+
+function currentModelInfo(ctx: SessionManagerContext): ModelInfo | undefined {
+	return ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined;
+}
+
+function sameModel(a: ModelInfo | undefined, b: ModelInfo | undefined): boolean {
+	return Boolean(a && b && a.provider === b.provider && a.id === b.id);
+}
+
+function modelLabel(model: ModelInfo | undefined): string {
+	return model ? `${model.provider}/${model.id}` : "unknown model";
 }
 
 interface VstackModalLock {
@@ -638,6 +665,8 @@ class SessionManagerOverlay implements Focusable {
 	private deleteTarget: SessionInfo | undefined;
 	private deleteAllTargets: SessionInfo[] = [];
 	private deleteConfirmSelection: 0 | 1 = 0;
+	private modelConfirmTarget: SessionInfo | undefined;
+	private modelConfirmSelection: 0 | 1 = 0;
 	private notice: { kind: "info" | "error"; text: string } | undefined;
 	private queryError: string | undefined;
 	private loadingProgress: { loaded: number; total: number } | undefined;
@@ -676,7 +705,7 @@ class SessionManagerOverlay implements Focusable {
 	}
 
 	private footerRowCount(): number {
-		return this.mode === "confirm-delete" || this.mode === "confirm-delete-all" || this.mode === "rename" ? 1 : 2;
+		return this.mode === "confirm-delete" || this.mode === "confirm-delete-all" || this.mode === "confirm-model" || this.mode === "rename" ? 1 : 2;
 	}
 
 	private detailRowCount(): number {
@@ -833,6 +862,32 @@ class SessionManagerOverlay implements Focusable {
 		this.deleteTarget = undefined;
 		this.deleteAllTargets = [];
 		this.deleteConfirmSelection = 0;
+		this.modelConfirmTarget = undefined;
+		this.modelConfirmSelection = 0;
+	}
+
+	private resumeAction(session: SessionInfo, keepCurrentModel = false): SessionAction {
+		return { type: "resume", path: session.path, title: sessionResumeTitle(session), keepCurrentModel };
+	}
+
+	private startResume(session: SessionInfo): void {
+		const previousModel = sessionModelInfo(session.path);
+		const activeModel = currentModelInfo(this.ctx);
+		if (previousModel && activeModel && !sameModel(previousModel, activeModel)) {
+			this.modelConfirmTarget = session;
+			this.modelConfirmSelection = 0;
+			this.mode = "confirm-model";
+			this.notice = undefined;
+			this.requestRender();
+			return;
+		}
+		this.done(this.resumeAction(session, false));
+	}
+
+	private confirmModelResume(): void {
+		const target = this.modelConfirmTarget;
+		if (!target) return;
+		this.done(this.resumeAction(target, this.modelConfirmSelection === 1));
 	}
 
 	private startDelete(session: SessionInfo): void {
@@ -954,6 +1009,24 @@ class SessionManagerOverlay implements Focusable {
 			return;
 		}
 
+		if (this.mode === "confirm-model") {
+			if (this.keybindings.matches(data, "tui.select.up") || this.keybindings.matches(data, "tui.select.down") || matchesKey(data, "up") || matchesKey(data, "down")) {
+				this.modelConfirmSelection = this.modelConfirmSelection === 0 ? 1 : 0;
+				this.requestRender();
+				return;
+			}
+			if (this.keybindings.matches(data, "tui.select.confirm") || matchesKey(data, "enter") || matchesKey(data, "return")) {
+				this.confirmModelResume();
+				return;
+			}
+			if (this.keybindings.matches(data, "tui.select.cancel") || matchesKey(data, "backspace") || matchesKey(data, "escape")) {
+				this.cancelModalMode();
+				this.requestRender();
+				return;
+			}
+			return;
+		}
+
 		if (this.mode === "deleting" || this.mode === "loading") {
 			if (this.keybindings.matches(data, "tui.select.cancel")) this.done({ type: "cancel" });
 			return;
@@ -1011,15 +1084,9 @@ class SessionManagerOverlay implements Focusable {
 			return;
 		}
 
-		if (matchesKey(data, "alt+m")) {
-			const selected = this.selected();
-			if (selected) this.done({ type: "resume", path: selected.path, title: sessionResumeTitle(selected), keepCurrentModel: true });
-			return;
-		}
-
 		if (this.keybindings.matches(data, "tui.select.confirm")) {
 			const selected = this.selected();
-			if (selected) this.done({ type: "resume", path: selected.path, title: sessionResumeTitle(selected) });
+			if (selected) this.startResume(selected);
 			return;
 		}
 
@@ -1106,6 +1173,16 @@ class SessionManagerOverlay implements Focusable {
 			return lines.map((line) => truncateToWidth(line, renderWidth, ""));
 		}
 
+		if (this.mode === "confirm-model") {
+			const rowsBeforeConfirmBody = 1 + POPUP_PADDING_Y + 2;
+			const rowsAfterConfirmBody = POPUP_PADDING_Y + 1;
+			const targetRows = Math.max(12, this.maxPopupRows() - rowsBeforeConfirmBody - rowsAfterConfirmBody);
+			lines.push(...this.renderModelConfirmationRows(bodyWidth, targetRows, { row, dim, muted, accent, warning }));
+			for (let i = 0; i < POPUP_PADDING_Y; i++) lines.push(blank());
+			lines.push(border(`┗${"━".repeat(frameInner)}┛`));
+			return lines.map((line) => truncateToWidth(line, renderWidth, ""));
+		}
+
 		lines.push(row(this.renderSubheader(bodyWidth, accent, muted, dim, warning, error)));
 		lines.push(filledRow(this.renderSearch(bodyWidth, dim)));
 		lines.push(divider());
@@ -1187,6 +1264,70 @@ class SessionManagerOverlay implements Focusable {
 			boxDivider(),
 			boxRow(optionRow(0, deleteAll ? `Delete ${deleteCountLabel}` : "Delete this session")),
 			boxRow(optionRow(1, "Go back to previous screen")),
+			bottom(),
+		];
+
+		const bodyRows = Math.max(boxLines.length, targetRows);
+		const topPad = Math.max(0, Math.floor((bodyRows - boxLines.length) / 2));
+		const lines: string[] = [];
+		for (let i = 0; i < topPad; i++) lines.push(ui.row(""));
+		for (const line of boxLines) lines.push(ui.row(centeredBoxLine(line)));
+		while (lines.length < bodyRows) lines.push(ui.row(""));
+		return lines;
+	}
+
+	private renderModelConfirmationRows(
+		inner: number,
+		targetRows: number,
+		ui: {
+			row: (content?: string) => string;
+			dim: (s: string) => string;
+			muted: (s: string) => string;
+			accent: (s: string) => string;
+			warning: (s: string) => string;
+		},
+	): string[] {
+		const target = this.modelConfirmTarget;
+		const previousModel = target ? sessionModelInfo(target.path) : undefined;
+		const activeModel = currentModelInfo(this.ctx);
+		const previousLabel = modelLabel(previousModel);
+		const activeLabel = modelLabel(activeModel);
+		const boxWidth = Math.max(1, Math.min(inner, Math.max(44, Math.min(86, inner - 12))));
+		const boxInner = Math.max(1, boxWidth - 4);
+		const centeredBoxLine = (line: string) => `${" ".repeat(Math.max(0, Math.floor((inner - boxWidth) / 2)))}${line}`;
+		const top = () => {
+			const label = " Choose model ";
+			const fill = Math.max(1, boxWidth - 2 - visibleWidth(label));
+			return `${ui.warning("┏")}${ansiYellow(label)}${ui.warning("━".repeat(fill))}${ui.warning("┓")}`;
+		};
+		const bottom = () => ui.warning(`┗${"━".repeat(Math.max(0, boxWidth - 2))}┛`);
+		const boxRow = (content = "") => `${ui.warning("┃ ")}${padAnsi(content, boxInner)}${ui.warning(" ┃")}`;
+		const boxDivider = () => `${ui.warning("┃ ")}${ui.muted("─".repeat(boxInner))}${ui.warning(" ┃")}`;
+		const optionRow = (index: 0 | 1, label: string, model: string) => {
+			const selected = this.modelConfirmSelection === index;
+			const prefix = selected ? "› " : "  ";
+			const labelText = selected ? this.theme.fg("text", label) : ui.dim(label);
+			const modelText = selected ? ui.warning(model) : ui.muted(model);
+			const content = `${ui.warning(prefix)}${labelText}${ui.dim(" — ")}${modelText}`;
+			const padded = padAnsi(content, boxInner);
+			return selected ? this.theme.bg("selectedBg", padded) : padded;
+		};
+
+		const title = target ? truncateToWidth(sessionResumeTitle(target), Math.max(8, boxInner - 2), "…") : "selected session";
+		const boxLines = [
+			top(),
+			boxRow(centerAnsi(ui.warning(this.theme.bold("Model differs from current session")), boxInner)),
+			boxRow(centerAnsi(ui.accent(`“${title}”`), boxInner)),
+			boxRow(""),
+			boxRow(`${ui.dim("Session model: ")}${ui.warning(previousLabel)}`),
+			boxRow(`${ui.dim("Current model: ")}${ui.warning(activeLabel)}`),
+			boxRow(""),
+			boxRow(ui.dim("Previous model resumes exactly as saved.")),
+			boxRow(ui.dim("Current model writes a model-change event before resume,")),
+			boxRow(ui.dim("so full context transfers and future turns use it.")),
+			boxDivider(),
+			boxRow(optionRow(0, "Continue with previous model", previousLabel)),
+			boxRow(optionRow(1, "Continue with current model", activeLabel)),
 			bottom(),
 		];
 
@@ -1366,10 +1507,10 @@ class SessionManagerOverlay implements Focusable {
 	}
 
 	private renderFooter(inner: number, dim: (s: string) => string, warning: (s: string) => string, error: (s: string) => string): string[] {
-		if (this.mode === "confirm-delete" || this.mode === "confirm-delete-all") return [];
+		if (this.mode === "confirm-delete" || this.mode === "confirm-delete-all" || this.mode === "confirm-model") return [];
 		if (this.mode === "rename") return [warning("empty name clears title")];
 		return [
-			`${ansiYellow("-/=")} ${dim("page · ")}${ansiYellow("enter")} ${dim("resume · ")}${ansiYellow("alt+m")} ${dim("resume+model · ")}${ansiYellow("alt+r")} ${dim("rename")}`,
+			`${ansiYellow("-/=")} ${dim("page · ")}${ansiYellow("enter")} ${dim("resume · ")}${ansiYellow("alt+r")} ${dim("rename")}`,
 			`${ansiYellow("tab")} ${dim("scope · ")}${ansiYellow("alt+s")} ${dim("sort · ")}${ansiYellow("alt+n")} ${dim("names · ")}${ansiYellow("del")} ${dim("delete · ")}${ansiYellow("alt+d")} ${dim("delete all")}`,
 		];
 	}
