@@ -34,7 +34,7 @@ cli/src/
 │   ├── cursor.rs        → .cursor/rules/*.mdc (description + alwaysApply + skills section)
 │   ├── opencode.rs      → .opencode/agents/*.md (YAML frontmatter + skills section)
 │   ├── codex.rs         → .codex/agents/*.toml (developer_instructions + skills section)
-│   └── pi.rs            → .pi/agents/*.md (Pi frontmatter: name, description, tools, deny-tools, model, pane)
+│   └── pi.rs            → .pi/agents/*.md (Pi frontmatter: name, description, deny-tools, optional tools, model, pane)
 └── tui/
     ├── mod.rs           Re-exports and shared types (DiscoveredItems incl. pi_extensions)
     ├── install_flow.rs  Install wizard, event loop, inline update, tab mutation
@@ -175,7 +175,7 @@ trading-design = "Dark theme, green/red accents."
 
 ## Per-Harness Tool Overrides
 
-- Prefer `deny-tools` for tool restrictions. Claude Code writes it as native `disallowedTools`; Pi writes `deny-tools` for `pi-agents-tmux`, whose default is active parent tools minus denials. `tools` remains supported for rare strict allowlists.
+- Prefer `deny-tools` for tool restrictions. Claude Code writes it as native `disallowedTools`; Pi emits `deny-tools` for `pi-agents-tmux`, whose default is active parent tools minus denials. Pi `tools` is omitted by default and remains supported only for rare strict allowlists.
 - OpenCode uses `permission` for tool access; vstack currently maps role to `mode` and does not emit per-agent permissions.
 - Cursor and Codex do not use the same agent `tools` frontmatter.
 

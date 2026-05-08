@@ -630,6 +630,7 @@ function editableAgentFrontmatterText(agent: AgentConfig): string {
 	const current = agentCurrentFrontmatterEdit(agent);
 	return [
 		"# Edit Pi agent frontmatter overrides. Blank values remove the override.",
+		"# Omit tools for inherited-tool behavior; set tools only for strict allowlists.",
 		"# For vstack-managed project agents, this writes [agent-frontmatter.pi] in vstack.toml.",
 		`model: ${current.model}`,
 		`deny-tools: ${current.denyTools.join(", ")}`,
@@ -4788,7 +4789,7 @@ function renderTraceTabBar(items: TraceViewerItem[], selected: number, width: nu
 }
 
 async function editAgentFrontmatterOverrides(ctx: ExtensionContext, agent: AgentConfig): Promise<string | undefined> {
-	const edited = await ctx.ui.editor(`Edit ${agent.name} frontmatter — model/deny-tools/tools/color`, editableAgentFrontmatterText(agent));
+	const edited = await ctx.ui.editor(`Edit ${agent.name} frontmatter — model/deny-tools/optional tools/color`, editableAgentFrontmatterText(agent));
 	if (edited === undefined) return undefined;
 	const parsed = parseEditableAgentFrontmatterText(edited);
 	if (isVstackManagedAgentFile(agent)) {
@@ -5701,8 +5702,7 @@ export default function (pi: ExtensionAPI) {
 									`Source: ${agent.source}`,
 									`Path: ${agent.filePath}`,
 									`Model: ${agent.model ?? "default"}`,
-									`Tools: ${agent.tools?.join(", ") ?? "default"}`,
-									...(agent.denyTools && agent.denyTools.length > 0 ? [`Deny tools: ${agent.denyTools.join(", ")}`] : []),
+									`Deny tools: ${agent.denyTools && agent.denyTools.length > 0 ? agent.denyTools.join(", ") : "none"}`,
 									`Persistent pane: ${agent.pane ? "yes" : "no"}`,
 									"",
 									agent.description,

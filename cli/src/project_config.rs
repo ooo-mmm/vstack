@@ -950,7 +950,7 @@ fn project_config_header() -> String {
     out.push_str("# every install and refresh.\n");
     out.push_str("#\n");
     out.push_str("# Skills live in [agent-skills]. Generated frontmatter\n");
-    out.push_str("# overrides like model, deny-tools, tools, color, and pane live in\n");
+    out.push_str("# overrides like model, deny-tools, optional tools, color, and pane live in\n");
     out.push_str("# [agent-frontmatter] or [agent-frontmatter.pi].\n");
     out.push_str("#\n");
     out.push_str("# After editing, run:  vstack refresh\n");
@@ -1439,7 +1439,9 @@ fn sync_agent_frontmatter_heading(content: &str) -> String {
 fn agent_frontmatter_pi_heading() -> String {
     let mut out = String::new();
     out.push_str("# Pi-specific frontmatter overrides. This is where the\n");
-    out.push_str("# Pi /agents popup writes model, deny-tools, tools, and color changes for\n");
+    out.push_str(
+        "# Pi /agents popup writes model, deny-tools, optional tools, and color changes for\n",
+    );
     out.push_str("# vstack-managed project agents.\n");
     out.push_str("# Examples:\n");
     out.push_str("# rust = { color = \"orange\" }\n");

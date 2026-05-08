@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 /// ---
 /// name: rust
 /// description: "..."
-/// tools: read, grep, find, ls, bash, edit, write
+/// deny-tools: subagent, get_subagent_result, steer_subagent, stop_subagent, question
 /// model: claude-opus-4-5
 /// color: green
 /// pane: true
@@ -40,7 +40,7 @@ pub fn generate_agent(
         .clone()
         .unwrap_or_else(|| pi_model_for(&agent.model));
     let deny_tools = pi_deny_tools_for(&frontmatter);
-    let tools = pi_tools_with_overrides(agent, skills, &frontmatter, &deny_tools);
+    let tools = pi_tools_frontmatter_override(&frontmatter, &deny_tools);
 
     let mut output = String::new();
     output.push_str("---\n");
@@ -48,7 +48,9 @@ pub fn generate_agent(
 
     let desc = agent.description.replace('\\', "\\\\").replace('"', "\\\"");
     output.push_str(&format!("description: \"{}\"\n", desc));
-    output.push_str(&format!("tools: {}\n", tools.join(", ")));
+    if let Some(tools) = tools.as_ref().filter(|tools| !tools.is_empty()) {
+        output.push_str(&format!("tools: {}\n", tools.join(", ")));
+    }
     if !deny_tools.is_empty() {
         output.push_str(&format!("deny-tools: {}\n", deny_tools.join(", ")));
     }
@@ -146,17 +148,18 @@ pub fn pi_tools_for(agent: &Agent, skills: &[(String, String)]) -> Vec<String> {
     dedupe_tools(tools)
 }
 
-fn pi_tools_with_overrides(
-    agent: &Agent,
-    skills: &[(String, String)],
+fn pi_tools_frontmatter_override(
     frontmatter: &agent::AgentFrontmatterOverrides,
     deny_tools: &[String],
-) -> Vec<String> {
-    let tools = frontmatter
+) -> Option<Vec<String>> {
+    // Default Pi child sessions inherit the parent's active tools and subtract
+    // deny-tools, so generated agents do not need a noisy tools allowlist.
+    // Keep explicit tools overrides for rare strict allowlists and compatibility
+    // with subagentToolAccess=frontmatter.
+    frontmatter
         .tools
         .clone()
-        .unwrap_or_else(|| pi_tools_for(agent, skills));
-    subtract_denied_pi_tools(tools, deny_tools)
+        .map(|tools| subtract_denied_pi_tools(tools, deny_tools))
 }
 
 fn pi_deny_tools_for(frontmatter: &agent::AgentFrontmatterOverrides) -> Vec<String> {
@@ -313,12 +316,10 @@ mod tests {
         assert!(content.contains("name: rust"));
         assert!(content.contains("model: openai-codex/gpt-5.5:xhigh"));
         assert!(content.contains("color: magenta"));
-        assert!(content.contains("tools: read, grep, find, ls, bash, edit, write"));
+        assert!(!content.lines().any(|line| line.starts_with("tools:")));
         assert!(content.contains(
             "deny-tools: subagent, get_subagent_result, steer_subagent, stop_subagent, question"
         ));
-        assert!(content.contains("web_search"));
-        assert!(content.contains("web_research"));
         assert!(content.contains("pane: true"));
         assert!(content.contains("## Launch Instructions"));
         assert!(content.contains("Read open issues and start."));
@@ -331,7 +332,7 @@ mod tests {
     }
 
     #[test]
-    fn generate_agent_applies_deny_tools_after_defaults() {
+    fn generate_agent_emits_explicit_tools_override_and_applies_deny_tools() {
         let dir =
             std::env::temp_dir().join(format!("vstack_pi_agent_deny_tools_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -340,6 +341,12 @@ mod tests {
         let agent = agent_fixture("rust", AgentRole::Engineer, "opus");
         let extras = AgentExtras {
             frontmatter: agent::AgentFrontmatterOverrides {
+                tools: Some(vec![
+                    "read".into(),
+                    "bash".into(),
+                    "write".into(),
+                    "apply_patch".into(),
+                ]),
                 deny_tools: Some(vec!["bash".into(), "apply-patch".into()]),
                 ..Default::default()
             },
@@ -373,12 +380,10 @@ mod tests {
 
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("model: openai-codex/gpt-5.5:high"));
-        assert!(content.contains("tools: read, grep, find, ls, bash, edit, write"));
+        assert!(!content.lines().any(|line| line.starts_with("tools:")));
         assert!(content.contains(
             "deny-tools: subagent, get_subagent_result, steer_subagent, stop_subagent, question"
         ));
-        assert!(content.contains("web_search"));
-        assert!(content.contains("web_research"));
         assert!(!content.contains("pane: true"));
 
         let _ = std::fs::remove_dir_all(&dir);

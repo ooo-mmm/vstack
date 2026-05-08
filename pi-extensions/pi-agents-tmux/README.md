@@ -109,7 +109,7 @@ Arguments support autocomplete, including known agent names for `show`, `start`,
 - `↑/↓`, `-/=`, `Home/End` navigate the list; `←/→` switches focus between list and inspector.
 - In the inspector, `↑/↓`, `-/=`, `Home/End` scroll the system prompt preview.
 - `Enter` inserts `Use agent <name> to: ` into the editor.
-- `Alt+M` edits the selected agent's frontmatter (`model`, `deny-tools`, `tools`, `color`). For vstack-managed project agents, changes are written to `[agent-frontmatter.pi]` in `vstack.toml`, the agent is regenerated immediately, and a confirmation dialog shows the updated files.
+- `Alt+M` edits the selected agent's frontmatter (`model`, `deny-tools`, optional `tools`, `color`). For vstack-managed project agents, changes are written to `[agent-frontmatter.pi]` in `vstack.toml`, the agent is regenerated immediately, and a confirmation dialog shows the updated files.
 - For `pane: true` agents, `Ctrl+P` starts/reuses a pane, `Ctrl+O` attaches, and `Ctrl+X` stops it.
 - `Esc` clears search or closes.
 
@@ -133,7 +133,6 @@ Agents with `pane: true` frontmatter use a persistent tmux pane instead of one-s
 ---
 name: iced
 description: Iced UI specialist
-tools: read, grep, find, ls, bash, edit, write
 deny-tools: bash
 model: openai-codex/gpt-5.5:xhigh
 color: cyan
@@ -147,7 +146,7 @@ Supported agent frontmatter fields:
 | --- | --- | --- |
 | `name` | yes | Unique agent name used in `subagent`, `/agents`, pane title, and task ids. |
 | `description` | yes | Short description shown in `/agents` and completions. |
-| `tools` | no | Comma-separated Pi tool allowlist, for example `read, grep, find, ls, bash, edit, write, web_research`. This is used only when `subagentToolAccess=frontmatter`; default `all` inherits active parent tools instead. |
+| `tools` | no | Optional comma-separated Pi tool allowlist, for example `read, grep, find, ls, bash, edit, write, web_research`. Omit it for normal inherited-tool behavior. It is used only when `subagentToolAccess=frontmatter`; default `all` inherits active parent tools instead. |
 | `deny-tools` | no | Comma-separated Pi tools to subtract from inherited active tools or the strict `tools` allowlist. Prefer this for maintainable restrictions; future parent tools are inherited unless explicitly denied. Vstack-generated agents deny recursive/prompt tools by default, but hand-authored agents can choose differently. |
 | `model` | no | Pi model id. Shorthands are accepted: `sonnet` → `claude-sonnet-4-5`, `opus*` → `claude-opus-4-5`, `haiku` → `claude-haiku-4-5`. Other values pass through unchanged, including provider ids like `openai-codex/gpt-5.5:xhigh`. |
 | `pane` | no | `true`, `yes`, `1`, or `pane` starts/reuses a persistent tmux pane. Omit or use `false` for background one-shot mode. |
