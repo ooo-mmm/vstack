@@ -1,4 +1,4 @@
-## pi-agents-tmux — using `subagent`, `steer_subagent`, `get_subagent_result`
+## pi-agents-tmux — using `subagent`, `steer_subagent`, `get_subagent_result`, `stop_subagent`
 
 The `subagent` tool delegates work to a project-defined agent (loaded from `.pi/agents`, with `.claude/agents` as a compatibility source). Some agents run in persistent tmux panes (`pane: true` in their frontmatter) and survive across turns; others are one-shot.
 
@@ -14,10 +14,11 @@ When NOT to use:
 
 Calling rules:
 - Default `agentScope` is `"project"`. Use `"both"` only when user-level agents at `~/.pi/agent/agents` are explicitly needed.
-- For persistent-pane agents (`pane: true`): save the returned `taskId`. Use `get_subagent_result` if you missed the completion event, and `steer_subagent` only for mid-run correction (not as a substitute for a fresh task).
+- For persistent-pane agents (`pane: true`): save the returned `taskId`. Use `get_subagent_result` if you missed the completion event, `steer_subagent` only for mid-run correction, and `stop_subagent` to kill/close the pane.
 - `confirmProjectAgents: true` to gate any project-defined agent behind explicit user approval.
 - Provide a single, self-contained `task` string per delegation — the subagent cannot ask you follow-ups.
+- Use `forceSpawn: true` only after stopping a pane when you want a fresh pane session; omit it to resume/reuse.
 
-Slash commands available to the user (you do not invoke these): `/agents start|send|attach|stop|status`, plus `/agents` for the picker.
+Slash commands available to the user (you do not invoke these): `/agents start|new|send|attach|stop|status`, plus `/agents` for the picker.
 
 The `before_agent_start` hook injects the live list of project agents and their descriptions into your context — use those names in `subagent` calls. If no project agents are loaded, the tool still works but with no curated list.

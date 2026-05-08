@@ -24,12 +24,12 @@ Restart Pi after installation.
 ## What it provides
 
 - `subagent` tool for one-off delegation, parallel delegation, or sequential chains.
-- Ships `instructions.md` so vstack/npm install adds `subagent`/`steer_subagent`/`get_subagent_result` usage rules to the scope's `APPEND_SYSTEM.md`, removed on uninstall or disable.
+- Ships `instructions.md` so vstack/npm install adds `subagent`/`steer_subagent`/`get_subagent_result`/`stop_subagent` usage rules to the scope's `APPEND_SYSTEM.md`, removed on uninstall or disable.
 - Project/user agent discovery from `.pi/agents`, `.claude/agents`, and `~/.pi/agent/agents`.
 - Persistent tmux panes for agents with `pane: true` frontmatter.
 - Grouped, themed completion notifications for persistent pane results.
 - Durable task registry plus `get_subagent_result` recovery by `taskId` or latest agent task.
-- `steer_subagent` for bridge-based mid-run steering, limited to exact child session-file targeting, with an explicit inbox fallback when that exact bridge target is unavailable.
+- `steer_subagent` for bridge-based mid-run steering, and `stop_subagent` for killing panes and clearing active registry/dashboard state.
 - Session-scoped inbox/outbox handoff, transcript artifacts, and pane registries under `~/.pi/agent/vstack/pi-agents-tmux/sessions/<session-id>/`.
 - Auto-sized grid tmux layout for pane agents, reflowed on every spawn, with pane titles like `agent:iced`.
 
@@ -81,7 +81,7 @@ Bg (non-pane) agents resume by default per parent session: omitting `sessionKey`
 
 The extension routes pi at `runtime/sessions/bg-<agent>-<key>.jsonl`. Same `agent + sessionKey` across delegations resumes the same pi session and retains memory; different keys keep separate histories.
 
-Pane agents already persist via their own pane session file, so `sessionKey` is ignored when the agent has `pane: true`. To explicitly request a *fresh* pane, pass `forceSpawn: true`; the call errors if a live pane already exists and tells you to `/agents:stop <name>` first.
+Pane agents persist via their own pane session file, so `sessionKey` is ignored when the agent has `pane: true`. Default start/send resumes or reuses that session. To start fresh after stopping a pane, pass `forceSpawn: true` or run `/agents:new <name>`; if a live pane exists, stop it first.
 
 ## Commands
 
@@ -90,7 +90,8 @@ Pane agents already persist via their own pane session file, so `sessionKey` is 
 | `/agents` | Open the browser using project scope. |
 | `/agents project\|user\|both` | Open the browser with an explicit scope. |
 | `/agents show <name> [scope]` | Inspect an agent. |
-| `/agents:start <name>` | Start or reuse a persistent pane. |
+| `/agents:start <name>` | Start/reuse a live pane or resume the saved pane session. |
+| `/agents:new <name>` | Stop any live pane and start with a fresh session file. |
 | `/agents:send <name> <task>` | Queue a task for a persistent pane. |
 | `/agents:attach <name>` | Focus an existing pane. |
 | `/agents:stop <name>` | Stop a persistent pane. |
@@ -99,7 +100,7 @@ Pane agents already persist via their own pane session file, so `sessionKey` is 
 | `/agents:trace <ref>` | Open/show one trace by task id, short id, or trace ref. |
 | `/agents:toggle` | Toggle the persistent dashboard. |
 
-Arguments support autocomplete, including known agent names for `show`, `start`, `send`, `attach`, and `stop`.
+Arguments support autocomplete, including known agent names for `show`, `start`, `new`, `send`, `attach`, and `stop`.
 
 ## Browser keys
 
@@ -145,7 +146,7 @@ Supported agent frontmatter fields:
 | --- | --- | --- |
 | `name` | yes | Unique agent name used in `subagent`, `/agents`, pane title, and task ids. |
 | `description` | yes | Short description shown in `/agents` and completions. |
-| `tools` | no | Comma-separated Pi tool allowlist, for example `read, grep, find, ls, bash, edit, write, web_research`. In default `subagentToolAccess=frontmatter` mode, new child sessions get only these tools plus `complete_subagent` for pane agents. If omitted, write-capable defaults are used for `generalist`, `rust`, `iced`, and `worker`; other names default to read-only tools. |
+| `tools` | no | Comma-separated Pi tool allowlist, for example `read, grep, find, ls, bash, edit, write, web_research`. Child sessions get only these tools plus `complete_subagent` for pane agents. Recursive/prompt tools (`subagent`, `get_subagent_result`, `steer_subagent`, `stop_subagent`, `question`) are stripped even if listed. |
 | `model` | no | Pi model id. Shorthands are accepted: `sonnet` → `claude-sonnet-4-5`, `opus*` → `claude-opus-4-5`, `haiku` → `claude-haiku-4-5`. Other values pass through unchanged, including provider ids like `openai-codex/gpt-5.5:xhigh`. |
 | `pane` | no | `true`, `yes`, `1`, or `pane` starts/reuses a persistent tmux pane. Omit or use `false` for background one-shot mode. |
 | `persistentPane` | no | Legacy alias for `pane`. |
@@ -171,14 +172,16 @@ Use `get_subagent_result` with either `taskId` or `agent` (latest task for that 
 { "taskId": "iced-...", "message": "Prioritize the failing layout test.", "deliverAs": "steer" }
 ```
 
-Use `steer_subagent` for mid-run correction. It targets `pi-session-bridge` (`steer`, `send --auto`, or `follow-up`) only when `pi-bridge list --json` contains an exact match for the child pane's registered `sessionFile` under this parent session runtime. It never falls back to matching by cwd, because multiple tmux tabs/sessions may share the same project path. If the exact bridge target is unavailable, it prints diagnostics and queues a clear steering note in the pane inbox; that fallback is not true mid-run steering and runs when the pane is idle.
+Use `steer_subagent` for mid-run correction. It targets `pi-session-bridge` (`steer`, `send --auto`, or `follow-up`) only when `pi-bridge list --json` contains an exact match for the child pane's registered `sessionFile` under this parent session runtime. It never falls back to matching by cwd. If the exact bridge target is unavailable, it queues a clear steering note in the pane inbox; that fallback is read only when the pane is idle.
+
+Use `stop_subagent` to kill a persistent pane from the parent agent. It removes the pane registry/dashboard row and marks any non-terminal active task as blocked.
 
 ## Artifacts and events
 
 - One-shot JSON-mode agents write JSONL transcripts under `transcripts/<agent>/`.
 - Persistent panes expose the full visible Pi session JSONL as their transcript path.
 - Oversized one-shot final output can still be preserved under `outputs/<agent>/`.
-- The extension emits best-effort in-process lifecycle events with legacy `subagents:*` names for compatibility: `subagents:ready`, `subagents:created`, `subagents:queued`, `subagents:started`, `subagents:completed`, `subagents:failed`, `subagents:needs_completion`, and `subagents:steered`.
+- The extension emits best-effort in-process lifecycle events with legacy `subagents:*` names for compatibility: `subagents:ready`, `subagents:created`, `subagents:queued`, `subagents:started`, `subagents:completed`, `subagents:failed`, `subagents:needs_completion`, `subagents:steered`, and stop events via registry/dashboard cleanup.
 
 ## In-process one-shot sessions (not implemented)
 
@@ -194,5 +197,5 @@ A future backend could use Pi SDK `createAgentSession()` for non-pane one-shot a
 - `truncateResults`, `resultMaxBytes` (default 102400), `resultMaxLines` (default 4000), and `preserveFullOutput` for result truncation. Oversized one-shot outputs are saved under `~/.pi/agent/vstack/pi-agents-tmux/sessions/<session-id>/outputs/` when preservation is enabled.
 - `completionPollMs` and `childInboxPollMs` for persistent pane polling intervals.
 - `forceSessionBridgeForPanes` (default `true`) explicitly loads `pi-session-bridge` in new pane launchers so steering continues to work if settings drift.
-- `subagentToolAccess` (default `frontmatter`) controls whether child Pi sessions receive only the agent `tools:` allowlist, or `all` active Pi tools from the child session.
+- `subagentToolAccess` (default `frontmatter`) controls whether child Pi sessions receive the agent `tools:` allowlist or all active Pi tools. Recursive/prompt tools are always stripped from child sessions.
 - `subagentModelSource` (default `frontmatter`) controls whether child Pi sessions use the agent `model:` value or inherit the parent session model.

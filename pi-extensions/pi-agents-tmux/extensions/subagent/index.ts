@@ -217,11 +217,13 @@ function selectedModelForAgent(agent: AgentConfig, parentModel: string | undefin
 	return subagentModelSource(cwd) === "parent" ? (parentModel ?? agent.model) : (agent.model ?? parentModel);
 }
 
-function selectedToolsForAgent(agent: AgentConfig, cwd: string | undefined, extraTools: string[] = []): string[] | undefined {
-	if (subagentToolAccess(cwd) === "all") return undefined;
-	const tools = [...(agent.tools ?? []), ...extraTools]
+const CHILD_TOOL_DENYLIST = new Set(["subagent", "get_subagent_result", "steer_subagent", "stop_subagent", "question"]);
+
+function selectedToolsForAgent(agent: AgentConfig, cwd: string | undefined, extraTools: string[] = [], activeTools?: string[]): string[] | undefined {
+	const baseTools = subagentToolAccess(cwd) === "all" ? (activeTools ?? agent.tools ?? []) : (agent.tools ?? []);
+	const tools = [...baseTools, ...extraTools]
 		.map((tool) => tool.trim())
-		.filter(Boolean);
+		.filter((tool) => tool && !CHILD_TOOL_DENYLIST.has(tool));
 	return tools.length > 0 ? [...new Set(tools)] : undefined;
 }
 
@@ -1934,7 +1936,9 @@ async function openAgentsBrowser(
 	parentSessionId: string,
 	parentModel: string | undefined,
 	parentThinkingLevel: string | undefined,
+	activeTools: string[] | undefined,
 	getActiveItems: () => SubagentDashboardItem[],
+	onAgentStopped?: (agentName: string) => void,
 ): Promise<void> {
 	const releaseModalLock = acquireVstackModalLock();
 	try {
@@ -2000,7 +2004,7 @@ async function openAgentsBrowser(
 			}
 			if (action.type === "start") {
 				if (!agent.pane) throw new Error(`${agent.name} is not configured with pane: true.`);
-				await ensurePersistentPane(runtimeRoot, parentSessionId, ctx.cwd, agent, parentModel, parentThinkingLevel);
+				await ensurePersistentPane(runtimeRoot, parentSessionId, ctx.cwd, agent, parentModel, parentThinkingLevel, activeTools);
 				ctx.ui.notify(`Started/reused ${agent.name}`, "info");
 				continue;
 			}
@@ -2014,12 +2018,8 @@ async function openAgentsBrowser(
 				return;
 			}
 			if (action.type === "stop") {
-				await updatePaneRegistry(runtimeRoot, async (registry) => {
-					const entry = registry[agent.name];
-					if (!entry) throw new Error(`No pane registry entry for ${agent.name}.`);
-					if (await paneExists(entry.paneId)) await tmux(["kill-pane", "-t", entry.paneId]);
-					delete registry[agent.name];
-				});
+				await stopPersistentPane(runtimeRoot, agent.name);
+				onAgentStopped?.(agent.name);
 				ctx.ui.notify(`Stopped ${agent.name}`, "info");
 				continue;
 			}
@@ -3645,6 +3645,7 @@ async function writeLauncher(
 	agent: AgentConfig,
 	model: string | undefined,
 	thinkingLevel: string | undefined,
+	activeTools?: string[],
 ): Promise<{ sessionFile: string; promptFile: string; launcherFile: string }> {
 	const dir = runtimeRoot;
 	const safeName = safeFileName(agent.name);
@@ -3668,7 +3669,7 @@ async function writeLauncher(
 	if (bridgeExtension) args.push("-e", bridgeExtension);
 	if (model) args.push("--model", model);
 	if (thinkingLevel && thinkingLevel !== "off") args.push("--thinking", thinkingLevel);
-	const selectedTools = selectedToolsForAgent(agent, cwd, ["complete_subagent"]);
+	const selectedTools = selectedToolsForAgent(agent, cwd, ["complete_subagent"], activeTools);
 	if (selectedTools && selectedTools.length > 0) args.push("--tools", selectedTools.join(","));
 
 	const invocation = getPiInvocation(args);
@@ -3703,6 +3704,7 @@ async function ensurePersistentPane(
 	agent: AgentConfig,
 	parentModel: string | undefined,
 	parentThinkingLevel: string | undefined,
+	activeTools?: string[],
 ): Promise<PaneRegistryEntry> {
 	await ensureTmux();
 
@@ -3722,7 +3724,7 @@ async function ensurePersistentPane(
 		}
 
 		const selectedModel = selectedModelForAgent(agent, parentModel, cwd);
-		const paths = await writeLauncher(runtimeRoot, parentSessionId, cwd, agent, selectedModel, parentThinkingLevel);
+		const paths = await writeLauncher(runtimeRoot, parentSessionId, cwd, agent, selectedModel, parentThinkingLevel, activeTools);
 		const windowName = `agent:${agent.name}`;
 		primaryPaneId = await getPrimaryPaneId();
 		layoutGroup = nextLayoutGroup(registry);
@@ -4000,12 +4002,13 @@ async function queuePersistentPaneTask(
 	parentModel: string | undefined,
 	parentThinkingLevel: string | undefined,
 	pi: ExtensionAPI,
+	activeTools?: string[],
 ): Promise<QueuedPaneTask> {
 	const effectiveCwd = cwd ?? defaultCwd;
 	const existingRegistry = await readPaneRegistry(runtimeRoot);
 	const existing = existingRegistry[agent.name];
 	const hadLivePane = Boolean(existing && (await paneExists(existing.paneId)));
-	const pane = await ensurePersistentPane(runtimeRoot, parentSessionId, effectiveCwd, agent, parentModel, parentThinkingLevel);
+	const pane = await ensurePersistentPane(runtimeRoot, parentSessionId, effectiveCwd, agent, parentModel, parentThinkingLevel, activeTools);
 	if (!hadLivePane) {
 		emitSubagentEvent(pi, "subagents:created", {
 			mode: "pane",
@@ -4056,6 +4059,44 @@ async function queuePersistentPaneTask(
 	return { pane, taskId, outboxFile, taskFile };
 }
 
+async function stopPersistentPane(runtimeRoot: string, agentName: string): Promise<PaneRegistryEntry> {
+	let stopped: PaneRegistryEntry | undefined;
+	await updatePaneRegistry(runtimeRoot, async (registry) => {
+		const entry = registry[agentName];
+		if (!entry) throw new Error(`No pane registry entry for agent: ${agentName || "(missing)"}`);
+		if (await paneExists(entry.paneId)) await tmux(["kill-pane", "-t", entry.paneId]);
+		stopped = entry;
+		delete registry[entry.agent];
+	});
+	if (!stopped) throw new Error(`No pane registry entry for agent: ${agentName || "(missing)"}`);
+	const now = new Date().toISOString();
+	await updateTaskRegistry(runtimeRoot, (records) => {
+		for (const record of Object.values(records)) {
+			if (record.agent !== stopped!.agent || isTerminalTaskStatus(record.status)) continue;
+			record.status = "blocked";
+			record.completedAt = record.completedAt ?? now;
+			record.updatedAt = now;
+			record.summary = record.summary ?? `Pane for ${stopped!.agent} was stopped before the task completed.`;
+			record.diagnostics = appendUniqueDiagnostic(record.diagnostics, `Pane stopped at ${now}.`);
+		}
+	});
+	return stopped;
+}
+
+async function resetPersistentPaneSession(runtimeRoot: string, agentName: string): Promise<string | undefined> {
+	const sessionFile = path.join(runtimeRoot, "sessions", `${safeFileName(agentName)}.jsonl`);
+	try {
+		await fs.promises.access(sessionFile);
+	} catch {
+		return undefined;
+	}
+	const archiveDir = path.join(runtimeRoot, "sessions", "archived");
+	await fs.promises.mkdir(archiveDir, { recursive: true, mode: 0o700 });
+	const archived = path.join(archiveDir, `${safeFileName(agentName)}-${Date.now()}.jsonl`);
+	await fs.promises.rename(sessionFile, archived);
+	return archived;
+}
+
 async function runPersistentPaneAgent(
 	defaultCwd: string,
 	runtimeRoot: string,
@@ -4091,9 +4132,9 @@ async function runPersistentPaneAgent(
 		if (existing && (await paneExists(existing.paneId))) {
 			const stderr = [
 				`Cannot forceSpawn ${agent.name}: a live pane already exists for this agent.`,
-				"vstack does not support multiple panes for the same agent. Either:",
+				"vstack does not support multiple live panes for the same agent. Either:",
 				`  - Drop forceSpawn and the call will reuse the existing pane (queue this task into ${existing.windowName}), or`,
-				`  - Run \`/agents stop ${agent.name}\` first to tear down the live pane, then retry with forceSpawn for a fresh session.`,
+				`  - Use stop_subagent or /agents stop ${agent.name} first, then retry with forceSpawn for a fresh session.`,
 			].join("\n");
 			return {
 				agent: agent.name,
@@ -4108,9 +4149,10 @@ async function runPersistentPaneAgent(
 				step,
 			};
 		}
+		await resetPersistentPaneSession(runtimeRoot, agent.name);
 	}
 
-	const queued = await queuePersistentPaneTask(runtimeRoot, parentSessionId, defaultCwd, agent, task, cwd, parentModel, parentThinkingLevel, pi);
+	const queued = await queuePersistentPaneTask(runtimeRoot, parentSessionId, defaultCwd, agent, task, cwd, parentModel, parentThinkingLevel, pi, pi.getActiveTools());
 	const text = `Queued task for ${agent.name}.`;
 	return {
 		agent: agent.name,
@@ -4178,7 +4220,7 @@ async function runSingleAgent(
 	const selectedModel = selectedModelForAgent(agent, parentModel, defaultCwd);
 	if (selectedModel) args.push("--model", selectedModel);
 	if (parentThinkingLevel && parentThinkingLevel !== "off") args.push("--thinking", parentThinkingLevel);
-	const selectedTools = selectedToolsForAgent(agent, defaultCwd);
+	const selectedTools = selectedToolsForAgent(agent, defaultCwd, [], pi.getActiveTools());
 	if (selectedTools && selectedTools.length > 0) args.push("--tools", selectedTools.join(","));
 
 	let tmpPromptDir: string | null = null;
@@ -4417,7 +4459,7 @@ const SubagentParams = Type.Object({
 	forceSpawn: Type.Optional(
 		Type.Boolean({
 			description:
-				"For pane-mode agents only. When true and a live pane already exists for the target agent, the call errors instead of reusing the pane. Use this only when you explicitly want a fresh agent session; the error message guides you to either keep delegating to the existing pane or stop it via /agents stop <name> before retrying.",
+				"For pane-mode agents only. When true and a live pane exists, the call errors instead of reusing it. When no live pane exists, the previous session file is archived before launch so the next pane starts fresh. Omit/false resumes or reuses the existing pane session.",
 			default: false,
 		}),
 	),
@@ -4436,6 +4478,10 @@ const SteerSubagentParams = Type.Object({
 	taskId: Type.Optional(Type.String({ description: "Task ID whose agent should be steered" })),
 	message: Type.String({ description: "Steering message to send" }),
 	deliverAs: Type.Optional(StringEnum(["steer", "send", "follow-up"] as const, { description: "Bridge delivery mode", default: "steer" })),
+});
+
+const StopSubagentParams = Type.Object({
+	agent: Type.String({ description: "Persistent pane agent name to stop" }),
 });
 
 const CompleteSubagentParams = Type.Object({
@@ -4960,6 +5006,14 @@ export default function (pi: ExtensionAPI) {
 		updateDashboard({ ...existing, ...patch, updatedAt: new Date().toISOString() });
 	};
 
+	const removeDashboardAgent = (agentName: string | undefined) => {
+		if (!agentName) return;
+		for (const [key, item] of Object.entries(dashboardState.items)) {
+			if (item.agent === agentName) delete dashboardState.items[key];
+		}
+		syncDashboard();
+	};
+
 	const updateDashboardFromTaskRecord = (record: PaneTaskRecord) => {
 		const kind: DashboardKind = record.paneId ? "pane" : "oneshot";
 		const existingKey = dashboardKeyForTask(record.taskId) ?? (kind === "pane" ? `pane:${record.agent}` : undefined);
@@ -4985,9 +5039,11 @@ export default function (pi: ExtensionAPI) {
 
 	const syncDashboardFromTaskRegistry = async (runtimeRoot: string) => {
 		const records = await readTaskRegistry(runtimeRoot);
+		const registry = await readPaneRegistry(runtimeRoot);
 		const sorted = Object.values(records).sort((a, b) => (a.updatedAt ?? a.completedAt ?? a.createdAt).localeCompare(b.updatedAt ?? b.completedAt ?? b.createdAt));
 		for (const record of sorted) {
 			if (!record.taskId || !record.agent) continue;
+			if (record.paneId && isTerminalTaskStatus(record.status) && !registry[record.agent]) continue;
 			const refreshed = await refreshTaskDiagnostics(runtimeRoot, record);
 			if (refreshed.record.status === "needs_completion") dashboardState.visible = true;
 			updateDashboardFromTaskRecord(refreshed.record);
@@ -5015,6 +5071,7 @@ export default function (pi: ExtensionAPI) {
 			const topLevel = [
 				{ value: "show ", label: "show <name>", description: "Inspect an agent" },
 				{ value: "start ", label: "start <name>", description: "Start or reuse a persistent pane" },
+				{ value: "new ", label: "new <name>", description: "Start a persistent pane with a fresh session" },
 				{ value: "send ", label: "send <name> <task>", description: "Queue a task for a persistent pane" },
 				{ value: "attach ", label: "attach <name>", description: "Focus an existing agent pane" },
 				{ value: "stop ", label: "stop <name>", description: "Stop an agent pane" },
@@ -5042,7 +5099,7 @@ export default function (pi: ExtensionAPI) {
 				});
 			return completions.length > 0 ? completions : null;
 		}
-		if (["show", "start", "send", "attach", "stop"].includes(first)) {
+		if (["show", "start", "new", "send", "attach", "stop"].includes(first)) {
 			if (first === "show" && parts.length === 1 && raw.endsWith(" ")) return null;
 			if (parts.length > 2 || (parts.length === 2 && raw.endsWith(" "))) return null;
 			const rest = parts[1]?.toLowerCase() ?? "";
@@ -5497,15 +5554,20 @@ export default function (pi: ExtensionAPI) {
 			};
 
 			try {
-				if (command === "start") {
+				if (command === "start" || command === "new") {
 					const agent = findAgent(parts[1]);
 					if (!agent) throw new Error(`Unknown agent: ${parts[1] ?? "(missing)"}`);
 					if (!agent.pane) throw new Error(`Agent ${agent.name} is not configured for persistent panes. Add \`pane: true\` to its frontmatter to enable.`);
 					const beforeRegistry = await readPaneRegistry(runtimeRoot);
 					const before = beforeRegistry[agent.name];
 					const hadLivePane = Boolean(before && (await paneExists(before.paneId)));
-					const pane = await ensurePersistentPane(runtimeRoot, parentSessionId, ctx.cwd, agent, parentModel, parentThinkingLevel);
-					if (!hadLivePane) {
+					if (command === "new") {
+						if (hadLivePane) await stopPersistentPane(runtimeRoot, agent.name);
+						removeDashboardAgent(agent.name);
+						await resetPersistentPaneSession(runtimeRoot, agent.name);
+					}
+					const pane = await ensurePersistentPane(runtimeRoot, parentSessionId, ctx.cwd, agent, parentModel, parentThinkingLevel, pi.getActiveTools());
+					if (!hadLivePane || command === "new") {
 						emitSubagentEvent(pi, "subagents:created", {
 							mode: "pane",
 							agent: agent.name,
@@ -5514,7 +5576,7 @@ export default function (pi: ExtensionAPI) {
 							transcriptPath: pane.sessionFile,
 						});
 					}
-					content = `Started/reused ${agent.name} (${pane.windowName}).\nSession: ${pane.sessionFile}`;
+					content = `${command === "new" ? "Started new" : "Started/reused"} ${agent.name} (${pane.windowName}).\nSession: ${pane.sessionFile}`;
 					messageDetails = { action: "start", agent: agent.name, sessionFile: pane.sessionFile, windowName: pane.windowName };
 				} else if (command === "send") {
 					const agent = findAgent(parts[1]);
@@ -5522,7 +5584,7 @@ export default function (pi: ExtensionAPI) {
 					if (!agent.pane) throw new Error(`Agent ${agent.name} is not configured for persistent panes. Add \`pane: true\` to its frontmatter to enable.`);
 					const task = parts.slice(2).join(" ").trim();
 					if (!task) throw new Error("Usage: /agents:send <name> <task>");
-					const queued = await queuePersistentPaneTask(runtimeRoot, parentSessionId, ctx.cwd, agent, task, undefined, parentModel, parentThinkingLevel, pi);
+					const queued = await queuePersistentPaneTask(runtimeRoot, parentSessionId, ctx.cwd, agent, task, undefined, parentModel, parentThinkingLevel, pi, pi.getActiveTools());
 					content = `Queued task for ${agent.name}.\nArtifacts: inbox=${compactPath(queued.taskFile)} completion=${compactPath(queued.outboxFile)} transcript=${compactPath(queued.pane.sessionFile)}`;
 					messageDetails = { action: "send", agent: agent.name, inboxFile: queued.taskFile, outboxFile: queued.outboxFile, taskId: queued.taskId, transcriptPath: queued.pane.sessionFile };
 				} else if (command === "attach") {
@@ -5534,14 +5596,9 @@ export default function (pi: ExtensionAPI) {
 					content = `Attached to ${entry.agent}.`;
 					messageDetails = { action: "attach", agent: entry.agent };
 				} else if (command === "stop") {
-					let stoppedAgent: string | undefined;
-					await updatePaneRegistry(runtimeRoot, async (registry) => {
-						const entry = registry[parts[1] ?? ""];
-						if (!entry) throw new Error(`No pane registry entry for agent: ${parts[1] ?? "(missing)"}`);
-						if (await paneExists(entry.paneId)) await tmux(["kill-pane", "-t", entry.paneId]);
-						stoppedAgent = entry.agent;
-						delete registry[entry.agent];
-					});
+					const stopped = await stopPersistentPane(runtimeRoot, parts[1] ?? "");
+					const stoppedAgent = stopped.agent;
+					removeDashboardAgent(stoppedAgent);
 					content = `Stopped ${stoppedAgent}.`;
 					messageDetails = { action: "stop", agent: stoppedAgent };
 				} else if (command === "collect") {
@@ -5587,7 +5644,7 @@ export default function (pi: ExtensionAPI) {
 					}
 
 					if (ctx.hasUI) {
-						await openAgentsBrowser(ctx, scope, showName, runtimeRoot, parentSessionId, parentModel, parentThinkingLevel, () => activeDashboardItems(Object.values(dashboardState.items)));
+						await openAgentsBrowser(ctx, scope, showName, runtimeRoot, parentSessionId, parentModel, parentThinkingLevel, pi.getActiveTools(), () => activeDashboardItems(Object.values(dashboardState.items)), removeDashboardAgent);
 						return;
 					}
 
@@ -5629,7 +5686,7 @@ export default function (pi: ExtensionAPI) {
 								})
 								.join("\n"),
 							"",
-							"Commands: `/agents show <name>`, `/agents:start <name>`, `/agents:send <name> <task>`, `/agents:attach <name>`, `/agents:stop <name>`, `/agents status`, `/agents:trace <ref>`, `/agents:toggle`. The popup's History tab browses past tasks visually.",
+							"Commands: `/agents show <name>`, `/agents:start <name>` (resume/reuse), `/agents:new <name>` (fresh session), `/agents:send <name> <task>`, `/agents:attach <name>`, `/agents:stop <name>`, `/agents status`, `/agents:trace <ref>`, `/agents:toggle`. The popup's History tab browses past tasks visually.",
 						].join("\n");
 						messageDetails = { action: "list", count: scopedDiscovery.agents.length };
 					}
@@ -5682,9 +5739,10 @@ export default function (pi: ExtensionAPI) {
 		handler: async (_args, ctx) => agentsHandler("toggle", ctx),
 	});
 
-	for (const sub of ["start", "send", "attach", "stop"] as const) {
+	for (const sub of ["start", "new", "send", "attach", "stop"] as const) {
 		const description =
 			sub === "start" ? "Start or reuse a persistent pane: /agents:start <name>" :
+			sub === "new" ? "Start a persistent pane with a fresh session: /agents:new <name>" :
 			sub === "send" ? "Queue a task for a persistent pane: /agents:send <name> <task>" :
 			sub === "attach" ? "Focus an existing agent pane: /agents:attach <name>" :
 			"Stop an agent pane: /agents:stop <name>";
@@ -5727,7 +5785,7 @@ export default function (pi: ExtensionAPI) {
 		const parentThinkingLevel = pi.getThinkingLevel();
 		const parentSessionId = runtimeSessionId(ctx);
 		const runtimeRoot = sessionRuntimeDir(parentSessionId);
-		await openAgentsBrowser(ctx, "project", undefined, runtimeRoot, parentSessionId, parentModel, parentThinkingLevel, () => activeDashboardItems(Object.values(dashboardState.items)));
+		await openAgentsBrowser(ctx, "project", undefined, runtimeRoot, parentSessionId, parentModel, parentThinkingLevel, pi.getActiveTools(), () => activeDashboardItems(Object.values(dashboardState.items)), removeDashboardAgent);
 	};
 	const popup = popupShortcut();
 	if (popup !== "none") {
@@ -5941,6 +5999,32 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
+	pi.registerTool({
+		renderShell: "self",
+		name: "stop_subagent",
+		label: "Stop Agent",
+		description: "Stop a persistent pane agent, kill its tmux pane, remove it from the live pane registry/dashboard, and mark any non-terminal active task as blocked.",
+		parameters: StopSubagentParams,
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			const runtimeRoot = sessionRuntimeDir(runtimeSessionId(ctx));
+			const stopped = await stopPersistentPane(runtimeRoot, params.agent);
+			removeDashboardAgent(stopped.agent);
+			return {
+				content: [{ type: "text", text: `Stopped ${stopped.agent}. Pane ${stopped.paneId} was killed and removed from the active registry.` }],
+				details: { agent: stopped.agent, paneId: stopped.paneId, sessionFile: stopped.sessionFile },
+			};
+		},
+		renderCall(_args, _theme, _context) {
+			return new Container();
+		},
+		renderResult(result, _options, theme, context) {
+			const raw = (result.content as any[] | undefined)?.find?.((part: any) => part?.type === "text" && typeof part.text === "string")?.text ?? "";
+			const details = result.details as { agent?: string } | undefined;
+			if (context?.isError) return wrappedText(`${theme.fg("error", ICONS.times)} ${theme.fg("toolTitle", "Stop agent failed")}\n${theme.fg("muted", raw)}`);
+			return wrappedText(agentStatusLine(theme, details?.agent ?? "agent", "stopped", "success"));
+		},
+	});
+
 	pi.on("before_agent_start", (event, ctx) => {
 		if (!pi.getActiveTools().includes("subagent")) return;
 
@@ -5957,7 +6041,7 @@ export default function (pi: ExtensionAPI) {
 			.join("\n");
 
 		return {
-			systemPrompt: `${event.systemPrompt}\n\n## Project Agents\nUse the \`subagent\` tool when isolated context, specialist review, reconnaissance, planning, or parallel read-only investigation would help. Project-local agents are loaded from .pi/agents, with .claude/agents as a compatibility source. Agents with \`pane=true\` run in persistent tmux panes and can also be managed with \`/agents start|send|attach|stop|status\`. For persistent panes, save the returned taskId, use \`get_subagent_result\` to recover missed completions, and use \`steer_subagent\` only for mid-run correction. Available project agents:\n${agentLines}\n\nDefault \`agentScope\` is \"project\". Use \"both\" only when user-level agents are explicitly needed.`,
+			systemPrompt: `${event.systemPrompt}\n\n## Project Agents\nUse the \`subagent\` tool when isolated context, specialist review, reconnaissance, planning, or parallel read-only investigation would help. Project-local agents are loaded from .pi/agents, with .claude/agents as a compatibility source. Agents with \`pane=true\` run in persistent tmux panes and can also be managed with \`/agents start|new|send|attach|stop|status\`. For persistent panes, save the returned taskId, use \`get_subagent_result\` to recover missed completions, use \`steer_subagent\` only for mid-run correction, and use \`stop_subagent\` to kill/close a pane. Available project agents:\n${agentLines}\n\nDefault \`agentScope\` is \"project\". Use \"both\" only when user-level agents are explicitly needed.`,
 		};
 	});
 

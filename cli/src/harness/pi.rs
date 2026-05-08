@@ -134,15 +134,7 @@ pub fn pi_tools_for(agent: &Agent, skills: &[(String, String)]) -> Vec<String> {
         || skill_names.contains("issue-lifecycle")
         || skill_names.contains("second-opinion")
     {
-        tools.extend([
-            "question",
-            "tasks_write",
-            "subagent",
-            "get_subagent_result",
-            "steer_subagent",
-            "bg_task",
-            "bg_status",
-        ]);
+        tools.extend(["tasks_write", "bg_task", "bg_status"]);
     }
 
     if matches!(agent.role, AgentRole::Engineer) {
@@ -219,6 +211,21 @@ mod tests {
         assert!(tools.iter().any(|tool| tool == "web_answer"));
         assert!(tools.iter().any(|tool| tool == "code_search"));
         assert!(tools.iter().any(|tool| tool == "get_web_content"));
+    }
+
+    #[test]
+    fn pi_tools_do_not_include_recursive_or_prompt_tools() {
+        let agent = agent_fixture("generalist", AgentRole::Engineer, "opus");
+        let skills = vec![
+            ("orchestration".into(), "delegation".into()),
+            ("flightdeck".into(), "workflow".into()),
+        ];
+        let tools = pi_tools_for(&agent, &skills);
+        assert!(!tools.iter().any(|tool| tool == "subagent"));
+        assert!(!tools.iter().any(|tool| tool == "get_subagent_result"));
+        assert!(!tools.iter().any(|tool| tool == "steer_subagent"));
+        assert!(!tools.iter().any(|tool| tool == "question"));
+        assert!(tools.iter().any(|tool| tool == "tasks_write"));
     }
 
     #[test]
