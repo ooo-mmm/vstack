@@ -626,18 +626,32 @@ function agentCurrentFrontmatterEdit(agent: AgentConfig): AgentFrontmatterEdit {
 	};
 }
 
+function agentHasExplicitToolsFrontmatter(agent: AgentConfig): boolean {
+	let frontmatter = "";
+	try {
+		frontmatter = splitMarkdownFrontmatter(fs.readFileSync(agent.filePath, "utf-8")).frontmatter;
+	} catch {
+		frontmatter = "";
+	}
+	if (!isVstackManagedAgentFile(agent)) return flatYamlField(frontmatter, "tools") !== undefined;
+	const tomlPath = vstackTomlPathForAgent(agent, process.cwd());
+	if (!tomlPath) return false;
+	return readAgentFrontmatterToml(tomlPath, agent.name).tools !== undefined;
+}
+
 function editableAgentFrontmatterText(agent: AgentConfig): string {
 	const current = agentCurrentFrontmatterEdit(agent);
-	return [
+	const lines = [
 		"# Edit Pi agent frontmatter overrides. Blank values remove the override.",
-		"# Omit tools for inherited-tool behavior; set tools only for strict allowlists.",
+		"# Deny-tools is preferred; tools is omitted unless you uncomment/add it.",
+		"# To set a strict tools allowlist, add: tools: read, grep, find, ls",
 		"# For vstack-managed project agents, this writes [agent-frontmatter.pi] in vstack.toml.",
 		`model: ${current.model}`,
 		`deny-tools: ${current.denyTools.join(", ")}`,
-		`tools: ${current.tools.join(", ")}`,
-		`color: ${current.color}`,
-		"",
-	].join("\n");
+	];
+	if (agentHasExplicitToolsFrontmatter(agent)) lines.push(`# existing tools override (uncomment to keep): tools: ${current.tools.join(", ")}`);
+	lines.push(`color: ${current.color}`, "");
+	return lines.join("\n");
 }
 
 function parseEditableAgentFrontmatterText(raw: string): AgentFrontmatterEdit {
@@ -777,7 +791,7 @@ function upsertAgentFrontmatterToml(content: string, agentName: string, edit: Ag
 	let sectionStart = lines.findIndex((line) => line.trim() === section);
 	if (sectionStart < 0) {
 		const insertAt = lines.findIndex((line) => line.trim().startsWith("# ── Installed skills"));
-		const block = ["", "# Pi-specific frontmatter overrides. This is where the", "# Pi /agents popup writes model, deny-tools, tools, and color changes for", "# vstack-managed project agents.", section, ""];
+		const block = ["", "# Pi-specific frontmatter overrides. This is where the", "# Pi /agents popup writes model, deny-tools, optional tools, and color changes for", "# vstack-managed project agents.", section, ""];
 		if (insertAt >= 0) lines.splice(insertAt, 0, ...block);
 		else lines.push(...block);
 		sectionStart = lines.findIndex((line) => line.trim() === section);
