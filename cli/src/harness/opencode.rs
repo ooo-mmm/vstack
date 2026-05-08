@@ -23,6 +23,7 @@ pub fn generate_agent(
     // Determine mode based on role unless project config supplies an exact mode.
     let mode = frontmatter.mode.as_deref().unwrap_or(match agent.role {
         AgentRole::Engineer => "all",
+        AgentRole::Analyst => "subagent",
         AgentRole::Reviewer => "subagent",
         AgentRole::Manager => "subagent",
     });

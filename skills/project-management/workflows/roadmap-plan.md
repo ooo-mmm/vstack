@@ -32,7 +32,7 @@ If `--planner-handoff` is provided, read the planner file and extract `PLANNER_H
 - TPM Handoff Recommendation / TPM Handoff Prompt if present
 - Linear issue IDs or project names mentioned
 
-If no planner handoff is provided, set `PLANNER_HANDOFF` = null. Do not run `planner` inside this workflow; the normal orchestration chain is main → scout → planner → tpm → main, and this workflow consumes a planner handoff only when the main agent already has one.
+If no planner handoff is provided, set `PLANNER_HANDOFF` = null. Do not run `planner` inside this workflow; the normal orchestration chain is main → scout → planner → tpm → main, and this workflow consumes a planner handoff only when the main agent already has one. A planner handoff augments roadmap analysis; it does **not** skip the research gate, research-spike branch, TPM analysis, user approval, or Linear creation/confirmation steps.
 
 ### 1.2 Check for Research Context
 

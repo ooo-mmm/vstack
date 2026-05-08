@@ -34,6 +34,7 @@ pub enum AgentRole {
     Reviewer,
     #[default]
     Engineer,
+    Analyst,
     Manager,
 }
 
@@ -47,6 +48,7 @@ impl AgentRole {
         match self {
             AgentRole::Reviewer => "reviewer",
             AgentRole::Engineer => "engineer",
+            AgentRole::Analyst => "analyst",
             AgentRole::Manager => "manager",
         }
     }
@@ -145,6 +147,7 @@ pub fn prefixed_skill_matches(agent_name: &str, available: &[String]) -> Vec<Str
 fn default_role_skills(agent_role: &AgentRole) -> &'static [&'static str] {
     match agent_role {
         AgentRole::Reviewer => &["issue-lifecycle"],
+        AgentRole::Analyst => &["linear", "github"],
         AgentRole::Engineer => &["issue-lifecycle", "github", "worktree"],
         AgentRole::Manager => &[
             "project-management",
@@ -183,7 +186,7 @@ pub fn match_hooks<'a>(
         .filter(|h| {
             match agent_role {
                 AgentRole::Engineer => true,
-                AgentRole::Reviewer | AgentRole::Manager => {
+                AgentRole::Reviewer | AgentRole::Analyst | AgentRole::Manager => {
                     // Get Bash safety hooks and lifecycle hooks, not edit/write hooks
                     h.event == "PostCompact"
                         || h.event == "TaskCompleted"

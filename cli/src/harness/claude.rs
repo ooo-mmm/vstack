@@ -109,7 +109,9 @@ fn claude_disallowed_tools_for(agent: &Agent, deny_tools: Option<&[String]>) -> 
     let tools: Vec<String> = match agent.role {
         // Claude Code subagents should not recursively spawn other subagents.
         // Write-capable tools stay available so any agent can produce report artifacts.
-        AgentRole::Engineer | AgentRole::Reviewer | AgentRole::Manager => vec!["Task".into()],
+        AgentRole::Engineer | AgentRole::Analyst | AgentRole::Reviewer | AgentRole::Manager => {
+            vec!["Task".into()]
+        }
     };
     dedupe_tools(tools)
 }

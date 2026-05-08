@@ -114,7 +114,7 @@ pub fn pi_model_for(model: &str) -> String {
 /// Agent prompts still constrain reviewer/manager agents to report-only work.
 pub fn pi_tools_for(agent: &Agent, skills: &[(String, String)]) -> Vec<String> {
     let mut tools = match agent.role {
-        AgentRole::Engineer | AgentRole::Reviewer | AgentRole::Manager => {
+        AgentRole::Engineer | AgentRole::Analyst | AgentRole::Reviewer | AgentRole::Manager => {
             vec!["read", "grep", "find", "ls", "bash", "edit", "write"]
         }
     };

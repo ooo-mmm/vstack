@@ -3,8 +3,7 @@
 #
 # [agent-skills] is the single source of truth for which skills appear in each
 # agent's frontmatter.  When an agent has an explicit entry here, prefix matching
-# is skipped — only the listed skills (plus role-skills, unless the agent is in
-# skip-role-skills) are attached.
+# is skipped — only the listed skills plus role-skills are attached.
 # Removing a skill from an agent's list and running `vstack refresh` removes it
 # from that agent's frontmatter.
 #
@@ -18,10 +17,6 @@
 #
 # The Pi `/agents` popup can edit model/deny-tools/tools/color for vstack-managed project
 # agents and writes those changes into `[agent-frontmatter.pi]` automatically.
-
-# Agents in this list use only their explicit [agent-skills] entry (plus any
-# prefix matches when no explicit entry exists) and do not receive [role-skills].
-skip-role-skills = ["planner", "scout"]
 
 # Skill mappings per agent — always loaded into context
 [agent-skills]
@@ -39,12 +34,8 @@ generalist = [
     "linear",
     "worktree",
 ]
-planner = [
-    "linear",
-]
-scout = [
-    "linear",
-]
+planner = []
+scout = []
 reviewer-doc = [
     "issue-lifecycle",
     "linear",
@@ -66,7 +57,7 @@ tpm = [
     "project-management",
     "worktree",
 ]
-researcher = ["deep-research", "linear", "github", "worktree", "decider"]
+researcher = ["deep-research", "worktree", "decider"]
 
 # Specialist skills — loaded on demand when the task matches
 [agent-skills-optional]
@@ -98,6 +89,7 @@ reviewer-perf = [
 
 # Skills given to all agents of a role
 [role-skills]
+analyst = ["linear", "github"]
 engineer = ["issue-lifecycle", "github", "worktree", "decider", "linear"]
 manager = ["issue-lifecycle", "github", "worktree", "project-management", "linear", "decider"]
 reviewer = ["issue-lifecycle", "linear"]

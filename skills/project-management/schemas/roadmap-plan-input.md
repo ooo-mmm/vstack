@@ -45,7 +45,7 @@ Input file for roadmap analysis, created by orchestrator after specialist agent 
 | `feature` | Yes | Feature name from roadmap command |
 | `research_path` | No | Path to research findings (null if skipped) |
 | `origin_issue` | No | Issue that triggered this roadmap (context, not directive) |
-| `planner_handoff` | No | Technical planner context to preserve through TPM analysis: plan path, concise summary, proposed phases/issues, and explicit TPM decisions requested. Use when roadmap planning follows a scout/planner chain. |
+| `planner_handoff` | No | Technical planner context to preserve through TPM analysis: plan path (normally under `docs/plans/`), concise summary, proposed phases/issues, and explicit TPM decisions requested. Use when roadmap planning follows a scout/planner chain. This augments analysis and does not bypass research gates or approval steps. |
 | `proposed_issues[]` | Yes | Issues collected from specialist agents |
 
 ### Proposed Issue Fields

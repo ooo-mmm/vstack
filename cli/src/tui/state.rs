@@ -88,6 +88,7 @@ pub(super) fn build_item_tabs(
 
     if !items.agents.is_empty() {
         let mut engineers = Vec::new();
+        let mut analysts = Vec::new();
         let mut reviewers = Vec::new();
         let mut managers = Vec::new();
 
@@ -107,6 +108,7 @@ pub(super) fn build_item_tabs(
             };
             match a.role {
                 crate::agent::AgentRole::Engineer => engineers.push(item),
+                crate::agent::AgentRole::Analyst => analysts.push(item),
                 crate::agent::AgentRole::Reviewer => reviewers.push(item),
                 crate::agent::AgentRole::Manager => managers.push(item),
             }
@@ -117,6 +119,12 @@ pub(super) fn build_item_tabs(
             groups.push(ItemGroup {
                 label: "Engineers".into(),
                 items: engineers,
+            });
+        }
+        if !analysts.is_empty() {
+            groups.push(ItemGroup {
+                label: "Analysts".into(),
+                items: analysts,
             });
         }
         if !reviewers.is_empty() {

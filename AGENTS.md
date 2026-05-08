@@ -55,11 +55,11 @@ skill-templates/         Templates for new skills
 
 - **Everything is discovered dynamically.** The CLI scans `agents/`, `skills/`, `hooks/`, `pi-extensions/` at runtime. No hardcoded lists.
 - **Canonical source is harness-agnostic.** Agents, skills, and hooks contain no harness-specific syntax. Translation happens in `cli/src/harness/`.
-- **Agent `role` drives access control.** `reviewer` → report-only/subagent (may write report artifacts, not product code). `engineer` → full access/primary. `manager` → analysis/report artifacts only.
+- **Agent `role` drives access control.** `analyst` → planning/research/recon artifacts only. `reviewer` → report-only/subagent (may write report artifacts, not product code). `engineer` → full access/primary. `manager` → analysis/report artifacts only.
 - **Skill dependencies use frontmatter.** `dependencies: { required: [...], optional: [...] }` in SKILL.md.
 - **Hooks diverge by harness.** Claude Code gets native shell hooks + settings.json + agent frontmatter. Cursor gets safety `.mdc` rules. OpenCode gets `.opencode/agents/*.md` + instructions. Codex gets inline prose in `developer_instructions`. Pi has no native hook runtime — safety prose is appended to the agent body instead.
 - **Pi extensions are npm-shaped packages.** vstack copies them to `~/.pi/agent/packages/<name>` (or `.pi/packages/<name>`) and registers the path in Pi's `settings.json` `packages` array.
-- **Skill/hook attribution is config-driven.** Source `vstack.toml` `[agent-skills]` is authoritative — explicit entries skip prefix matching. `[role-skills]` adds skills to all agents of a role unless the agent is listed in top-level `skip-role-skills`. Project `vstack.toml` also has `[agent-skills]` populated at install time; users can add/remove skills and refresh. Agents get a `skills:` frontmatter field and a "Required Skills" body section.
+- **Skill/hook attribution is config-driven.** Source `vstack.toml` `[agent-skills]` is authoritative — explicit entries skip prefix matching. `[role-skills]` adds skills to all agents of a role. Project `vstack.toml` also has `[agent-skills]` populated at install time; users can add/remove skills and refresh. Agents get a `skills:` frontmatter field and a "Required Skills" body section.
 - **Reconciliation is automatic.** After every `vstack add`, all installed agents are regenerated with the current full set of installed skills and hooks. Adding a skill after an agent updates that agent.
 - **Project root walks up from CWD.** `config::project_root()` finds `.vstack-lock.json`, `.claude/`, `.cursor/`, `.codex/`, `.opencode/`, `.pi/`, or `.agents/` by walking parent dirs — works from subdirectories.
 
@@ -70,7 +70,7 @@ skill-templates/         Templates for new skills
 name: rust
 description: ...
 model: opus          # opus | sonnet | haiku
-role: engineer       # engineer | reviewer | manager
+role: engineer       # engineer | analyst | reviewer | manager
 color: orange
 ```
 
@@ -114,14 +114,12 @@ On install vstack copies `pi-extensions/<name>/` into `<scope>/packages/<name>` 
 
 ### Mapping config (`vstack.toml`)
 ```toml
-# Optional source-only narrowing: these agents do not receive [role-skills].
-skip-role-skills = ["planner", "scout"]
-
 [agent-skills]
 rust = ["rust-arch", "rust-async", "rust-cargo", "rust-conventions", "rust-cross", "rust-debugging", "rust-ffi", "rust-no-std", "rust-safety"]
 iced = ["iced-rs", "iced-shadcn", "trading-design", "price-handling"]
 
 [role-skills]
+analyst = ["linear", "github"]
 engineer = ["issue-lifecycle", "github", "worktree", "decider", "linear"]
 reviewer = ["issue-lifecycle", "linear"]
 
