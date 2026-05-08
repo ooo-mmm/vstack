@@ -758,6 +758,12 @@ export default function (pi: ExtensionAPI) {
 				const parsed = await readPaneCompletionFile(outboxFile);
 				if (parsed.completion) manualCompletionOk = true;
 				else if (parsed.exists && parsed.error) missingDiagnostic = completionParseErrorMessage(outboxFile, parsed.error);
+				else {
+					// Parent's pollPaneCompletions may have already archived the outbox file via
+					// fs.rename before this hook ran; trust the registry as the source of truth.
+					const records = await readTaskRegistry(runtimeRoot);
+					if (isTerminalTaskStatus(records[taskId]?.status)) manualCompletionOk = true;
+				}
 			}
 
 			if (!pendingMatches && !manualCompletionOk) {
