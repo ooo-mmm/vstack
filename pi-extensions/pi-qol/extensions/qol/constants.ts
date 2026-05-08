@@ -66,7 +66,7 @@ export const SESSION_TITLE_SYNC_INTERVAL_MS = 1000;
 export const TMUX_SESSION_TITLE_PAD = "\u00a0";
 export const TMUX_SESSION_TITLE_BORDER_FORMAT = `${TMUX_SESSION_TITLE_PAD}#{pane_title}${TMUX_SESSION_TITLE_PAD}`;
 
-export const THINKING_LABEL_DEFAULT = "\uee8c ";
+export const THINKING_LABEL_DEFAULT = "\ue28c ";
 
 export const QOL_COMPACTION_SYSTEM_PROMPT = "You summarize coding-agent sessions for continuation. Preserve exact technical facts, filenames, commands, constraints, decisions, blockers, and next actions. Do not invent details.";
 
