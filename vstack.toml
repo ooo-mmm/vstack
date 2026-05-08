@@ -57,7 +57,7 @@ tpm = [
     "project-management",
     "worktree",
 ]
-researcher = ["deep-research", "worktree", "decider"]
+researcher = ["deep-research", "decider"]
 
 # Specialist skills — loaded on demand when the task matches
 [agent-skills-optional]
