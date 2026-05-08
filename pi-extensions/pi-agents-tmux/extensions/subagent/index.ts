@@ -3445,8 +3445,13 @@ function sectionHeading(theme: Theme, label: string): string {
 	return `${theme.fg("muted", "─── ")}${theme.fg("toolTitle", theme.bold(label))}${theme.fg("muted", " ───")}`;
 }
 
-function addWrappedSection(container: Container, theme: Theme, label: string, content: string, tone: "toolOutput" | "dim" | "muted" = "toolOutput"): void {
+function addSectionHeading(container: Container, theme: Theme, label: string): void {
+	container.addChild(new Spacer(1));
 	container.addChild(wrappedText(sectionHeading(theme, label)));
+}
+
+function addWrappedSection(container: Container, theme: Theme, label: string, content: string, tone: "toolOutput" | "dim" | "muted" = "toolOutput"): void {
+	addSectionHeading(container, theme, label);
 	container.addChild(wrappedText(theme.fg(tone, content || "(none)")));
 }
 
@@ -4746,17 +4751,17 @@ function renderPaneCompletionMessage(message: { content: string; details?: unkno
 	for (const [index, detail] of completions.entries()) {
 		if (index > 0) container.addChild(new Spacer(1));
 		container.addChild(wrappedText(agentStatusLine(theme, detail.agent, detail.status, paneCompletionTone(detail.status), theme.fg("dim", ` · ${detail.taskId}`))));
-		container.addChild(wrappedText(sectionHeading(theme, "Summary")));
+		addSectionHeading(container, theme, "Summary");
 		container.addChild(wrappedText(detail.summary || "No summary provided."));
-		container.addChild(wrappedText(sectionHeading(theme, "Files Changed")));
+		addSectionHeading(container, theme, "Files Changed");
 		container.addChild(wrappedText(detail.filesChanged.length ? detail.filesChanged.map((file) => `- ${file}`).join("\n") : "None reported"));
-		container.addChild(wrappedText(sectionHeading(theme, "Validation")));
+		addSectionHeading(container, theme, "Validation");
 		container.addChild(wrappedText(detail.validation.length ? detail.validation.map((item) => `- ${item}`).join("\n") : "None reported"));
 		if (detail.notes) {
-			container.addChild(wrappedText(sectionHeading(theme, "Notes")));
+			addSectionHeading(container, theme, "Notes");
 			container.addChild(wrappedText(detail.notes));
 		}
-		container.addChild(wrappedText(sectionHeading(theme, "Artifacts")));
+		addSectionHeading(container, theme, "Artifacts");
 		addArtifactPathSection(container, theme, "Source", detail.sourcePath);
 		addArtifactPathSection(container, theme, "Archive", detail.archivePath);
 		addArtifactPathSection(container, theme, "Transcript", detail.transcriptPath);
@@ -6731,10 +6736,10 @@ export default function (pi: ExtensionAPI) {
 						? theme.fg("warning", `Full output unavailable: ${r.fullOutputError}`)
 						: "";
 			const transcriptLine = (r: SingleResult) => (r.transcriptPath ? theme.fg("dim", `Transcript: ${compactPath(r.transcriptPath)}`) : "");
-			const queuedPaneLine = (r: SingleResult, dashboard = false) => {
+			const queuedPaneLine = (r: SingleResult, _dashboard = false) => {
 				if (!r.taskId || !r.paneId) return "";
 				const mode = r.paneSessionMode === "live" ? "reused live pane" : r.paneSessionMode === "resumed" ? "resumed pane" : "new pane";
-				const suffix = `${theme.fg("dim", ` · ${mode}${dashboard ? " · dashboard" : ""}`)}${theme.fg("dim", " · ctrl+o expand")}`;
+				const suffix = `${theme.fg("dim", ` · ${mode}`)}${theme.fg("dim", " · ctrl+o expand")}`;
 				return agentStatusLine(theme, r.agent, "Queued task", "warning", suffix);
 			};
 			const queuedTaskPreviewComponent = (r: SingleResult, dashboard = false): Component => ({
@@ -6758,11 +6763,9 @@ export default function (pi: ExtensionAPI) {
 			const expandedQueuedTaskComponent = (r: SingleResult): Component => {
 				const container = new Container();
 				container.addChild(wrappedText(queuedPaneLine(r)));
-				container.addChild(new Spacer(1));
-				container.addChild(wrappedText(sectionHeading(theme, "Queued task")));
+				addSectionHeading(container, theme, "Queued task");
 				container.addChild(new Markdown(r.task.trim() || "(empty task)", 0, 0, mdTheme));
 				if (r.taskId || r.queuedTaskFile || r.queuedOutboxFile || r.transcriptPath) {
-					container.addChild(new Spacer(1));
 					if (r.paneSessionMode) addWrappedSection(container, theme, "Pane session", r.paneSessionMode === "live" ? "Reused live pane" : r.paneSessionMode === "resumed" ? "Resumed saved pane session" : "Started new pane session", "dim");
 					if (r.taskId) addWrappedSection(container, theme, "Task ID", r.taskId, "dim");
 					addArtifactPathSection(container, theme, "Inbox", r.queuedTaskFile);
