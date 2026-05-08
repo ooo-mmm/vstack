@@ -414,7 +414,7 @@ fn run_one(global: bool, verbose: bool) -> Result<()> {
             }
         }
     }
-    let mut changes: Vec<(String, String, String, String)> = Vec::new();
+    let mut changes: Vec<(ItemKind, String, String, String, String)> = Vec::new();
     for entry in lock.entries.values_mut() {
         if resolve_single_source(&entry.source).is_none() {
             if let Some(replacement) = &fallback_source {
@@ -427,20 +427,20 @@ fn run_one(global: bool, verbose: bool) -> Result<()> {
         let old_hash = entry.source_hash.clone();
         entry.installed_at = now.clone();
         entry.source_hash = config::compute_source_hash(entry);
-        if verbose {
-            changes.push((
-                entry.kind.label_short().to_string(),
-                entry.name.clone(),
-                old_hash,
-                entry.source_hash.clone(),
-            ));
-        }
+        changes.push((
+            entry.kind,
+            entry.kind.label_short().to_string(),
+            entry.name.clone(),
+            old_hash,
+            entry.source_hash.clone(),
+        ));
     }
     lock.save(&lock_path)?;
+
     if verbose {
-        let kind_w = changes.iter().map(|(k, _, _, _)| k.len()).max().unwrap_or(0);
-        let name_w = changes.iter().map(|(_, n, _, _)| n.len()).max().unwrap_or(0);
-        for (kind, name, old, new) in &changes {
+        let kind_w = changes.iter().map(|(_, k, _, _, _)| k.len()).max().unwrap_or(0);
+        let name_w = changes.iter().map(|(_, _, n, _, _)| n.len()).max().unwrap_or(0);
+        for (_, kind, name, old, new) in &changes {
             let mark = if old == new { "✓" } else { "!" };
             let label = if old == new { "unchanged" } else { "changed" };
             let old_short = if old.is_empty() { "—".to_string() } else { old.chars().take(8).collect() };
@@ -451,7 +451,25 @@ fn run_one(global: bool, verbose: bool) -> Result<()> {
                 kw = kind_w, nw = name_w,
             );
         }
+    } else {
+        let mut updated_by_kind: HashMap<ItemKind, Vec<String>> = HashMap::new();
+        for (kind, _, name, old, new) in &changes {
+            if old != new {
+                updated_by_kind.entry(*kind).or_default().push(name.clone());
+            }
+        }
+        for kind in [ItemKind::Agent, ItemKind::Skill, ItemKind::Hook, ItemKind::PiExtension] {
+            if let Some(names) = updated_by_kind.get_mut(&kind) {
+                names.sort();
+                eprintln!(
+                    "  ! {} updated: {}",
+                    kind.label_short(),
+                    names.join(", ")
+                );
+            }
+        }
     }
+
     if repaired_sources > 0 {
         eprintln!(
             "  Repaired {} lock entry source path(s) (previous source missing)",
@@ -465,9 +483,20 @@ fn run_one(global: bool, verbose: bool) -> Result<()> {
         );
     }
 
+    let count_updated = |kind: ItemKind| -> usize {
+        changes
+            .iter()
+            .filter(|(k, _, _, old, new)| *k == kind && old != new)
+            .count()
+    };
     eprintln!(
-        "Refreshed {} agent(s), {} skill(s), {} Pi package(s) (hooks ride with agents)",
-        stats.agents_refreshed, stats.skills_refreshed, stats.pi_refreshed
+        "Processed {} agent(s) ({} updated), {} skill(s) ({} updated), {} Pi package(s) ({} updated) (hooks ride with agents)",
+        stats.agents_refreshed,
+        count_updated(ItemKind::Agent),
+        stats.skills_refreshed,
+        count_updated(ItemKind::Skill),
+        stats.pi_refreshed,
+        count_updated(ItemKind::PiExtension),
     );
     Ok(())
 }
