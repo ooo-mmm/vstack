@@ -95,7 +95,7 @@ export function isThinkingOnlyAssistantMessage(message: any): boolean {
 }
 
 export function trimThinkingOnlyAssistantLines(lines: string[]): string[] {
-	const trimmed = trimOuterBlankLines(lines);
+	const trimmed = trimOuterBlankLines(lines).map((line) => line.trimEnd());
 	if (trimmed.length === 0) return lines;
 	const zoneStart = "\x1b]133;A\x07";
 	if (lines[0]?.includes(zoneStart) && !trimmed[0]?.includes(zoneStart)) trimmed[0] = `${zoneStart}${trimmed[0] ?? ""}`;
