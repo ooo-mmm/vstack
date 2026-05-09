@@ -5,10 +5,14 @@ import { SESSION_SEARCH_OVERLAY_HEIGHT_RATIO } from "../constants.js";
 import { settingNumber } from "../settings.js";
 import {
 	defaultSessionSearchScope,
+	modelLabel,
+	sameModel,
 	sameSessionSearchProject,
+	sessionModelInfo,
 	sessionResumeTitle,
 	shortPathForUi,
 	userMessagesForResult,
+	type QolModelInfo,
 } from "./cache.js";
 import {
 	buildPromptSnippet,
@@ -19,6 +23,7 @@ import {
 } from "./search.js";
 import type {
 	QolSessionActionState,
+	QolSessionConfirmModelState,
 	QolSessionContextConfirmState,
 	QolSessionForkConfirmState,
 	QolSessionMessagesState,
@@ -100,13 +105,14 @@ function isPrintableInput(data: string): boolean {
 }
 
 export class QolSessionSearchComponent {
-	private screen: "search" | "messages" | "actions" | "confirmContext" | "confirmFork" = "search";
+	private screen: "search" | "messages" | "actions" | "confirmContext" | "confirmFork" | "confirmModel" = "search";
 	private searchState: QolSessionSearchState;
 	private messagesState: QolSessionMessagesState | undefined;
 	private actionState: QolSessionActionState | undefined;
 	private actionReturnScreen: "search" | "messages" = "messages";
 	private contextConfirmState: QolSessionContextConfirmState | undefined;
 	private forkConfirmState: QolSessionForkConfirmState | undefined;
+	private confirmModelState: QolSessionConfirmModelState | undefined;
 
 
 	constructor(
@@ -116,6 +122,7 @@ export class QolSessionSearchComponent {
 		private readonly sessions: QolSessionSearchSession[],
 		private readonly cwd: string,
 		initialQuery = "",
+		private readonly currentModel: QolModelInfo | undefined = undefined,
 	) {
 		const query = initialQuery.trim();
 		const scope = defaultSessionSearchScope(cwd);
@@ -172,6 +179,7 @@ export class QolSessionSearchComponent {
 		if (this.screen === "actions" && this.actionState) return this.renderActions(renderWidth, this.actionState);
 		if (this.screen === "confirmContext" && this.contextConfirmState) return this.renderContextConfirm(renderWidth, this.contextConfirmState);
 		if (this.screen === "confirmFork" && this.forkConfirmState) return this.renderForkConfirm(renderWidth, this.forkConfirmState);
+		if (this.screen === "confirmModel" && this.confirmModelState) return this.renderConfirmModel(renderWidth, this.confirmModelState);
 		return this.renderSearch(renderWidth);
 	}
 
@@ -180,6 +188,7 @@ export class QolSessionSearchComponent {
 		else if (this.screen === "actions" && this.actionState) this.handleActionInput(data);
 		else if (this.screen === "confirmContext" && this.contextConfirmState) this.handleContextConfirmInput(data);
 		else if (this.screen === "confirmFork" && this.forkConfirmState) this.handleForkConfirmInput(data);
+		else if (this.screen === "confirmModel" && this.confirmModelState) this.handleConfirmModelInput(data);
 		else {
 			this.screen = "search";
 			this.handleSearchInput(data);
@@ -286,6 +295,28 @@ export class QolSessionSearchComponent {
 		this.done({ message, result: state.result, type: "fork" });
 	}
 
+	private startResume(result: QolSessionSearchResult, returnScreen: "search" | "messages" | "actions"): void {
+		const previousModel = sessionModelInfo(result.path);
+		const current = this.currentModel;
+		if (previousModel && current && !sameModel(previousModel, current)) {
+			this.confirmModelState = { result, returnScreen, selected: 0, previousModel, currentModel: current };
+			this.screen = "confirmModel";
+			return;
+		}
+		this.done({ result, type: "resume" });
+	}
+
+	private returnFromConfirmModel(state: QolSessionConfirmModelState): void {
+		this.confirmModelState = undefined;
+		if (state.returnScreen === "actions" && this.actionState) this.screen = "actions";
+		else if (state.returnScreen === "messages" && this.messagesState) this.screen = "messages";
+		else this.screen = "search";
+	}
+
+	private confirmModelAction(state: QolSessionConfirmModelState): void {
+		this.done({ keepCurrentModel: state.selected === 1, result: state.result, type: "resume" });
+	}
+
 	private returnFromActions(): void {
 		this.actionState = undefined;
 		if (this.actionReturnScreen === "messages" && this.messagesState) this.screen = "messages";
@@ -320,12 +351,7 @@ export class QolSessionSearchComponent {
 		}
 		if (matchesKey(data, "alt+r")) {
 			const hit = state.results[state.selected];
-			if (hit) this.done({ result: hit.result, type: "resume" });
-			return;
-		}
-		if (matchesKey(data, "alt+m")) {
-			const hit = state.results[state.selected];
-			if (hit) this.done({ keepCurrentModel: true, result: hit.result, type: "resume" });
+			if (hit) this.startResume(hit.result, "search");
 			return;
 		}
 		if (matchesKey(data, "alt+i")) {
@@ -419,11 +445,7 @@ export class QolSessionSearchComponent {
 			return;
 		}
 		if (matchesKey(data, "alt+r")) {
-			this.done({ result: state.result, type: "resume" });
-			return;
-		}
-		if (matchesKey(data, "alt+m")) {
-			this.done({ keepCurrentModel: true, result: state.result, type: "resume" });
+			this.startResume(state.result, "messages");
 			return;
 		}
 		if (matchesKey(data, "alt+c")) {
@@ -487,11 +509,7 @@ export class QolSessionSearchComponent {
 			return;
 		}
 		if (matchesKey(data, "alt+r")) {
-			this.done({ result: state.result, type: "resume" });
-			return;
-		}
-		if (matchesKey(data, "alt+m")) {
-			this.done({ keepCurrentModel: true, result: state.result, type: "resume" });
+			this.startResume(state.result, "actions");
 			return;
 		}
 		if (matchesKey(data, "alt+i")) {
@@ -513,6 +531,22 @@ export class QolSessionSearchComponent {
 		}
 		if (matchesKey(data, "return") || matchesKey(data, "enter")) {
 			this.confirmContextAction(state);
+		}
+	}
+
+	private handleConfirmModelInput(data: string): void {
+		const state = this.confirmModelState;
+		if (!state) return;
+		if (matchesKey(data, "escape") || matchesKey(data, "backspace")) {
+			this.returnFromConfirmModel(state);
+			return;
+		}
+		if (matchesKey(data, "up") || matchesKey(data, "down")) {
+			state.selected = state.selected === 0 ? 1 : 0;
+			return;
+		}
+		if (matchesKey(data, "return") || matchesKey(data, "enter")) {
+			this.confirmModelAction(state);
 		}
 	}
 
@@ -576,10 +610,10 @@ export class QolSessionSearchComponent {
 
 		lines.push(divider());
 		if (compact) {
-			lines.push(row(`${ansiYellow("alt+c/f/r/m/i/n/a")} ${dim("actions")}  ${ansiYellow("tab")} ${dim("scope")}`));
+			lines.push(row(`${ansiYellow("alt+c/f/r/i/n/a")} ${dim("actions")}  ${ansiYellow("tab")} ${dim("scope")}`));
 		} else {
 			lines.push(row(`${ansiYellow("-/=")} ${dim("page")}  ${ansiYellow("alt+c")} ${dim("copy")}  ${ansiYellow("alt+f")} ${dim("fork")}  ${ansiYellow("alt+r")} ${dim("resume")}`));
-			lines.push(row(`${ansiYellow("alt+m")} ${dim("resume+model")}  ${ansiYellow("alt+i")} ${dim("inject+ctx")}  ${ansiYellow("alt+n")} ${dim("new+ctx")}  ${ansiYellow("alt+a")} ${dim("actions")}  ${ansiYellow("tab")} ${dim("scope")}`));
+			lines.push(row(`${ansiYellow("alt+i")} ${dim("inject+ctx")}  ${ansiYellow("alt+n")} ${dim("new+ctx")}  ${ansiYellow("alt+a")} ${dim("actions")}  ${ansiYellow("tab")} ${dim("scope")}`));
 		}
 		lines.push(bottom());
 		return lines;
@@ -705,7 +739,7 @@ export class QolSessionSearchComponent {
 		}
 		lines.push(divider(), empty());
 		lines.push(row(`${ansiYellow("-/=")} ${dim("page")}  ${ansiYellow("alt+c")} ${dim("copy")}  ${ansiYellow("alt+f")} ${dim("fork")}  ${ansiYellow("alt+r")} ${dim("resume")}`));
-		lines.push(row(`${ansiYellow("alt+m")} ${dim("resume+model")}  ${ansiYellow("alt+i")} ${dim("inject+ctx")}  ${ansiYellow("alt+n")} ${dim("new+ctx")}`));
+		lines.push(row(`${ansiYellow("alt+i")} ${dim("inject+ctx")}  ${ansiYellow("alt+n")} ${dim("new+ctx")}`));
 		lines.push(bottom());
 		return lines;
 	}
@@ -734,8 +768,47 @@ export class QolSessionSearchComponent {
 			for (const line of wrapVisible(dim(help), inner, 2)) lines.push(row(line));
 		}
 		lines.push(empty(), divider(), empty());
-		lines.push(row(`${ansiYellow("alt+c")} ${dim("copy")}  ${ansiYellow("alt+f")} ${dim("fork")}  ${ansiYellow("alt+r")} ${dim("resume")}  ${ansiYellow("alt+m")} ${dim("resume+model")}`));
+		lines.push(row(`${ansiYellow("alt+c")} ${dim("copy")}  ${ansiYellow("alt+f")} ${dim("fork")}  ${ansiYellow("alt+r")} ${dim("resume")}`));
 		lines.push(row(`${ansiYellow("alt+i")} ${dim("inject+ctx")}  ${ansiYellow("alt+n")} ${dim("new+ctx")}`));
+		lines.push(bottom());
+		return lines;
+	}
+
+	private renderConfirmModel(width: number, state: QolSessionConfirmModelState): string[] {
+		const { bottom, divider, empty, inner, row, top } = boxParts(width, this.theme);
+		const accent = (s: string) => this.theme.fg("accent", s);
+		const dim = (s: string) => this.theme.fg("dim", s);
+		const muted = (s: string) => this.theme.fg("muted", s);
+		const warning = (s: string) => this.theme.fg("warning", s);
+		const previousLabel = modelLabel(state.previousModel);
+		const currentLabel = modelLabel(state.currentModel);
+		const lines: string[] = [top("Choose model"), empty()];
+		const title = truncateToWidth(sessionResumeTitle(state.result), inner, "…");
+		lines.push(row(this.theme.bold(warning("Model differs from current session"))));
+		lines.push(row(accent(`“${title}”`)));
+		lines.push(row(muted(truncateToWidth(shortPathForUi(state.result.cwd || state.result.path), inner, "…"))));
+		lines.push(empty());
+		lines.push(row(`${dim("Session model: ")}${warning(previousLabel)}`));
+		lines.push(row(`${dim("Current model: ")}${warning(currentLabel)}`));
+		lines.push(empty());
+		for (const help of [
+			"Previous model resumes exactly as saved.",
+			"Current model writes a model-change event before resume, so full context transfers and future turns use it.",
+		]) {
+			for (const line of wrapVisible(dim(help), inner, 2)) lines.push(row(line));
+		}
+		lines.push(empty(), divider(), empty());
+		const optionRow = (index: 0 | 1, label: string, model: string): string => {
+			const selected = state.selected === index;
+			const prefix = selected ? "› " : "  ";
+			const content = `${warning(prefix)}${selected ? this.theme.fg("text", label) : dim(label)}${dim(" — ")}${selected ? warning(model) : muted(model)}`;
+			const body = truncateToWidth(content, inner, "…") + " ".repeat(Math.max(0, inner - visibleWidth(truncateToWidth(content, inner, "…"))));
+			return selected ? this.theme.bg("selectedBg", body) : body;
+		};
+		lines.push(row(optionRow(0, "Continue with previous model", previousLabel)));
+		lines.push(row(optionRow(1, "Continue with current model", currentLabel)));
+		lines.push(empty(), divider(), empty());
+		lines.push(row(`${ansiYellow("↑/↓")} ${dim("choose")}  ${ansiYellow("enter")} ${dim("resume")}  ${ansiYellow("backspace")} ${dim("back")}`));
 		lines.push(bottom());
 		return lines;
 	}

@@ -74,6 +74,14 @@ export interface QolSessionForkConfirmState {
 	selected: number;
 }
 
+export interface QolSessionConfirmModelState {
+	result: QolSessionSearchResult;
+	returnScreen: "search" | "messages" | "actions";
+	selected: 0 | 1;
+	previousModel: { provider: string; id: string };
+	currentModel: { provider: string; id: string };
+}
+
 export interface QolSessionSearchPendingMessage {
 	content: string;
 	details: Record<string, unknown>;

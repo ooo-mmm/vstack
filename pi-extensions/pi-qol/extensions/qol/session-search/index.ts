@@ -125,8 +125,9 @@ export async function openQolSessionSearch(pi: ExtensionAPI, ctx: ExtensionConte
 	const releaseModalLock = acquireVstackModalLock();
 	let action: QolSessionPaletteAction | undefined;
 	try {
+		const currentModel = ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined;
 		action = await ctx.ui.custom<QolSessionPaletteAction>((tui, theme, _keybindings, done) =>
-			new QolSessionSearchComponent(done, tui, theme, sessions, ctx.cwd, initialQuery), {
+			new QolSessionSearchComponent(done, tui, theme, sessions, ctx.cwd, initialQuery, currentModel), {
 			overlay: true,
 			overlayOptions: {
 				anchor: "center",

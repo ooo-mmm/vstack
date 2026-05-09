@@ -236,6 +236,29 @@ export function shortPathForUi(path: string): string {
 	return cleaned;
 }
 
+export interface QolModelInfo {
+	provider: string;
+	id: string;
+}
+
+export function sessionModelInfo(sessionPath: string): QolModelInfo | undefined {
+	try {
+		const model = SessionManager.open(sessionPath).buildSessionContext().model;
+		if (!model?.provider || !model?.modelId) return undefined;
+		return { provider: model.provider, id: model.modelId };
+	} catch {
+		return undefined;
+	}
+}
+
+export function sameModel(a: QolModelInfo | undefined, b: QolModelInfo | undefined): boolean {
+	return Boolean(a && b && a.provider === b.provider && a.id === b.id);
+}
+
+export function modelLabel(model: QolModelInfo | undefined): string {
+	return model ? `${model.provider}/${model.id}` : "unknown model";
+}
+
 export function pinSessionModel(sessionPath: string, model: NonNullable<ExtensionContext["model"]>, thinkingLevel?: string): void {
 	const manager = SessionManager.open(sessionPath);
 	const context = manager.buildSessionContext();
