@@ -113,6 +113,7 @@ Arguments support autocomplete, including known agent names for `show`, `start`,
 - `Alt+M` edits the selected agent's frontmatter (`model`, `deny-tools`, `color`). `tools` is omitted by default; existing strict allowlists appear as a commented line and are removed unless you uncomment/keep them. For vstack-managed project agents, changes are written to `[agent-frontmatter.pi]` in `vstack.toml`, the agent is regenerated immediately, and a confirmation dialog shows the updated files.
 - For `pane: true` agents, `Ctrl+P` starts/reuses a pane, `Ctrl+O` attaches, and `Ctrl+X` stops it.
 - `Esc` clears search or closes.
+- Popup left-pane rows show only a status icon plus agent name; scope, model, kind, task detail, and transcript metadata live in the right pane.
 
 Agent status legend (Nerd Font glyphs): `` live pane, `` pane-ready/startable, `` stale pane, `·` background. Background-mode agents (no `pane: true`) display as `bg` in user-facing labels; the internal kind is still `oneshot`.
 

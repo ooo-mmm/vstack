@@ -577,10 +577,7 @@ function renderAgentList(agents: AgentConfig[], statuses: Map<string, AgentPaneS
 		const status = agentStatus(agent, statuses.get(agent.name));
 		const marker = " ";
 		const name = ansiMagenta(selected ? theme.bold(agent.name) : agent.name);
-		const metaTone = selected ? "text" : "dim";
-		const meta = theme.fg(metaTone, ` ${status === "one-shot" ? "bg" : "pane"} · ${agent.source}`);
-		const model = agent.model ? theme.fg(metaTone, ` · ${agent.model}`) : "";
-		const row = truncateToWidth(`${marker}${agentStatusIcon(status, theme)} ${name}${meta}${model}`, width, "…");
+		const row = truncateToWidth(`${marker}${agentStatusIcon(status, theme)} ${name}`, width, "…");
 		lines.push(selected ? theme.bg("selectedBg", agentPad(row, width)) : row);
 	}
 	const hidden = Math.max(0, agents.length - (ui.scroll + listRows));
@@ -707,10 +704,7 @@ function renderActiveAgentList(items: SubagentDashboardItem[], ui: AgentBrowserU
 		const selected = absoluteIndex === ui.activeSelected;
 		const icon = dashboardStatusIcon(item.status, theme);
 		const name = selected ? ansiMagenta(theme.bold(item.agent)) : ansiMagenta(item.agent);
-		const metaTone = selected ? "text" : "dim";
-		const status = dashboardStatusText(item, theme);
-		const kind = theme.fg(metaTone, dashboardKindLabel(item.kind));
-		const row = `${icon} ${name} ${theme.fg(metaTone, "\u00b7")} ${status} ${theme.fg(metaTone, "\u00b7")} ${kind}`;
+		const row = `${icon} ${name}`;
 		const prefix = selected ? theme.fg("accent", "> ") : "  ";
 		lines.push(truncateToWidth(`${prefix}${row}`, width, ""));
 	}
@@ -822,11 +816,7 @@ function renderHistoryList(records: PaneTaskRecord[], ui: AgentBrowserUiState, w
 		const selected = index === ui.historySelected;
 		const icon = historyStatusIcon(record.status, theme);
 		const name = ansiMagenta(selected ? theme.bold(record.agent) : record.agent);
-		const metaTone = selected ? "text" : "dim";
-		const when = theme.fg(metaTone, formatRelativeTime(record.completedAt ?? record.createdAt));
-		const summary = oneLinePreview(record.summary || record.task || "", 60);
-		const detail = summary ? theme.fg(metaTone, `  ${summary}`) : "";
-		const row = truncateToWidth(`${icon} ${name} ${theme.fg(metaTone, "·")} ${when}${detail}`, width, "…");
+		const row = truncateToWidth(`${icon} ${name}`, width, "…");
 		lines.push(selected ? theme.bg("selectedBg", agentPad(row, width)) : row);
 	}
 	const hidden = Math.max(0, records.length - (ui.historyScroll + listRows));
