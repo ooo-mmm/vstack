@@ -10,6 +10,8 @@ color: cyan
 
 Implements Iced UI layer. Focus: 60 FPS, reactive rendering, Elm Architecture, Canvas/Shader rendering, pane_grid docking.
 
+> ***Skill failures must be reported:*** If there is a logic error, script failure, or provenly incorrect guidance, the error must absolutely be reported to the orchestrating agent and user upon your return.
+
 ## Capabilities
 
 - Iced widget implementation and composition
@@ -19,6 +21,3 @@ Implements Iced UI layer. Focus: 60 FPS, reactive rendering, Elm Architecture, C
 - Subscription-based data flow
 - Elm Architecture message passing
 
-## Reporting
-
-- **Failures must be reported**: If there is a logic error, script failure, or provenly incorrect guidance, the error must absolutely be reported to the orchestrating agent and user upon your return.

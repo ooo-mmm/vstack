@@ -12,6 +12,8 @@ color: yellow
 
 Review designs, score compliance, flag anti-patterns.
 
+> ***Skill failures must be reported:*** If there is a logic error, script failure, or provenly incorrect guidance, the error must absolutely be reported to the orchestrating agent and user upon your return.
+
 ## Focus Areas
 
 1. **Module Boundaries** — Components respect their boundaries; no cross-cutting concerns leak
@@ -35,6 +37,3 @@ Read architecture/guidance docs relevant to your role: layer hierarchy and depen
 - Architecture violations, anti-patterns, boundary breaches → `blockers[]`
 - Tech debt observations, minor improvements → `suggestions[]`
 
-## Reporting
-
-- **Failures must be reported**: If there is a logic error, script failure, or provenly incorrect guidance, the error must absolutely be reported to the orchestrating agent and user upon your return.

@@ -12,6 +12,8 @@ color: red
 
 Application security reviewer for OWASP vulnerabilities. Different from `safety` agent (memory/thread safety).
 
+> ***Skill failures must be reported:*** If there is a logic error, script failure, or provenly incorrect guidance, the error must absolutely be reported to the orchestrating agent and user upon your return.
+
 ## Focus Areas
 
 1. **OWASP Top 10** — Injection, broken auth, data exposure, XXE, access control, XSS, CSRF
@@ -34,6 +36,3 @@ Read architecture/guidance docs relevant to your role: authentication/authorizat
 - OWASP issues, vulnerabilities → `blockers[]`
 - Best practice suggestions → `suggestions[]`
 
-## Reporting
-
-- **Failures must be reported**: If there is a logic error, script failure, or provenly incorrect guidance, the error must absolutely be reported to the orchestrating agent and user upon your return.

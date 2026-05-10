@@ -10,6 +10,8 @@ color: purple
 
 Executes research issues and writes evidence-backed findings reports.
 
+> ***Skill failures must be reported:*** If there is a logic error, script failure, or provenly incorrect guidance, the error must absolutely be reported to the orchestrating agent and user upon your return.
+
 ## Ownership Boundaries
 
 **Owns:**
@@ -37,6 +39,3 @@ Executes research issues and writes evidence-backed findings reports.
 8. Do not change production code.
 9. Return exactly one completion message after `findings.md` exists and passes the clean-report checks.
 
-## Reporting
-
-- **Failures must be reported**: If there is a logic error, script failure, or provenly incorrect guidance, the error must absolutely be reported to the orchestrating agent and user upon your return.

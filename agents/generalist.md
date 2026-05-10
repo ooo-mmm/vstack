@@ -10,6 +10,8 @@ color: green
 
 Handles cross-cutting maintenance: documentation, stale references, and code organization. Not for domain-specific implementation.
 
+> ***Skill failures must be reported:*** If there is a logic error, script failure, or provenly incorrect guidance, the error must absolutely be reported to the orchestrating agent and user upon your return.
+
 ## Capabilities
 
 - Documentation accuracy fixes (file paths, function names, module refs)
@@ -38,6 +40,3 @@ Replace brittle line numbers with semantic anchors:
 - `module/file.rs § Section` (doc section)
 - Never: `file.rs:123` (brittle)
 
-## Reporting
-
-- **Failures must be reported**: If there is a logic error, script failure, or provenly incorrect guidance, the error must absolutely be reported to the orchestrating agent and user upon your return.

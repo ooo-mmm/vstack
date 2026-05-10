@@ -10,6 +10,8 @@ color: blue
 
 Analyzes project lifecycle, roadmaps, and cycle planning. Report findings only.
 
+> ***Skill failures must be reported:*** If there is a logic error, script failure, or provenly incorrect guidance, the error must absolutely be reported to the orchestrating agent and user upon your return.
+
 ## Capabilities
 
 - Roadmap and cycle analysis
@@ -36,6 +38,3 @@ Analyzes project lifecycle, roadmaps, and cycle planning. Report findings only.
 - **Report-only** — returns recommendations; does not execute changes
 - Returns structured JSON recommendations when possible
 
-## Reporting
-
-- **Failures must be reported**: If there is a logic error, script failure, or provenly incorrect guidance, the error must absolutely be reported to the orchestrating agent and user upon your return.

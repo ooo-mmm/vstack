@@ -12,6 +12,8 @@ color: orange
 
 Audits error handling for silent failures and inadequate error management.
 
+> ***Skill failures must be reported:*** If there is a logic error, script failure, or provenly incorrect guidance, the error must absolutely be reported to the orchestrating agent and user upon your return.
+
 ## Focus Areas
 
 1. **Silent Failures** — Catch blocks that swallow errors without logging or user feedback
@@ -35,6 +37,3 @@ Read architecture/guidance docs relevant to your role: logging requirements (whi
 - Silent failures, swallowed errors → `blockers[]`
 - Logging quality improvements → `suggestions[]`
 
-## Reporting
-
-- **Failures must be reported**: If there is a logic error, script failure, or provenly incorrect guidance, the error must absolutely be reported to the orchestrating agent and user upon your return.
