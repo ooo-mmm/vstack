@@ -73,12 +73,36 @@ describe("instructions() snapshot matrix", () => {
 		assert.equal(instructions("off", projectDir, true), "");
 	});
 
-	it("clarity-escape branch ends with literal 'Caveman resume.' sentinel", () => {
-		writeUserConfig({ mode: "full" });
+	it("clarity-escape branch puts the sentinel directive on the LAST non-empty line (F2 fix)", () => {
+		writeUserConfig({ mode: "full", boundaryNormalForCode: true, boundaryNormalForCommits: true, boundaryNormalForReviews: true, customPromptSuffix: "PROJECT-SUFFIX" });
 		for (const mode of MODES) {
 			const rendered = instructions(mode, projectDir, true);
-			assert.match(rendered, /Caveman resume\./, `${mode} clarity escape missing sentinel`);
+			// Sentinel literal is the two-word phrase 'Caveman resume' (no period
+			// — the period was ambiguous in the directive's surrounding sentence,
+			// which made the model emit 'Caveman resume' without it during live
+			// testing).
+			assert.match(rendered, /Caveman resume\b/, `${mode} clarity escape missing sentinel literal`);
+			const lastLine = rendered.split("\n").filter((line) => line.trim().length > 0).pop();
+			assert.match(lastLine ?? "", /Caveman resume\b/, `${mode} clarity sentinel must be the last directive line (recency bias). Last line was: ${lastLine}`);
 		}
+	});
+
+	it("clarity-escape branch double-anchors imperative directives (opener + sentinel) (F2 fix)", () => {
+		writeUserConfig({ mode: "full", boundaryNormalForCode: true, boundaryNormalForCommits: true, boundaryNormalForReviews: true });
+		for (const mode of MODES) {
+			const rendered = instructions(mode, projectDir, true);
+			const mustHits = rendered.match(/\bYou MUST\b/g) ?? [];
+			assert.ok(mustHits.length >= 2, `${mode} clarity needs >=2 'You MUST' directives (opener + sentinel); found ${mustHits.length}`);
+		}
+	});
+
+	it("lite directive includes explicit filler/hedge/article guidance (F1 fix)", () => {
+		writeUserConfig({ mode: "lite", boundaryNormalForCode: true, boundaryNormalForCommits: true, boundaryNormalForReviews: true });
+		const rendered = instructions("lite", projectDir, false);
+		assert.match(rendered, /article/i, "lite must explicitly call out article handling");
+		assert.match(rendered, /(filler|basically|essentially)/i, "lite must explicitly call out filler words");
+		assert.match(rendered, /(hedge|hedging|might|i think)/i, "lite must explicitly call out hedges");
+		assert.match(rendered, /complete sentence/i, "lite must keep complete sentences (distinguishes from full's fragments)");
 	});
 
 	it("respects customPromptSuffix when set", () => {

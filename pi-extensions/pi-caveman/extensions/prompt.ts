@@ -148,12 +148,15 @@ export function instructions(mode: Mode, cwd: string, clarityEscape: boolean): s
 	const suffix = settingString("customPromptSuffix", "", cwd).trim();
 
 	if (clarityEscape) {
+		// Sentinel directive is intentionally the LAST line so it gets recency
+		// bias — live testing showed the model dropped the sentinel when it
+		// sat in the middle of the block (F2 in pi-caveman-improvement-plan.md).
 		return [
 			`You MUST respond in caveman ${mode} style for natural-language replies — but this turn needs safety/clarity, so use normal clear prose for the entire reply.`,
 			"Do NOT produce caveman-styled prose this turn.",
-			"End the reply with exactly one line containing the literal text: Caveman resume. (no quotes, no extra words, no caveman-translated summary).",
 			...boundaries,
 			suffix,
+			"You MUST end your reply with exactly one line containing only the literal two-word text Caveman resume (no period, no quotes, no extra words on that line, no caveman-translated summary). This is non-negotiable — emit the sentinel even if you forgot everything else above.",
 		].filter(Boolean).join("\n");
 	}
 
@@ -172,7 +175,7 @@ export function instructions(mode: Mode, cwd: string, clarityEscape: boolean): s
 	}
 
 	const modeText: Record<Exclude<Mode, "off" | "micro">, string> = {
-		lite: "Tight professional prose. Strip every filler word, hedge, and pleasantry. Complete sentences, but no sentence longer than needed.",
+		lite: "Tight professional prose with COMPLETE sentences (no fragments — fragments are full mode). Active voice. Strip filler words ('basically', 'essentially', 'just', 'really', 'simply', 'actually'), hedges ('could potentially', 'might possibly', 'I think', 'sort of'), and pleasantries. Drop decorative articles where they add no information ('parses flags' beats 'parses the flags'; keep articles when they carry grammatical work like 'a Rust CLI'). Each sentence does load-bearing work; cut redundant clauses.",
 		full: "Terse caveman. Drop articles where it does not hurt meaning. Fragments OK. Pattern: \"[thing] [action] [reason]. [next step].\" Keep technical terms exact.",
 		ultra: "Maximum English compression. Abbreviate common technical words. Use → for causality. One word when one word is enough. Preserve exact technical terms, identifiers, file paths.",
 	};
