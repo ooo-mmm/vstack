@@ -67,7 +67,7 @@ pub fn build_agent_extras(
             .instructions_for(agent_name)
             .or(file_instructions)
             .map(String::from),
-        frontmatter: project_config.frontmatter_for(agent_name, ""),
+        frontmatter: Default::default(),
         frontmatter_by_harness: project_config
             .agent_frontmatter_by_harness
             .iter()

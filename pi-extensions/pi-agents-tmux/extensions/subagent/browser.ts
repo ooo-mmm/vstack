@@ -169,7 +169,7 @@ function agentCurrentFrontmatterEdit(agent: AgentConfig): AgentFrontmatterEdit {
 	if (!isVstackManagedAgentFile(agent)) return current;
 	const tomlPath = vstackTomlPathForAgent(agent, process.cwd());
 	if (!tomlPath) return current;
-	const tomlCurrent = readAgentFrontmatterToml(tomlPath, agent.name, "[agent-frontmatter]");
+	const tomlCurrent = readAgentFrontmatterToml(tomlPath, agent.name, "[agent-frontmatter.pi]");
 	return {
 		model: tomlCurrent.model ?? current.model,
 		denyTools: tomlCurrent.denyTools ?? current.denyTools,
@@ -181,8 +181,8 @@ function editableAgentFrontmatterText(agent: AgentConfig): string {
 	const current = agentCurrentFrontmatterEdit(agent);
 	const lines = [
 		"# Edit agent frontmatter overrides. Blank values remove the override.",
-		"# For vstack-managed agents, this writes shared [agent-frontmatter] in vstack.toml.",
-		"# Shared changes regenerate all installed harness agents where the field applies.",
+		"# For vstack-managed agents, this writes [agent-frontmatter.pi] in vstack.toml.",
+		"# Pi-specific changes regenerate the Pi agent file only.",
 		`model: ${current.model}`,
 		`deny-tools: ${current.denyTools.join(", ")}`,
 	];
@@ -350,12 +350,12 @@ function removeAgentFrontmatterKeys(content: string, agentName: string, section:
 }
 
 function upsertAgentFrontmatterToml(content: string, agentName: string, edit: AgentFrontmatterEdit): string {
-	const section = "[agent-frontmatter]";
+	const section = "[agent-frontmatter.pi]";
 	const lines = content.split(/\r?\n/);
 	let span = tomlSectionSpan(lines, section);
 	if (!span) {
 		const insertAt = lines.findIndex((line) => line.trim().startsWith("# ── Installed skills"));
-		const block = ["", "# Shared frontmatter overrides applied to every generated harness where supported.", "# The Pi /agents popup writes model, deny-tools, and color changes here.", section, ""];
+		const block = ["", "# Pi-specific frontmatter values. The Pi /agents popup edits", "# vstack-managed entries in this file, then `vstack refresh` applies them.", section, ""];
 		if (insertAt >= 0) lines.splice(insertAt, 0, ...block);
 		else lines.push(...block);
 		span = tomlSectionSpan(lines, section);
@@ -379,7 +379,7 @@ function upsertAgentFrontmatterToml(content: string, agentName: string, edit: Ag
 		else lines.splice(sectionEnd, 0, nextLine, "");
 	}
 	const next = lines.join("\n");
-	return `${removeAgentFrontmatterKeys(next, agentName, "[agent-frontmatter.pi]", ["model", "deny-tools", "color", "tools"]).replace(/\n*$/, "")}\n`;
+	return `${next.replace(/\n*$/, "")}\n`;
 }
 
 function refreshVstackManagedAgent(agent: AgentConfig, tomlPath: string): { ok: boolean; message?: string } {
@@ -1727,7 +1727,7 @@ export async function editAgentFrontmatterOverrides(ctx: ExtensionContext, agent
 		});
 		const refresh = refreshVstackManagedAgent(agent, tomlPath);
 		if (!refresh.ok) return `Updated ${agent.name} overrides in ${compactAgentPath(tomlPath)}. Refresh failed: ${refresh.message || "unknown error"}. Run vstack refresh --scope project to regenerate ${compactAgentPath(agent.filePath)}.`;
-		return `Updated shared overrides in ${compactAgentPath(tomlPath)} and regenerated project agents. Run /reload if Pi does not pick up the changed agent immediately.`;
+		return `Updated Pi overrides in ${compactAgentPath(tomlPath)} and regenerated project agents. Run /reload if Pi does not pick up the changed agent immediately.`;
 	}
 	await withFileMutationQueue(agent.filePath, async () => {
 		const current = await fs.promises.readFile(agent.filePath, "utf-8");

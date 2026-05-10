@@ -110,7 +110,7 @@ Arguments support autocomplete, including known agent names for `show`, `start`,
 - `↑/↓`, `-/=`, `Home/End` navigate the list; `←/→` switches focus between list and inspector.
 - In the inspector, `↑/↓`, `-/=`, `Home/End` scroll the system prompt preview.
 - `Enter` inserts `Use agent <name> to: ` into the editor.
-- `Alt+M` edits the selected agent's frontmatter (`model`, `deny-tools`, `color`). For vstack-managed project agents, changes are written to shared `[agent-frontmatter]` in `vstack.toml`, all generated harness agents are refreshed, and any matching Pi-specific overrides for those fields are removed so the shared value wins. Hand-authored agents are edited in place.
+- `Alt+M` edits the selected agent's frontmatter (`model`, `deny-tools`, `color`). For vstack-managed project agents, changes are written to `[agent-frontmatter.pi]` in `vstack.toml` and only the generated Pi agent file is affected on refresh. Hand-authored agents are edited in place.
 - For `pane: true` agents, `Ctrl+P` starts/reuses a pane, `Ctrl+O` attaches, and `Ctrl+X` stops it.
 - `Esc` clears search or closes.
 - Popup left-pane rows show only a status icon plus agent name; scope, model, kind, task detail, and transcript metadata live in the right pane.

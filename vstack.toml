@@ -10,16 +10,22 @@
 # Agents without an entry here still use automatic prefix matching (agent "foo" → skills "foo-*").
 #
 # Project-level `vstack.toml` files also support generated-frontmatter overrides.
-# Use these for installed vstack agents instead of editing generated agent files:
+# Use these for installed vstack agents instead of editing generated agent files.
+# Values are harness-specific; changing one table affects only that harness.
 #
-# [agent-frontmatter]
-# planner = { color = "blue", model = "opus", effort = "xhigh", background = true, isolation = "worktree", memory = "none" }
+# [agent-frontmatter.claude]
+# planner = { color = "blue", model = "opus[1m]", effort = "max", deny-tools = ["Agent"], background = false, isolation = "none", memory = "none" }
+#
+# [agent-frontmatter.opencode]
+# planner = { color = "#3b82f6", model = "openai/gpt-5.5", model-reasoning-effort = "xhigh", deny-tools = ["task"], mode = "subagent" }
+#
+# [agent-frontmatter.codex]
+# planner = { model = "gpt-5.5", model-reasoning-effort = "xhigh", sandbox-mode = "workspace-write" }
 #
 # [agent-frontmatter.pi]
-# planner = { color = "blue", model = "openai-codex/gpt-5.5:xhigh", deny-tools = ["bash"] }
+# planner = { color = "blue", model = "openai-codex/gpt-5.5:xhigh", deny-tools = ["subagent", "get_subagent_result", "steer_subagent", "stop_subagent"], pane = true }
 #
-# Claude Code supports effort/background/isolation/memory. Pi uses model suffixes and pane.
-# The Pi `/agents` popup can edit model/deny-tools/tools/color for vstack-managed project
+# The Pi `/agents` popup can edit model/deny-tools/color for vstack-managed project
 # agents and writes those changes into `[agent-frontmatter.pi]` automatically.
 
 # Skill mappings per agent — always loaded into context

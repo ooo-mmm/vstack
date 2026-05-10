@@ -133,21 +133,18 @@ rust = "Read docs/architecture.md before coding."
 rust = "Always run clippy before committing."
 
 # Generated frontmatter. vstack populates active defaults; edit and refresh.
-[agent-frontmatter]
-rust = { color = "orange", model = "opus", effort = "xhigh", deny-tools = ["subagent", "question"] }
-
-# Harness-specific overrides win over top-level entries.
+# Harness-specific values only affect that harness.
 [agent-frontmatter.claude]
-rust = { background = false }
+rust = { color = "orange", model = "opus[1m]", effort = "max", deny-tools = ["Agent", "AskUserQuestion"], background = false }
 
 [agent-frontmatter.opencode]
-rust = { mode = "subagent" }
+rust = { color = "#f97316", model = "openai/gpt-5.5", model-reasoning-effort = "xhigh", deny-tools = ["task", "question"], mode = "subagent" }
 
 [agent-frontmatter.codex]
-rust = { sandbox-mode = "danger-full-access" }
+rust = { model = "gpt-5.5", model-reasoning-effort = "xhigh", sandbox-mode = "danger-full-access" }
 
 [agent-frontmatter.pi]
-rust = { deny-tools = ["get_subagent_result", "steer_subagent", "stop_subagent"], pane = true }
+rust = { color = "orange", model = "openai-codex/gpt-5.5:xhigh", deny-tools = ["subagent", "get_subagent_result", "steer_subagent", "stop_subagent", "question"], pane = true }
 
 # Project instructions prepended to a skill's SKILL.md.
 [skill-instructions]
