@@ -61,6 +61,8 @@ State paths mirror `skills/flightdeck/scripts/lib/daemon-paths.sh` and `flightde
 - Master state — `<project-root>/<FLIGHTDECK_STATE_DIR>/flightdeck-state-<TMUX_SESSION_NAME>.json`
 - Daemon files — `${FD_STATE_DIR}/fd-{daemon,master,wake,...}-<SESSION_KEY>.{pid,log,heartbeat,busy,jsonl}`
 
+The daemon files key off the stable tmux `session_id`, so they survive a tmux session rename. The master state filename embeds the **session name**, so renaming the tmux session orphans the existing state file — flightdeck will look for `flightdeck-state-<NEW_NAME>.json` and miss the old one. Tmux window/tab names are not used.
+
 Where `FD_STATE_DIR` defaults to `$XDG_RUNTIME_DIR/flightdeck` (or `/tmp/flightdeck-$UID`), and `SESSION_KEY` is `s<N>` derived from the tmux `session_id`.
 
 If the project uses a non-default `FLIGHTDECK_STATE_DIR` or `FD_STATE_DIR`, set the matching extension setting so the dashboard reads the right files.
