@@ -541,7 +541,7 @@ class SessionManagerOverlay implements Focusable {
 		const divider = () => row(muted("━".repeat(bodyWidth)));
 		const lines: string[] = [];
 
-		lines.push(top("\uf005 Session Manager", `${this.filtered.length}/${this.sessions.length} shown`));
+		lines.push(top("Session Manager", `${this.filtered.length}/${this.sessions.length} shown`));
 		for (let i = 0; i < POPUP_PADDING_Y; i++) lines.push(blank());
 		lines.push(row(this.renderScopeTabs(bodyWidth)));
 		lines.push(row(""));
