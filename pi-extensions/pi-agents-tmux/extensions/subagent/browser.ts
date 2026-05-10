@@ -708,8 +708,9 @@ function renderActiveAgentList(items: SubagentDashboardItem[], ui: AgentBrowserU
 		const icon = dashboardStatusIcon(item.status, theme);
 		const name = selected ? ansiMagenta(theme.bold(item.agent)) : ansiMagenta(item.agent);
 		const metaTone = selected ? "text" : "dim";
+		const status = dashboardStatusText(item, theme);
 		const kind = theme.fg(metaTone, dashboardKindLabel(item.kind));
-		const row = `${icon} ${name} ${theme.fg(metaTone, "\u00b7")} ${kind}`;
+		const row = `${icon} ${name} ${theme.fg(metaTone, "\u00b7")} ${status} ${theme.fg(metaTone, "\u00b7")} ${kind}`;
 		const prefix = selected ? theme.fg("accent", "> ") : "  ";
 		lines.push(truncateToWidth(`${prefix}${row}`, width, ""));
 	}

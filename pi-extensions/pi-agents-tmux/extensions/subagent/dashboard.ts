@@ -31,9 +31,10 @@ export function dashboardKindLabel(kind: DashboardKind): string {
 	return kind === "oneshot" ? "bg" : kind;
 }
 
-export function dashboardStatusFor(rawStatus: PaneTaskStatus | "running" | "waiting", kind: DashboardKind): SubagentDashboardItem["status"] {
-	// Persistent panes return to idle after each task; surface 'completed' as 'waiting'.
-	if (rawStatus === "completed" && kind === "pane") return "waiting";
+export function dashboardStatusFor(rawStatus: PaneTaskStatus | "running" | "waiting", _kind: DashboardKind): SubagentDashboardItem["status"] {
+	// Persistent panes stay alive after each task, but the dashboard should reflect
+	// the latest task lifecycle. A later queued/running record for the same pane
+	// replaces this item and moves it back to working.
 	return rawStatus;
 }
 
@@ -49,7 +50,7 @@ export function dashboardStatusIcon(status: SubagentDashboardItem["status"], the
 }
 
 export function dashboardStatusText(item: SubagentDashboardItem, theme: Theme): string {
-	if (item.status === "completed") return theme.fg("success", "done");
+	if (item.status === "completed") return theme.fg("success", "completed");
 	if (item.status === "failed") return theme.fg("error", "failed");
 	if (item.status === "blocked") return theme.fg("warning", "blocked");
 	if (item.status === "needs_completion") return theme.fg("warning", "needs completion");
@@ -133,7 +134,7 @@ export function renderDashboardWidgetLines(state: SubagentDashboardState, theme:
 	const popupHint = popup === "none" ? "" : theme.fg("dim", ` · ${formatShortcutHint(popup)} popup`);
 	const hint = `${toggleHint}${popupHint}`;
 	const headerParts = [
-		done ? `${done} done` : "",
+		done ? theme.fg("success", `${done} completed`) : "",
 		running ? theme.fg("warning", `${running} working`) : "",
 		waiting ? theme.fg("warning", `${waiting} waiting`) : "",
 		failed ? theme.fg("error", `${failed} attention`) : "",

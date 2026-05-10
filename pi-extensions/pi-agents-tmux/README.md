@@ -116,7 +116,7 @@ Arguments support autocomplete, including known agent names for `show`, `start`,
 
 Agent status legend (Nerd Font glyphs): `` live pane, `` pane-ready/startable, `` stale pane, `·` background. Background-mode agents (no `pane: true`) display as `bg` in user-facing labels; the internal kind is still `oneshot`.
 
-Dashboard row status: `` queued, `` working, `` waiting (idle pane, ready for next task), `` done (background only), `` needs completion, `` failed / blocked. Live panes that finish a task transition to `waiting`, not `done`, since the pane stays alive for the next delegation.
+Dashboard row status: `` queued, `` working, `` completed, `` needs completion, `` failed / blocked. Live panes that finish a task stay visible as `completed` with a green check until a later queued/running task for the same pane replaces the row and moves it back to working.
 
 Non-interactive mode emits inline list/show output. Management commands remain available.
 
@@ -124,7 +124,7 @@ Non-interactive mode emits inline list/show output. Management commands remain a
 
 The inline agents widget (default toggle `Alt+A`, popup `Alt+Shift+A`; `F3` also opens the popup) shows live state for every spawned agent. Each row carries the agent name, its kind (`pane` or `bg`), and live usage stats refreshed from the transcript jsonl every poll cycle: ` N` (turns), `↑in ↓out` (tokens), and `$cost`. Compact mode aggregates totals across all agents on the trailing line. Expanded mode adds a `Total · ...` line at the bottom. Rows sort by start time so the order is stable while live updates patch usage in place.
 
-Rendering contract: the dashboard/popup owns live lifecycle (`queued`, `working`, `waiting`, `done`, `needs completion`). Inline tool output stays quieter when the dashboard is enabled: pane calls render as launch breadcrumbs, while bg/one-shot calls render the useful result preview without repeating the dashboard's lifecycle row.
+Rendering contract: the dashboard/popup owns live lifecycle (`queued`, `working`, `completed`, `needs completion`). Inline tool output stays quieter when the dashboard is enabled: pane calls render as launch breadcrumbs, while bg/one-shot calls render the useful result preview without repeating the dashboard's lifecycle row.
 
 ## Persistent pane agents
 
