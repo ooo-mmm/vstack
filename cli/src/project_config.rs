@@ -893,6 +893,7 @@ pub fn write_agent_frontmatter_defaults(
     let path = project_root.join("vstack.toml");
     let existing = std::fs::read_to_string(&path).unwrap_or_default();
     let mut content = ensure_agent_frontmatter_scaffold(&existing);
+    let existing_config = project_config_from_content(&content);
 
     let mut agents_sorted: Vec<&crate::agent::Agent> = agents
         .iter()
@@ -930,7 +931,7 @@ pub fn write_agent_frontmatter_defaults(
             .map(|agent| {
                 (
                     agent.name.clone(),
-                    harness_frontmatter_defaults(agent, harness),
+                    harness_frontmatter_defaults(agent, harness, &existing_config),
                 )
             })
             .filter(|(_, fields)| !fields.is_empty())
@@ -964,6 +965,12 @@ fn base_frontmatter_defaults(agent: &crate::agent::Agent) -> Vec<(String, String
     fields
 }
 
+fn project_config_from_content(content: &str) -> ProjectConfig {
+    let mut parsed: ProjectConfig = toml::from_str(content).unwrap_or_default();
+    parsed.load_agent_frontmatter_tables(content);
+    parsed
+}
+
 fn common_default_deny_tools(agent: &crate::agent::Agent) -> Vec<String> {
     let mut tools = vec!["subagent".to_string()];
     if !agent.name.eq_ignore_ascii_case("planner") {
@@ -975,9 +982,13 @@ fn common_default_deny_tools(agent: &crate::agent::Agent) -> Vec<String> {
 fn harness_frontmatter_defaults(
     agent: &crate::agent::Agent,
     harness: crate::harness::Harness,
+    config: &ProjectConfig,
 ) -> Vec<(String, String)> {
     match harness {
-        crate::harness::Harness::ClaudeCode => vec![("background".into(), "false".into())],
+        crate::harness::Harness::ClaudeCode => vec![(
+            "background".into(),
+            default_claude_background(agent, config).to_string(),
+        )],
         crate::harness::Harness::OpenCode => vec![(
             "mode".into(),
             toml_inline_string(match agent.role {
@@ -1020,6 +1031,17 @@ fn pi_extra_default_deny_tools() -> Vec<String> {
 fn default_pi_pane(agent: &crate::agent::Agent) -> bool {
     matches!(agent.role, crate::agent::AgentRole::Engineer)
         || agent.name.eq_ignore_ascii_case("planner")
+}
+
+fn effective_pi_pane(agent: &crate::agent::Agent, config: &ProjectConfig) -> bool {
+    config
+        .frontmatter_for(&agent.name, "pi")
+        .pane
+        .unwrap_or_else(|| default_pi_pane(agent))
+}
+
+fn default_claude_background(agent: &crate::agent::Agent, config: &ProjectConfig) -> bool {
+    !effective_pi_pane(agent, config)
 }
 
 fn merge_frontmatter_defaults_into_section(
@@ -1096,6 +1118,16 @@ fn upsert_missing_inline_table_fields(
             let existing_keys: HashSet<String> =
                 fields.iter().map(|(key, _)| key.clone()).collect();
             for (key, value) in defaults {
+                if section == "[agent-frontmatter.claude]" && key == "background" {
+                    if let Some((_, existing_value)) =
+                        fields.iter_mut().find(|(field, _)| field == key)
+                    {
+                        *existing_value = value.clone();
+                    } else {
+                        fields.push((key.clone(), value.clone()));
+                    }
+                    continue;
+                }
                 if !existing_keys.contains(key) {
                     fields.push((key.clone(), value.clone()));
                 }
@@ -1693,6 +1725,7 @@ fn agent_frontmatter_heading() -> String {
     out.push_str("# Top-level entries apply to every harness; harness-specific tables win.\n");
     out.push_str("# Fields: color, model, effort, deny-tools, pane, background,\n");
     out.push_str("# isolation, memory, mode, sandbox-mode, model-reasoning-effort.\n");
+    out.push_str("# Claude background mirrors Pi pane: pane=true -> false, pane=false -> true.\n");
     out.push_str("# Claude maps effort = \"xhigh\" to effort = \"max\".\n");
     out.push_str(
         "# OpenCode maps colors to hex. OpenAI/Pi/Codex map effort = \"max\" to \"xhigh\".\n",
@@ -2335,6 +2368,72 @@ researcher = { model = "opus[1m]", effort = "xhigh", background = true, isolatio
         assert_eq!(claude.background, Some(true));
         assert_eq!(claude.isolation.as_deref(), Some("worktree"));
         assert_eq!(claude.memory.as_deref(), Some("project"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn write_agent_frontmatter_defaults_syncs_claude_background_from_pi_pane() {
+        let dir = std::env::temp_dir().join(format!(
+            "vstack_test_agent_frontmatter_pane_background_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("vstack.toml");
+        std::fs::write(
+            &path,
+            r#"
+[agent-frontmatter.pi]
+scout = { pane = false }
+planner = { pane = true }
+
+[agent-frontmatter.claude]
+scout = { background = false }
+planner = { background = true }
+"#,
+        )
+        .unwrap();
+
+        let scout = crate::agent::Agent {
+            name: "scout".into(),
+            description: "Scout agent".into(),
+            model: "haiku".into(),
+            role: crate::agent::AgentRole::Analyst,
+            color: None,
+            body: String::new(),
+            source_path: std::path::PathBuf::new(),
+        };
+        let planner = crate::agent::Agent {
+            name: "planner".into(),
+            description: "Planner agent".into(),
+            model: "opus".into(),
+            role: crate::agent::AgentRole::Analyst,
+            color: None,
+            body: String::new(),
+            source_path: std::path::PathBuf::new(),
+        };
+        let mut harnesses = HashMap::new();
+        harnesses.insert(
+            "scout".into(),
+            vec![
+                crate::harness::Harness::ClaudeCode,
+                crate::harness::Harness::Pi,
+            ],
+        );
+        harnesses.insert(
+            "planner".into(),
+            vec![
+                crate::harness::Harness::ClaudeCode,
+                crate::harness::Harness::Pi,
+            ],
+        );
+
+        write_agent_frontmatter_defaults(&dir, &[scout, planner], &harnesses);
+
+        let updated = std::fs::read_to_string(&path).unwrap();
+        assert!(updated.contains("scout = { background = true"));
+        assert!(updated.contains("planner = { background = false"));
 
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -1,4 +1,4 @@
-use crate::agent::{self, Agent};
+use crate::agent::{self, Agent, AgentRole};
 use crate::hook::Hook;
 use anyhow::Result;
 use std::collections::BTreeMap;
@@ -41,7 +41,7 @@ pub fn generate_agent(
     }
     output.push_str(&format!(
         "background: {}\n",
-        claude_background_for(&frontmatter)
+        claude_background_for(agent, extras, &frontmatter)
     ));
     if let Some(isolation) = claude_isolation_for(&frontmatter) {
         output.push_str(&format!("isolation: {}\n", isolation));
@@ -121,8 +121,25 @@ fn claude_effort_name(effort: &str) -> String {
     }
 }
 
-fn claude_background_for(frontmatter: &agent::AgentFrontmatterOverrides) -> bool {
-    frontmatter.background.unwrap_or(false)
+fn claude_background_for(
+    agent: &Agent,
+    extras: &agent::AgentExtras,
+    frontmatter: &agent::AgentFrontmatterOverrides,
+) -> bool {
+    frontmatter
+        .background
+        .unwrap_or_else(|| !effective_pi_pane(agent, extras))
+}
+
+fn effective_pi_pane(agent: &Agent, extras: &agent::AgentExtras) -> bool {
+    extras
+        .frontmatter_for("pi")
+        .pane
+        .unwrap_or_else(|| default_pi_pane(agent))
+}
+
+fn default_pi_pane(agent: &Agent) -> bool {
+    matches!(agent.role, AgentRole::Engineer) || agent.name.eq_ignore_ascii_case("planner")
 }
 
 fn claude_isolation_for(frontmatter: &agent::AgentFrontmatterOverrides) -> Option<String> {
@@ -277,7 +294,7 @@ mod tests {
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(!content.contains("\ntools:"));
         assert!(content.contains("effort: high"));
-        assert!(content.contains("background: false"));
+        assert!(content.contains("background: true"));
         assert!(!content.contains("isolation:"));
         assert!(!content.contains("memory:"));
         assert!(content.contains("disallowedTools: Agent, AskUserQuestion"));
@@ -372,6 +389,43 @@ mod tests {
         assert!(content.contains("background: false"));
         assert!(!content.contains("isolation:"));
         assert!(content.contains("memory: project"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn generate_agent_derives_background_from_pi_pane() {
+        let dir = std::env::temp_dir().join(format!(
+            "vstack_claude_agent_pi_pane_background_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let agent = agent_fixture("scout", AgentRole::Analyst);
+        let mut extras = AgentExtras::default();
+        extras.frontmatter_by_harness.insert(
+            "pi".into(),
+            AgentFrontmatterOverrides {
+                pane: Some(false),
+                ..Default::default()
+            },
+        );
+
+        let path = generate_agent(&agent, &dir, &[], &[], &[], &extras).expect("generate ok");
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("background: true"));
+
+        extras.frontmatter_by_harness.insert(
+            "pi".into(),
+            AgentFrontmatterOverrides {
+                pane: Some(true),
+                ..Default::default()
+            },
+        );
+        let path = generate_agent(&agent, &dir, &[], &[], &[], &extras).expect("generate ok");
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("background: false"));
 
         let _ = std::fs::remove_dir_all(&dir);
     }

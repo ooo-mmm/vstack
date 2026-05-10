@@ -26,7 +26,7 @@ Restart Pi after installation.
 - `subagent` tool for one-off delegation, parallel delegation, or sequential chains.
 - Ships `instructions.md` so vstack/npm install adds `subagent`/`steer_subagent`/`get_subagent_result`/`stop_subagent` usage rules to the scope's `APPEND_SYSTEM.md`, removed on uninstall or disable.
 - Project/user agent discovery from `.pi/agents`, `.claude/agents`, and `~/.pi/agent/agents`.
-- Persistent tmux panes for agents with `pane: true` frontmatter.
+- Visible persistent tmux panes for agents with `pane: true` frontmatter; other agents run as bg one-shot sessions.
 - Grouped, themed completion notifications for persistent pane results.
 - Durable task registry plus `get_subagent_result` recovery by `taskId` or latest agent task.
 - `steer_subagent` for bridge-based mid-run steering, and `stop_subagent` for killing panes and clearing active registry/dashboard state.
@@ -150,7 +150,7 @@ Supported agent frontmatter fields:
 | `description` | yes | Short description shown in `/agents` and completions. |
 | `deny-tools` | no | Comma-separated Pi tools to subtract from inherited active tools. Prefer this for maintainable restrictions; future parent tools are inherited unless explicitly denied. Vstack-generated agents deny recursive/control tools by default. Most also deny `question`; `planner` keeps `question` available for requirement clarification. Hand-authored agents can choose differently. View and modify this with `/agents` → `Alt+M`. |
 | `model` | no | Pi model id. Shorthands are accepted: `sonnet` → `claude-sonnet-4-5`, `opus*` → `claude-opus-4-5`, `haiku` → `claude-haiku-4-5`. Other values pass through unchanged, including provider ids like `openai-codex/gpt-5.5:xhigh`. |
-| `pane` | no | `true`, `yes`, `1`, or `pane` starts/reuses a persistent tmux pane. Omit or use `false` for background one-shot mode. |
+| `pane` | no | `true`, `yes`, `1`, or `pane` starts/reuses a visible persistent tmux pane. Omit or use `false` for bg one-shot mode. |
 | `persistentPane` | no | Legacy alias for `pane`. |
 | `color` | no | Statusline badge color for child panes. Valid values: `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`. Aliases: `orange` → `yellow`, `purple`/`violet` → `magenta`, `teal` → `cyan`. Unknown/empty values fall back to automatic color cycling. |
 
