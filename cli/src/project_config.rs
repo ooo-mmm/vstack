@@ -85,6 +85,55 @@ fn is_agent_frontmatter_override(value: &toml::Value) -> bool {
     .any(|key| table.contains_key(*key))
 }
 
+/// Parse `[agent-frontmatter]` and `[agent-frontmatter.<harness>]` tables out
+/// of arbitrary `vstack.toml` content. Used by both `ProjectConfig` and
+/// `MappingConfig` so the source repo and the project share parsing logic.
+pub fn parse_agent_frontmatter_tables(
+    content: &str,
+) -> (
+    HashMap<String, crate::agent::AgentFrontmatterOverrides>,
+    HashMap<String, HashMap<String, crate::agent::AgentFrontmatterOverrides>>,
+) {
+    let mut legacy: HashMap<String, crate::agent::AgentFrontmatterOverrides> = HashMap::new();
+    let mut by_harness: HashMap<String, HashMap<String, crate::agent::AgentFrontmatterOverrides>> =
+        HashMap::new();
+    let Ok(value) = toml::from_str::<toml::Value>(content) else {
+        return (legacy, by_harness);
+    };
+    let Some(table) = value
+        .get("agent-frontmatter")
+        .and_then(|value| value.as_table())
+    else {
+        return (legacy, by_harness);
+    };
+    for (key, value) in table {
+        if is_agent_frontmatter_override(value) {
+            if let Ok(overrides) = value.clone().try_into() {
+                legacy.insert(key.clone(), overrides);
+            }
+            continue;
+        }
+        let Some(agent_table) = value.as_table() else {
+            continue;
+        };
+        let harness_key = crate::harness::Harness::from_id(key)
+            .map(|harness| harness.id().to_string())
+            .unwrap_or_else(|| key.clone());
+        for (agent_name, override_value) in agent_table {
+            if !is_agent_frontmatter_override(override_value) {
+                continue;
+            }
+            if let Ok(overrides) = override_value.clone().try_into() {
+                by_harness
+                    .entry(harness_key.clone())
+                    .or_default()
+                    .insert(agent_name.clone(), overrides);
+            }
+        }
+    }
+    (legacy, by_harness)
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(untagged)]
 pub enum CustomHookTarget {
@@ -109,40 +158,34 @@ impl ProjectConfig {
     }
 
     fn load_agent_frontmatter_tables(&mut self, content: &str) {
-        let Ok(value) = toml::from_str::<toml::Value>(content) else {
-            return;
-        };
-        let Some(table) = value
-            .get("agent-frontmatter")
-            .and_then(|value| value.as_table())
-        else {
-            return;
-        };
+        let (legacy, by_harness) = parse_agent_frontmatter_tables(content);
+        for (key, value) in legacy {
+            self.agent_frontmatter.insert(key, value);
+        }
+        for (harness_key, entries) in by_harness {
+            self.agent_frontmatter_by_harness
+                .entry(harness_key)
+                .or_default()
+                .extend(entries);
+        }
+    }
 
-        for (key, value) in table {
-            if is_agent_frontmatter_override(value) {
-                if let Ok(overrides) = value.clone().try_into() {
-                    self.agent_frontmatter.insert(key.clone(), overrides);
-                }
-                continue;
-            }
-
-            let Some(agent_table) = value.as_table() else {
-                continue;
-            };
-            let harness_key = crate::harness::Harness::from_id(key)
-                .map(|harness| harness.id().to_string())
-                .unwrap_or_else(|| key.clone());
-            for (agent_name, override_value) in agent_table {
-                if !is_agent_frontmatter_override(override_value) {
-                    continue;
-                }
-                if let Ok(overrides) = override_value.clone().try_into() {
-                    self.agent_frontmatter_by_harness
-                        .entry(harness_key.clone())
-                        .or_default()
-                        .insert(agent_name.clone(), overrides);
-                }
+    /// Overlay frontmatter defaults from a source `MappingConfig` so that
+    /// values it defines act as defaults beneath the project's own entries.
+    /// Project entries always win for any field set on both sides.
+    pub fn overlay_source_frontmatter(&mut self, mapping: &crate::mapping::MappingConfig) {
+        for (name, source) in &mapping.agent_frontmatter {
+            let entry = self.agent_frontmatter.entry(name.clone()).or_default();
+            *entry = source.merge(entry);
+        }
+        for (harness, entries) in &mapping.agent_frontmatter_by_harness {
+            let target = self
+                .agent_frontmatter_by_harness
+                .entry(harness.clone())
+                .or_default();
+            for (name, source) in entries {
+                let current = target.entry(name.clone()).or_default();
+                *current = source.merge(current);
             }
         }
     }
@@ -836,6 +879,7 @@ pub fn write_agent_frontmatter_defaults(
     project_root: &Path,
     agents: &[crate::agent::Agent],
     harnesses_by_agent: &HashMap<String, Vec<crate::harness::Harness>>,
+    mapping: &crate::mapping::MappingConfig,
 ) {
     if agents.is_empty() || harnesses_by_agent.is_empty() {
         return;
@@ -844,7 +888,8 @@ pub fn write_agent_frontmatter_defaults(
     let path = project_root.join("vstack.toml");
     let existing = std::fs::read_to_string(&path).unwrap_or_default();
     let mut content = ensure_agent_frontmatter_scaffold(&existing);
-    let existing_config = project_config_from_content(&content);
+    let mut existing_config = project_config_from_content(&content);
+    existing_config.overlay_source_frontmatter(mapping);
     content = remove_agent_frontmatter_base_section(&content);
     content = remove_agent_colors_section(&content);
 
@@ -2662,7 +2707,7 @@ planner = { background = true }
             ],
         );
 
-        write_agent_frontmatter_defaults(&dir, &[scout, planner], &harnesses);
+        write_agent_frontmatter_defaults(&dir, &[scout, planner], &harnesses, &crate::mapping::MappingConfig::default());
 
         let updated = std::fs::read_to_string(&path).unwrap();
         assert!(updated.contains("scout = { model = \"haiku\", effort = \"medium\", deny-tools = [\"Agent\", \"AskUserQuestion\"], background = true"));
@@ -2699,7 +2744,7 @@ planner = { background = true }
         let mut harnesses = HashMap::new();
         harnesses.insert("rust".into(), vec![crate::harness::Harness::OpenCode]);
 
-        write_agent_frontmatter_defaults(&dir, &[rust], &harnesses);
+        write_agent_frontmatter_defaults(&dir, &[rust], &harnesses, &crate::mapping::MappingConfig::default());
 
         let updated = std::fs::read_to_string(&path).unwrap();
         assert!(updated.contains("rust = { model = \"openai/gpt-5.5\", deny-tools = [\"task\", \"question\"], mode = \"subagent\", model-reasoning-effort = \"xhigh\" }"));
@@ -2719,7 +2764,7 @@ planner = { background = true }
             body: String::new(),
             source_path: std::path::PathBuf::new(),
         };
-        write_agent_frontmatter_defaults(&dir, &[rust], &harnesses);
+        write_agent_frontmatter_defaults(&dir, &[rust], &harnesses, &crate::mapping::MappingConfig::default());
         let updated = std::fs::read_to_string(&path).unwrap();
         assert!(updated.contains("rust = { model = \"openai/gpt-5.5\", deny-tools = [\"task\", \"question\"], mode = \"primary\", model-reasoning-effort = \"xhigh\" }"));
 
@@ -2756,7 +2801,7 @@ planner = { background = true }
             ],
         );
 
-        write_agent_frontmatter_defaults(&dir, &[rust], &harnesses);
+        write_agent_frontmatter_defaults(&dir, &[rust], &harnesses, &crate::mapping::MappingConfig::default());
 
         let updated = std::fs::read_to_string(&path).unwrap();
         assert!(!updated.contains("[agent-colors]"));

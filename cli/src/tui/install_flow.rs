@@ -1832,7 +1832,7 @@ fn perform_move_plans(items: &DiscoveredItems, plans: &[MovePlan], to_global: bo
     dst_lock.version = 1;
 
     let project_root = crate::config::project_root();
-    let project_config = crate::project_config::ProjectConfig::load(&project_root);
+    let mut project_config = crate::project_config::ProjectConfig::load(&project_root);
 
     let installed_skills_dst: Vec<String> = dst_lock
         .entries
@@ -1849,6 +1849,7 @@ fn perform_move_plans(items: &DiscoveredItems, plans: &[MovePlan], to_global: bo
     let mapping = source_dir
         .map(crate::mapping::MappingConfig::load)
         .unwrap_or_default();
+    project_config.overlay_source_frontmatter(&mapping);
 
     // Plans that succeeded at the destination — only these are eligible
     // for source removal at the end.
@@ -2020,6 +2021,7 @@ fn perform_inline_update(names: &[String], items: &DiscoveredItems) {
         }
 
         let mut project_config = crate::project_config::ProjectConfig::load(&project_root);
+        project_config.overlay_source_frontmatter(&mapping);
 
         let stats = crate::commands::refresh::refresh_items_in_scope(
             scope_global,

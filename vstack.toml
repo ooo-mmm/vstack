@@ -110,3 +110,17 @@ reviewer = ["issue-lifecycle", "linear"]
 "PreToolUse:Bash" = "all"
 "PostToolUse:Edit|Write" = ["engineer"]
 "TaskCompleted:" = ["engineer"]
+
+# Per-harness frontmatter defaults. These act as a baseline beneath any
+# project-level `[agent-frontmatter.<harness>]` overrides in a consuming
+# project's `vstack.toml`. Only fields you set here take effect — unset
+# fields fall through to the canonical agent .md frontmatter.
+#
+# Claude accepts `max` effort on Opus 4.7 for the deepest reasoning. Use it
+# for engineer + research roles where wall-clock cost is acceptable; other
+# Claude agents inherit `xhigh` from each agent's canonical `effort:` field.
+[agent-frontmatter.claude]
+iced = { effort = "max" }
+planner = { effort = "max" }
+researcher = { effort = "max" }
+rust = { effort = "max" }

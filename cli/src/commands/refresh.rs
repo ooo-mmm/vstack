@@ -320,6 +320,9 @@ fn run_one(global: bool, verbose: bool) -> Result<()> {
     }
     let mut project_config = crate::project_config::ProjectConfig::load(&project_root);
 
+    // After mapping is loaded below we overlay its frontmatter defaults so
+    // source-level `[agent-frontmatter.<harness>]` entries feed regeneration.
+
     // Resolve source directories from lock file entries
     let source_dirs = resolve_sources(&lock);
     if source_dirs.is_empty() {
@@ -376,9 +379,11 @@ fn run_one(global: bool, verbose: bool) -> Result<()> {
             &project_root,
             &installed_agents,
             &harnesses_by_agent,
+            &mapping,
         );
         project_config = crate::project_config::ProjectConfig::load(&project_root);
     }
+    project_config.overlay_source_frontmatter(&mapping);
 
     let stats = refresh_items_in_scope(
         global,

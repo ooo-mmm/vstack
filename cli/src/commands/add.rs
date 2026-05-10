@@ -722,10 +722,12 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
             &config::project_root(),
             &selected_agents,
             &harnesses_by_agent,
+            &mapping,
         );
     }
 
     let mut project_config = crate::project_config::ProjectConfig::load(&config::project_root());
+    project_config.overlay_source_frontmatter(&mapping);
 
     if global {
         let unsupported: Vec<Harness> = harnesses
@@ -1223,6 +1225,7 @@ fn reconcile_agents(
     let lock = config::LockFile::load(&lock_path)?;
     let mapping = crate::mapping::MappingConfig::load(source_dir);
     let mut project_config = crate::project_config::ProjectConfig::load(&config::project_root());
+    project_config.overlay_source_frontmatter(&mapping);
     let writes_project_config = !global && config::project_root() != source_dir;
 
     // Collect all installed skill names

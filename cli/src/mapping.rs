@@ -13,6 +13,14 @@ pub struct MappingConfig {
     pub role_skills: HashMap<String, Vec<String>>,
     #[serde(rename = "hook-events")]
     pub hook_events: HashMap<String, HookTarget>,
+    /// Source-level frontmatter overrides parsed from `[agent-frontmatter]`
+    /// and `[agent-frontmatter.<harness>]` tables. Acts as defaults beneath
+    /// any project `vstack.toml` overrides.
+    #[serde(skip)]
+    pub agent_frontmatter: HashMap<String, crate::agent::AgentFrontmatterOverrides>,
+    #[serde(skip)]
+    pub agent_frontmatter_by_harness:
+        HashMap<String, HashMap<String, crate::agent::AgentFrontmatterOverrides>>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -34,10 +42,15 @@ impl MappingConfig {
         if !path.exists() {
             return Self::default();
         }
-        match std::fs::read_to_string(&path) {
-            Ok(content) => toml::from_str(&content).unwrap_or_default(),
-            Err(_) => Self::default(),
-        }
+        let Ok(content) = std::fs::read_to_string(&path) else {
+            return Self::default();
+        };
+        let mut parsed: Self = toml::from_str(&content).unwrap_or_default();
+        let (legacy, by_harness) =
+            crate::project_config::parse_agent_frontmatter_tables(&content);
+        parsed.agent_frontmatter = legacy;
+        parsed.agent_frontmatter_by_harness = by_harness;
+        parsed
     }
 
     pub fn skills_for_agent(
