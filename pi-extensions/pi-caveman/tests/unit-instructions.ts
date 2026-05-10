@@ -86,6 +86,33 @@ describe("instructions() snapshot matrix", () => {
 		const rendered = instructions("full", projectDir, false);
 		assert.match(rendered, /PROJECT-SUFFIX-SENTINEL/);
 	});
+
+	it("every active mode renders imperative directives", () => {
+		writeUserConfig({ mode: "full", boundaryNormalForCode: true, boundaryNormalForCommits: true, boundaryNormalForReviews: true });
+		for (const mode of MODES) {
+			const clean = instructions(mode, projectDir, false);
+			assert.match(clean, /\bMUST\b/, `${mode} clean missing MUST directive`);
+			// micro is the minimum-prompt mode; its clean branch deliberately
+			// omits Do NOT to preserve its token-budget framing. Every other
+			// mode and every clarity branch must contain Do NOT.
+			if (mode !== "micro") {
+				assert.match(clean, /\bDo NOT\b/, `${mode} clean missing Do NOT directive`);
+			}
+			const clarity = instructions(mode, projectDir, true);
+			assert.match(clarity, /\bMUST\b/, `${mode} clarity missing MUST directive`);
+			assert.match(clarity, /\bDo NOT\b/, `${mode} clarity missing Do NOT directive`);
+		}
+	});
+
+	it("every rendered prompt opens with the canonical 'You MUST respond in caveman' anchor", () => {
+		writeUserConfig({ mode: "full" });
+		for (const mode of MODES) {
+			for (const clarity of [false, true]) {
+				const rendered = instructions(mode, projectDir, clarity);
+				assert.match(rendered, /^You MUST respond in caveman /, `${mode}${clarity ? " clarity" : ""} opener mismatch`);
+			}
+		}
+	});
 });
 
 describe("shouldClarityEscape() — current behavior baseline", () => {

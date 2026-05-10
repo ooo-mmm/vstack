@@ -85,45 +85,59 @@ export function shouldClarityEscape(prompt: string): boolean {
 export function instructions(mode: Mode, cwd: string, clarityEscape: boolean): string {
 	if (mode === "off") return "";
 	const boundaries: string[] = [];
-	if (settingBoolean("boundaryNormalForCode", true, cwd)) boundaries.push("Code and code blocks stay normal; do not caveman-transform code, commands, identifiers, or quoted errors.");
-	if (settingBoolean("boundaryNormalForCommits", true, cwd)) boundaries.push("Commit messages and PR descriptions stay normal unless user explicitly asks for caveman style there.");
-	if (settingBoolean("boundaryNormalForReviews", true, cwd)) boundaries.push("Formal reviews stay normal unless user explicitly asks for caveman style there.");
+	if (settingBoolean("boundaryNormalForCode", true, cwd)) boundaries.push("Do NOT caveman-transform code, commands, identifiers, or quoted errors.");
+	if (settingBoolean("boundaryNormalForCommits", true, cwd)) boundaries.push("Do NOT caveman-transform commit messages or PR descriptions unless the user explicitly asks for caveman style there.");
+	if (settingBoolean("boundaryNormalForReviews", true, cwd)) boundaries.push("Do NOT caveman-transform formal reviews unless the user explicitly asks for caveman style there.");
 	const suffix = settingString("customPromptSuffix", "", cwd).trim();
+
 	if (clarityEscape) {
 		return [
-			"Caveman mode is active, but this turn appears to need safety/clarity. Use normal clear prose for the entire reply — do not produce any caveman-styled prose. End with exactly one line containing the literal text: Caveman resume. (no quotes, no extra words, no caveman-translated summary).",
+			`You MUST respond in caveman ${mode} style for natural-language replies — but this turn needs safety/clarity, so use normal clear prose for the entire reply.`,
+			"Do NOT produce caveman-styled prose this turn.",
+			"End the reply with exactly one line containing the literal text: Caveman resume. (no quotes, no extra words, no caveman-translated summary).",
 			...boundaries,
 			suffix,
 		].filter(Boolean).join("\n");
 	}
+
 	if (mode === "micro") {
 		const compactBoundaries: string[] = [];
 		if (settingBoolean("boundaryNormalForCode", true, cwd)) compactBoundaries.push("Code/commands/identifiers/quoted errors unchanged.");
 		if (settingBoolean("boundaryNormalForCommits", true, cwd)) compactBoundaries.push("Commit/PR text normal unless user asks caveman.");
 		if (settingBoolean("boundaryNormalForReviews", true, cwd)) compactBoundaries.push("Formal reviews normal unless user asks caveman.");
 		return [
-			"Token efficiency mode: terse smart caveman.",
+			"You MUST respond in caveman micro style.",
 			"Cut filler/pleasantries/hedging. Fragments OK. Technical terms exact. Accuracy > brevity.",
-			"Use normal clarity for security/destructive/ambiguous turns, then resume.",
+			"For security/destructive/ambiguous turns, switch to normal clarity, then resume.",
 			...compactBoundaries,
 			suffix,
 		].filter(Boolean).join("\n");
 	}
+
 	const modeText: Record<Exclude<Mode, "off" | "micro">, string> = {
-		lite: "Lite: remove filler, hedging, and pleasantries. Keep articles and professional complete sentences, but be tight.",
-		full: "Full: terse smart caveman. Drop articles/filler/hedging. Fragments OK. Pattern: [thing] [action] [reason]. [next step]. Technical terms exact.",
-		ultra: "Ultra: maximum terse English. Abbreviate common technical words, use arrows for causality, one word when one word enough. Preserve exact technical terms.",
+		lite: "Tight professional prose. Strip every filler word, hedge, and pleasantry. Complete sentences, but no sentence longer than needed.",
+		full: "Terse caveman. Drop articles where it does not hurt meaning. Fragments OK. Pattern: \"[thing] [action] [reason]. [next step].\" Keep technical terms exact.",
+		ultra: "Maximum English compression. Abbreviate common technical words. Use → for causality. One word when one word is enough. Preserve exact technical terms, identifiers, file paths.",
 	};
+
+	const conversationalDoNots = [
+		"Do NOT write conversational openers (\"Let me…\", \"Here's…\", \"I'll…\", \"Now I'm going to…\", \"Sure, …\").",
+		"Do NOT write trailing summaries, \"Want me to also…\" tails, or \"Hope this helps\".",
+		"Do NOT add decorative section headers in chat replies.",
+	];
+
 	// Auto-clarity only makes sense for modes that actually shift register away
 	// from normal English (full/ultra). lite is just tight professional prose, so
-	// there is nothing to escape from and the rule produced incoherent output.
+	// there is nothing to escape from.
 	const autoClarityRule = mode === "lite"
 		? undefined
-		: "Auto-clarity rule: for security warnings, irreversible actions, confusing multi-step sequences, or user confusion, temporarily use normal clarity; resume caveman after clear part.";
+		: "Auto-clarity rule: for security warnings, irreversible actions, or turns where the user is clearly confused, switch to normal clear prose for the affected portion of the reply, then resume caveman.";
+
 	return [
-		"Caveman communication mode active for assistant natural-language chat.",
+		`You MUST respond in caveman ${mode} style for natural-language replies. This OVERRIDES default verbosity habits.`,
 		modeText[mode],
-		"No pleasantries. No filler. No unnecessary hedging. Accuracy over terseness if conflict.",
+		...conversationalDoNots,
+		"Accuracy beats terseness when in conflict.",
 		autoClarityRule,
 		...boundaries,
 		suffix,
