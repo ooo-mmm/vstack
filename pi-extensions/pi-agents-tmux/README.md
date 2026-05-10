@@ -30,7 +30,7 @@ Restart Pi after installation.
 - Grouped, themed completion notifications for persistent pane results.
 - Durable task registry plus `get_subagent_result` recovery by `taskId` or latest agent task.
 - `steer_subagent` for bridge-based mid-run steering, and `stop_subagent` for killing panes and clearing active registry/dashboard state.
-- Session-scoped inbox/outbox handoff, transcript artifacts, and pane registries under `~/.pi/agent/vstack/pi-agents-tmux/sessions/<session-id>/`.
+- Session-scoped inbox/outbox handoff, transcript artifacts, and pane registries under `~/.pi/agent/vstack/sessions/<session-id>/pi-agents-tmux/`. Legacy `~/.pi/agent/vstack/pi-agents-tmux/sessions/<session-id>/` trees are migrated on session start.
 - Auto-sized grid tmux layout for pane agents, reflowed on every spawn, with pane titles like `agent:iced`.
 
 ## Tool modes
@@ -196,7 +196,7 @@ A future backend could use Pi SDK `createAgentSession()` for non-pane one-shot a
 - `maxParallelTasks` and `maxConcurrency` for one-shot delegation limits.
 - Dashboard controls: `dashboard`, `quietInlineWhenDashboard`, `dashboardMaxItems`, `dashboardCollapsed`, `dashboardShortcut` (default `alt+a` cycles dashboard mode), `popupShortcut` (default `alt+shift+a` opens the full `/agents` browser; `F3` is an additional popup shortcut), and `treeStyle`.
 - `collapsedItemCount` for compact result rendering.
-- `truncateResults`, `resultMaxBytes` (default 102400), `resultMaxLines` (default 4000), and `preserveFullOutput` for result truncation. Oversized one-shot outputs are saved under `~/.pi/agent/vstack/pi-agents-tmux/sessions/<session-id>/outputs/` when preservation is enabled.
+- `truncateResults`, `resultMaxBytes` (default 102400), `resultMaxLines` (default 4000), and `preserveFullOutput` for result truncation. Oversized one-shot outputs are saved under `~/.pi/agent/vstack/sessions/<session-id>/pi-agents-tmux/outputs/` when preservation is enabled.
 - `completionPollMs` and `childInboxPollMs` for persistent pane polling intervals.
 - `forceSessionBridgeForPanes` (default `true`) explicitly loads `pi-session-bridge` in new pane launchers so steering continues to work if settings drift.
 - `subagentToolAccess` (default `all`) controls whether child Pi sessions inherit all active Pi tools or receive only the agent `tools:` allowlist. In both modes the agent's `deny-tools:` is subtracted.

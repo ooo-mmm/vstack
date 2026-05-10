@@ -45,4 +45,4 @@ Popup controls:
 
 ## Storage
 
-Stashes are stored per Pi session under `~/.pi/agent/vstack/prompt-stash/sessions/<session-id>/prompt-stash.json`, even when the package is enabled by project settings. Legacy manager config under `prompt-stash` is still read, and legacy `.pi/prompt-stash.json` files are imported into the current session and removed on load/use.
+Stashes are stored per Pi session under `~/.pi/agent/vstack/sessions/<session-id>/prompt-stash/prompt-stash.json`, even when the package is enabled by project settings. Legacy `~/.pi/agent/vstack/prompt-stash/sessions/<session-id>/` trees are migrated on first stash. Legacy manager config under `prompt-stash` is still read, and legacy `.pi/prompt-stash.json` files are imported into the current session and removed on load/use.

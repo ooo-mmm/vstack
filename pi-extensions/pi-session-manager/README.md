@@ -28,7 +28,7 @@ Restart Pi after installation.
 - Threaded lineage view using Pi `parentSession` relationships when there is no active search.
 - Resume through `ctx.switchSession()`, preserving the session's saved model by default. If the current active model differs, a confirmation popup explains the models and lets you continue with either one.
 - Rename sessions using Pi session-info entries; current-session renames go through `pi.setSessionName()`.
-- Delete one session or all shown deletable sessions with confirmation, current-session protection, visible delete counts, and optional `trash` CLI fallback.
+- Delete one session or all shown deletable sessions with confirmation, current-session protection, visible delete counts, and optional `trash` CLI fallback. Deletes also remove that session's per-extension data under `~/.pi/agent/vstack/sessions/<session-id>/` (and the legacy `~/.pi/agent/vstack/<package>/sessions/<session-id>/` trees) so dropped sessions don't leave orphaned data behind.
 - Clean one-line rendering for names, prompts, and paths.
 
 No SQLite, FTS, or native runtime dependencies are used; Pi's `SessionManager.list()` / `listAll()` APIs provide the index data.

@@ -23,7 +23,7 @@ Restart Pi after installation.
 
 ## What it does
 
-- Preserves oversized output under `~/.pi/agent/vstack/pi-output-policy/sessions/<session-id>/artifacts/` when possible; never under the project `.pi/` directory.
+- Preserves oversized output under `~/.pi/agent/vstack/sessions/<session-id>/pi-output-policy/artifacts/` when possible; never under the project `.pi/` directory. Legacy `~/.pi/agent/vstack/pi-output-policy/sessions/<session-id>/artifacts/` trees are migrated on first use.
 - Uses head truncation for search/listing tools and tail truncation for command/log tools.
 - Adds explicit truncation notices with size, line count, direction, and artifact path.
 - Leaves file `read` results unmodified by default; enable `truncateReadOutputs` to cap reads.
