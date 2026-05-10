@@ -935,26 +935,6 @@ pub fn write_agent_frontmatter_defaults(
     }
 }
 
-fn base_frontmatter_defaults(agent: &crate::agent::Agent) -> Vec<(String, String)> {
-    let mut fields = Vec::new();
-    if let Some(color) = agent
-        .color
-        .as_deref()
-        .filter(|color| !color.trim().is_empty())
-    {
-        fields.push(("color".into(), toml_inline_string(color)));
-    }
-    fields.push(("model".into(), toml_inline_string(&agent.model)));
-    if let Some(effort) = agent.effort.as_deref() {
-        fields.push(("effort".into(), toml_inline_string(effort)));
-    }
-    fields.push((
-        "deny-tools".into(),
-        toml_inline_array(&common_default_deny_tools(agent)),
-    ));
-    fields
-}
-
 fn project_config_from_content(content: &str) -> ProjectConfig {
     let mut parsed: ProjectConfig = toml::from_str(content).unwrap_or_default();
     parsed.load_agent_frontmatter_tables(content);
@@ -1011,14 +991,6 @@ fn remove_agent_colors_section(content: &str) -> String {
         rendered.push('\n');
     }
     rendered
-}
-
-fn common_default_deny_tools(agent: &crate::agent::Agent) -> Vec<String> {
-    let mut tools = vec!["subagent".to_string()];
-    if !agent.name.eq_ignore_ascii_case("planner") {
-        tools.push("question".to_string());
-    }
-    tools
 }
 
 fn harness_frontmatter_defaults(
@@ -2340,7 +2312,6 @@ fn update_project_config(path: &Path, agents: &[String], skills: &[String]) {
     if out != existing {
         let _ = std::fs::write(path, out);
     }
-    let _ = skills;
 }
 
 /// Returns true if a name does NOT appear as a TOML key in the file.

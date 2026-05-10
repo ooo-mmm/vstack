@@ -43,7 +43,7 @@ pub fn generate_agent(
         .clone()
         .or_else(|| frontmatter.effort.clone())
         .or_else(|| agent.effort.clone())
-        .filter(|effort| !is_none_effort(effort));
+        .filter(|effort| !is_none_value(effort));
 
     // Build TOML manually to control format (triple-quoted developer_instructions)
     let mut output = String::new();
@@ -92,7 +92,7 @@ fn codex_model_for_override(model: &str) -> String {
     }
 }
 
-fn is_none_effort(value: &str) -> bool {
+fn is_none_value(value: &str) -> bool {
     matches!(
         value.trim().to_ascii_lowercase().as_str(),
         "" | "none" | "false" | "off" | "no"
