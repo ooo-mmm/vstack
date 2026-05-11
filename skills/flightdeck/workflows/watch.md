@@ -136,6 +136,7 @@ For each tracked issue currently in a non-terminal state (`waiting | prompting |
    | `force-merge-confirm` | `prompting` | substate = tag |
    | `external-fix-suggestions` | `prompting` | substate = tag |
    | `cycle-fix-suggestions` | `prompting` | substate = tag |
+   | `scope-creep-detected` | `prompting` | substate = tag |
    | `descope-related` | `prompting` | substate = tag |
    | `multi-select-tabbed` | `prompting` | substate = tag (handler picks via `--option-multi`) |
    | `awaiting-direction` | `prompting` | substate = tag (handler synthesizes a continuation directive from registry intent) |

@@ -1,12 +1,12 @@
 # Workflow: `close-issue` — Recognize Terminal State + Tear Down Pane
 
-Inner pane has signaled it's done. Verify the signal, mark the issue terminal in master state, kill the window, deregister the pane, and either advance to the next queued issue or let the watch loop's termination check fire.
+Inner pane has signaled it's done. Verify the signal, mark the issue terminal in master state, kill the window, leave the registry entry in place for the final report, and either advance to the next queued issue or let the watch loop's termination check fire.
 
 **Inputs**: `<ISSUE_ID>`. Caller (`watch.md` § 2) routes here when `pane-poll` returns the `terminal-state-reached` tag.
 
 **Pre-conditions**: issue is registered; pane is alive but signaling completion; orchestration's own merge / cleanup steps already ran (their output is what we're reading).
 
-**Post-condition**: issue's `state` = `merged` or `aborted` in master state; tmux window for the issue is gone; pane registry entry is removed; completion line emitted.
+**Post-condition**: issue's `state` = `merged` or `aborted` in master state; tmux window for the issue is gone; pane registry entry remains for `terminate.md` reporting and final cleanup; completion line emitted.
 
 ---
 
