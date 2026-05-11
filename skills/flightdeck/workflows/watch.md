@@ -249,11 +249,13 @@ If `paused_for_user` is set, do NOT release the busy lock or end the turn. Wait 
 Master state persists on every mutation. On `watch` re-entry after compaction (or an explicit user resume):
 
 1. `flightdeck-state init` is idempotent — it loads the existing state file.
-2. Re-fingerprint each registered window's pane 0 (TUIs may have re-laid-out across compaction).
+2. Re-fingerprint each registered window's pane 0 (TUIs may have re-laid-out across compaction). Adapter reads remain primary; tmux capture-pane is the documented fallback.
 3. Recompute every issue's `state` from a fresh `pane-poll --batch -` registry snapshot. Persisted state is a hint, not truth.
 4. The `unknown_since` timer is preserved across compaction, so the force-merge clock does not reset.
-5. The daemon may have continued running through compaction; § 1 step 5's `flightdeck-daemon start` is idempotent (flock-protected) and is a no-op when the daemon is already alive.
-6. Resume from § 2.
+5. Recompute the conflict graph against current PR file lists (PRs may have moved during compaction) and resume the merge queue from where it left off — see § 4.
+6. Re-evaluate any `paused_for_user` entry: if the user has acted in the pane in the meantime, reclassify and proceed; otherwise keep the pause.
+7. The daemon may have continued running through compaction; § 1 step 5's `flightdeck-daemon start` is idempotent (flock-protected) and is a no-op when the daemon is already alive.
+8. Resume from § 2.
 
 ---
 

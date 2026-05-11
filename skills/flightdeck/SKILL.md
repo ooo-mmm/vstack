@@ -61,8 +61,8 @@ Decision rules grouped by domain. Each pattern doc under `patterns/` has the ful
 
 ### Tmux monitoring (`patterns/tmux-monitoring.md`)
 
-- **Pane-0 rule**: every read targets `<session>:<window>.<idx>` explicitly. Default-pane captures break when sub-agents spawn additional panes. Index is pinned per window at registry init via fingerprinting.
-- **Bell clearing** after sending input — atomic chained idiom (no flicker):
+- **Pane-0 rule**: every read targets `<session>:<window>.<idx>` explicitly (enforced by `pane-poll`). Default-pane captures break when sub-agents spawn additional panes. Index is pinned per window at registry init via fingerprinting.
+- **Bell clearing** after sending input — atomic chained idiom (no flicker, enforced by `pane-respond` / `pane-clear-bell`):
   ```
   tmux select-window -t <session>:<window> \; select-window -t <ORIG>
   ```
@@ -70,15 +70,15 @@ Decision rules grouped by domain. Each pattern doc under `patterns/` has the ful
 
 ### Prompt handlers (`patterns/prompt-handlers.md`)
 
-- **Cleanup scope** — answer YES iff the target path equals the asking pane's registered worktree. NEVER for sibling worktrees (parallel sessions still using them). Some agents propose batch cleanup; that's wrong.
-- **Combine guidance with the option pick** — when picking an option triggers immediate sub-agent delegation (rebase, fix), the sub-agent guidance must ride in the SAME input. Follow-ups arrive after the sub-agent has left.
+- **Cleanup scope** — answer YES iff the target path equals the asking pane's registered worktree. NEVER for sibling worktrees (parallel sessions still using them). Extract the path from the prompt text and compare to the registry entry. Some agents propose batch cleanup; that's wrong.
+- **Combine guidance with the option pick** — when picking an option triggers immediate sub-agent delegation (rebase, fix), the sub-agent guidance must ride in the SAME input. `pane-respond` rejects rebase-multi-choice payloads missing the preserve/apply/verify triplet.
 - **Bot-review prompt response** — on a Skip/Wait/Abort prompt, decide from `gh pr view <PR> --json statusCheckRollup,reviewDecision,labels`. Skip if the bot check is `SUCCESS` and `reviewDecision == APPROVED` (or unset with no pending reviewers). Real pending reviewer → escalate. Master never re-invokes `bot-review-wait` itself.
 - **Rebase-multi-choice guidance** — payload must follow the **preserve / apply / verify** triplet:
   - **Preserve**: function signatures / parameter splits / new wrappers from the upstream merge that must NOT be reverted.
   - **Apply**: field renames / type updates / local refactors that go ON TOP of the preserved shape.
   - **Verify**: the exact test invocation proving both sides intact.
 - **Parent vs related** (audit prompts) — accept `child of <current-PR-issue>` when scopes don't intersect another live worktree's PR files (expansion bias). Reject → use `related` or pick a different parent. Capture each new issue's proposed parent/project/scope at decision time for the end-of-session report.
-- **Verify-don't-trust** — after any agent claims a structural change is complete (rebase done, conflicts resolved, fields renamed), run a verification grep against the worktree before advancing state. For rebases: check function signatures and rename counts in every conflict file.
+- **Verify-don't-trust** — never advance an issue's state on an agent's claim alone. After any structural change (rebase done, conflicts resolved, fields renamed), run a verification grep against the worktree. For rebases: check function signatures and rename counts in every conflict file.
 
 ### Conflict detection (`patterns/conflict-detection.md`)
 
@@ -94,18 +94,10 @@ Decision rules grouped by domain. Each pattern doc under `patterns/` has the ful
 - **Expansion bias** — prefer inline fixes in the current PR over new issues, UNLESS the reason is concrete (different scope, different agent, requires measurement, blocked dep, architectural decision). "Tidiness" is not a reason.
 - **Merge-order tiebreakers**: (1) smallest scope first, (2) overlapping files: smaller first, (3) else: any order.
 
-### Pi harness
-
-- **Optional dashboard extension** — when the master agent runs under the Pi harness, the [`pi-flightdeck`](../../pi-extensions/pi-flightdeck/README.md) extension renders a read-only mission-control overlay reading the same on-disk artifacts master and the daemon already write (`tmp/flightdeck-state-<SESSION>.json`, `${FD_STATE_DIR}/fd-{daemon,master,wake-events}-<KEY>.*`). It surfaces a high-contrast pause banner whenever `paused_for_user` is set, a persistent dashboard widget, and a `/flightdeck` popup with Overview / Live feed / Conversations / Conflicts & merges / Decisions / Daemon tabs. The skill is fully harness-agnostic and works without the extension — the extension is purely additive UX. Master never relies on it.
-- **No write coupling** — pi-flightdeck never mutates flightdeck state, the master-busy lock, the wake-events log, or pane registries. Daemon owns wake delivery, master owns state mutation via `flightdeck-state`, and `pane-respond` owns sending input to inner panes. Forwarded user decisions reach master via normal Pi chat (the user types a reply when the pause banner appears), never via the extension.
-- **No equivalent for other harnesses** — claude code, opencode, and codex masters use `flightdeck-state get`, `pane-registry list`, and `flightdeck-daemon health` directly. The on-disk schema in this SKILL.md is the canonical interface; do not introduce harness-specific shortcuts that bypass it.
-
 ### Structured questions (`patterns/opencode-questions.md`, `patterns/pi-questions.md`)
 
-- **Opencode wake events** — `oc-question` is canonical. Daemon emits the structured payload (header, options[], multiple) with classifier_tag `oc-question` and source `oc-question-event`. Master answers via `pane-respond --harness opencode --question <reqID> --answer "<label>"` / `--answer-multi "<l1,l2>"` / `--answers-json '[["tab1"],["tab2"]]'` / `--reject` — routes to `POST <oc_url>/question/<reqID>/{reply,reject}`. No tmux send-keys involved.
-- **Pi wake events** — `pi-question` is canonical. Daemon emits the `pi-questions` payload (header, questions[], options[], multiple, allowCustom) from `pi-bridge stream`. Master answers via `pane-respond --harness pi --question <reqID> --answer "<label>"`, `--answer-multi "<l1,l2>"`, `--answer-text "<free text>"` when `allowCustom=true`, `--answers-json '[["tab1"],["custom text"]]'` for multi-tab requests, or `--reject`. This routes through `pi-bridge answer|reject`; do not drive the inline editor with tmux keys unless bridge metadata is missing.
-- **Pi inner agent completions** — `pi-subagent-completion` is an advisory event from a Pi orchestration pane's `pi-agents-tmux` inner panes. Flightdeck still targets only the outer orchestrator pane (`pane_target`, usually pane 0); do not call `subagent`, `steer_subagent`, or `get_subagent_result` for that orchestrator's inner panes, and do not target them by cwd/session metadata. Re-poll the orchestrator and act only on the orchestrator's own prompt/state. If the orchestrator needs a decision about an inner result, it will surface a normal outer prompt/question; answer that outer prompt. The daemon only wakes canonically for blocked/failed/needs-completion inner completions to avoid noise from successful worker returns.
-- **Never pass off-list labels except Pi custom text** — for opencode and normal Pi option picks, choose `--answer` labels from `question.questions[i].options[].label` (or opencode's equivalent `questions[i].options[].label`). For Pi only, use `--answer-text` for free-form responses and only when the wake payload's matching tab has `allowCustom=true`. For opencode free-form, `--reject` and follow up with `opencode run --attach --session <SID> "<text>"` instead.
+- **Never pass off-list labels.** Pick `--answer` / `--answer-multi` values from `question.questions[i].options[].label`. Pi `--answer-text` only when the matching tab has `allowCustom=true`; opencode free-form requires `--reject` + a follow-up `opencode run --attach --session <SID> "<text>"`.
+- **Pi inner agent completions** are advisory. Re-poll the outer orchestrator only; never call `subagent`/`steer_subagent`/`get_subagent_result` against an orchestrator's inner panes.
 
 ## Scripts
 
@@ -117,19 +109,19 @@ Decision rules grouped by domain. Each pattern doc under `patterns/` has the ful
 |--------|---------|
 | `open-terminal` | Spawn issue worktree(s) with selected harness + optional `--model`/`--effort`. **Never hand-roll tmux/terminal commands — use this for every spawn.** |
 | `parallel-groups` | Read/manage parallel issue groups. |
-| `flightdeck-state` | Atomic CRUD on `tmp/flightdeck-state-<TMUX_SESSION>.json`: `init`/`get`/`set`/`append`/`increment`/`archive`. `init` sweeps stale `.tmp.<PID>` orphans; `archive` rotates terminated state to `<file>-<terminated_at>.json.archive` so the next same-name session starts clean. `master-busy lock [--master-pane <%N>] [--owner-pid <PID>] \| unlock \| check` writes the daemon's lockfile atomically (temp+mv). Daemon validates via pane-alive + owner-pid alive (if recorded) + `FD_MASTER_TURN_TTL`; unparseable `started_at` skips the TTL gate rather than treating the lock as epoch-stale. **Do NOT pass `$$` as `--owner-pid`** — the wrapper exits before the daemon reads the file. |
-| `flightdeck-daemon` | External bash wake driver. Per-pane subscribers (opencode HTTP, claude JSONL tail, pi-bridge stream, codex-bridge stream) emit normalized turn-end events into a wake-events log; main loop drains and routes canonical-tag events through `wake_master`. Adapter-uncovered panes use the legacy capture-pane / bell / hash-stable fallback (per-tick `tmux list-panes -aF` for targets/bell/activity/mode + single-pass SHA-12 hashing). OpenCode subscribers exponentially back off unchanged polls up to `FD_OC_BACKOFF_MAX_SEC`; reset on new question ids, hash change, or daemon bell marker. Per-tick subscriber liveness watchdog clears `OC_SUBSCRIBED[pane]` on dead sidecar; pi/codex wrappers reconnect bridge streams every 1s after exit. Wake delivery is per-harness: Pi via `pi-bridge send --pid <master_pid>` (auto-detected by process-tree or unambiguous cwd+process/tty match, or `--master-harness pi` explicit), Codex via `$flightdeck` grammar, others via `/flightdeck` slash form; tmux paste-buffer fallback if bridge send fails. Same-pid self-exec resume after `FD_MAX_LIFETIME`. Actions: `start [--master-harness <h>] [--inner-harnesses <h1>,...] [--foreground\|--in-tmux-window] [--debug-pane <%N>] \| stop \| status \| health \| find-window \| events \| ack` |
+| `flightdeck-state` | Atomic CRUD on `tmp/flightdeck-state-<TMUX_SESSION>.json` (`init`/`get`/`set`/`append`/`increment`/`archive`) and master-busy lock (`master-busy lock\|unlock\|check`). See `workflows/watch.md` § 1 for lock semantics. |
+| `flightdeck-daemon` | External wake driver. Polls inner panes, normalizes turn-end events, wakes master with a per-harness payload. Actions: `start \| stop \| status \| health \| events \| ack`. See `patterns/tmux-monitoring.md` for adapter freshness + tmux-fallback semantics; the script's own header comment for daemon internals. |
 | `codex-app-server-spawn` / `-stop` | Idempotent bring-up/teardown of the per-session codex `app-server --listen ws://...` shared by all `codex --remote` panes. |
-| `pane-registry` | Issue↔pane mapping CRUD. `init` stores immutable `pane_id` (`%N`) alongside `pane_target` (gated on `tmux list-panes -t <pane>` to block tmux's silent active-pane fallback). `reconcile` / `remove-merged` key liveness on `pane_id` (window_name fallback for legacy entries; backfilled opportunistically) — required because pi/codex auto-rename their tmux window once the TUI starts. `list --format inner-panes` emits `pane_id` when present (daemon `--inner` accepts `%N` directly), `pane_target` otherwise. Adapter args (`oc-attach-args`, `cc-channel-args`, `pi-bridge-args`, `cx-bridge-args`) gate on freshness probes (`<h>_adapter_is_fresh`): stale pid/socket/HTTP/RPC → empty stdout → daemon falls back to capture-pane instead of marking the pane subscribed against a dead adapter. |
-| `pane-poll` | Status read. Preferred watch-loop mode is `pane-poll --batch -`, reading a JSON array from `pane-registry list --format json`, resolving tmux metadata once, emitting one JSONL object per issue. Legacy single-pane mode accepts `<session>:<window> <pane-index>` or `%N` directly for drift re-polls and manual debug. Per-harness adapters: opencode → `GET /session/<id>/message`; claude → tail of `~/.claude/projects/<encoded-cwd>/<uuid>.jsonl`; pi → `pi-bridge history`; codex → `codex-bridge turns`. Registry and spawn-file fallbacks both run freshness gates before use; tmux `capture-pane` only when no fresh bridge metadata. Bell flag + classify. |
-| `pane-respond` | Send a response to a pane. Modes: positional `<payload>` (free-text), `--option N` (numeric pick), `--option-multi N1,N2,...`, `--keys k1,k2,...` (raw — rejected without `--keys-allow-tmux`), `--question <reqID> --answer "<label>" \| --answer-multi "l1,l2" \| --answer-text "text" \| --answers-json '[[...]]' \| --reject` (Pi `--answer-text` only when `allowCustom=true`; `--answers-json` for multi-tab). Adapter routes: opencode → `opencode run --attach --format json` / question API; claude → channel POST; pi → `pi-bridge send` / `answer|reject`; codex → `codex-bridge send`. Tmux paste-buffer fallback when bridge metadata absent. Validates rebase-multi-choice payloads include the preserve/apply/verify triplet. |
+| `pane-registry` | Issue↔pane mapping CRUD. `init` stores immutable `pane_id` (`%N`) alongside `pane_target`. `list --format json\|inner-panes\|inner-harnesses` feeds `pane-poll --batch -` and `flightdeck-daemon start`. |
+| `pane-poll` | Pane state read. Preferred: `--batch -` from `pane-registry list --format json` (one JSONL object per issue). Legacy single-pane mode for drift re-polls / manual debug. See `patterns/tmux-monitoring.md` for per-harness adapter routes. |
+| `pane-respond` | Send response to a pane. Modes: free-text payload, `--option N`, `--option-multi`, `--keys` (rejected without `--keys-allow-tmux`), `--question <reqID> --answer\|--answer-multi\|--answer-text\|--answers-json\|--reject`. Validates rebase-multi-choice payloads for the preserve/apply/verify triplet. See `patterns/prompt-handlers.md` for mode selection and `patterns/opencode-questions.md` / `patterns/pi-questions.md` for question routing. |
 | `pane-clear-bell` | Atomic chained-command bell clear (no flicker). |
 | `pr-conflict-graph` | File-intersection adjacency for a list of PR numbers via `gh pr view --json files`. |
 | `prompt-classify` | Regex/sentinel + computed-tag matcher mapping pane state to a handler tag: `rendering`, `terminal-state-reached`, `bash-permission-prompt`, `force-merge-confirm`, `merge-ready-but-unknown`, `merge-now`, `bot-review-wait-stuck`, `rebase-multi-choice`, `force-push-prompt`, `cleanup-prompt`, `audit-relation-prompt`, `descope-related`, `external-fix-suggestions`, `cycle-fix-suggestions`, `scope-creep-detected` [computed], `multi-select-tabbed`, `awaiting-direction`, `generic-multi-choice`, `idle`. Daemon/event-only tags: `oc-question`, `pi-question`, `pi-subagent-completion`. |
 
 ## Schema — master state
 
-Master state lives at `<project-root>/<FLIGHTDECK_STATE_DIR>/flightdeck-state-<TMUX_SESSION_NAME>.json` (default `<project-root>/tmp/flightdeck-state-<NAME>.json`). `flightdeck-state` keys the filename by `tmux display-message -p '#S'` — the human-readable session **name**, not the session id. Daemon-private files in `FD_STATE_DIR` (default `$XDG_RUNTIME_DIR/flightdeck`, fallback `/tmp/flightdeck-$UID`) are keyed instead by `SESSION_KEY=s<N>` derived from `#{session_id}` (e.g., session id `$21` → `s21`); they survive a tmux session rename, master state does not. The file survives compaction and is rehydrated on `watch` re-entry. On terminate, master state is rotated to `flightdeck-state-<TMUX_SESSION_NAME>-<terminated_at>.json.archive` (see `terminate.md § 5`).
+Master state lives at `<project-root>/<FLIGHTDECK_STATE_DIR>/flightdeck-state-<TMUX_SESSION_NAME>.json` (default `tmp/`). Survives compaction; rotated to `*-<terminated_at>.json.archive` on terminate (see `terminate.md § 5`). Daemon-private files in `FD_STATE_DIR` are keyed by `SESSION_KEY=s<N>` instead (see `patterns/tmux-monitoring.md`).
 
 ```json
 {
@@ -177,7 +169,7 @@ State enum: `state ∈ {waiting, prompting, submitting, merge-ready, merged, abo
 
 ## Configuration
 
-Master-loop (workflow) env vars:
+Master-loop env vars consulted by workflows:
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
@@ -189,24 +181,7 @@ Master-loop (workflow) env vars:
 | `FLIGHTDECK_LAUNCH_MODEL` | unset | Default `open-terminal --model` override when the workflow/user does not pass `--model`. |
 | `FLIGHTDECK_LAUNCH_EFFORT` | unset | Default `open-terminal --effort` / thinking override when the workflow/user does not pass `--effort`. |
 
-Daemon env vars (read by `flightdeck-daemon`):
-
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `FD_POLL_SEC` | `2` | Inner-pane poll cadence |
-| `FD_OC_POLL_SEC` | `2` | OpenCode subscriber base poll cadence |
-| `FD_OC_BACKOFF_MAX_SEC` | `16` | Maximum OpenCode subscriber exponential backoff after unchanged `/question` + `/session/<id>/message` polls; resets to `FD_OC_POLL_SEC` on new question ids, response hash change, or daemon bell marker (the daemon clears the tmux bell after marking it) |
-| `FD_GRACE_SEC` | `30` | Cold-start grace per pane; bells suppressed during this window |
-| `FD_WAKE_PENDING_TTL` | `300` | Wake-pending revert threshold when master crashes mid-turn |
-| `FD_MASTER_TURN_TTL` | `3600` | Maximum master turn duration before the busy lock is treated as stale even if the master pane is still alive |
-| `FD_ADAPTER_FRESHNESS_TTL` | `5` | Seconds to cache adapter freshness probe results keyed by URL + session/thread; set `0` to disable cache during debugging |
-| `FD_SPAWN_MODE` | `detach` | `detach` (setsid+nohup, default) or `tmux-window` (visible in-session daemon window). Recommended `tmux-window` for codex/opencode/pi/omp masters where backgrounding is unreliable |
-| `FD_MAX_LIFETIME` | `14400` | Seconds before daemon exec()s itself for a fresh process (0 disables) |
-| `FD_STATE_DIR` | `$XDG_RUNTIME_DIR/flightdeck` (or `/tmp/flightdeck-$UID`) | Daemon-private state directory (heartbeat, busy, wake-pending, subscriber pid files). Must be user-owned, mode 0700 |
-
-## Testing
-
-Daemon/wake-path smoke test at `tests/live-wake.sh` (see `tests/README.md`). Only relevant when debugging the daemon, pane-poll, or wake delivery — normal master operation never invokes it.
+Daemon tuning (`FD_*`) is in README.md — not consulted during master operation.
 
 ## Workflows
 
@@ -244,36 +219,14 @@ Nested workflows (marked with `⤵`) must be invoked through the harness's workf
 
 The user-visible output blocks at the end of `terminate.md` and `close-issue.md` are `<output_format>` tagged for this reason: the agent must emit them in full, not collapse to a summary line.
 
-## Skill Rules — Implementation Constraints
+## Implementation Constraints
 
-1. **Pane-0 rule applies to every read**. Never call `tmux capture-pane` without an explicit pane index. The `pane-poll` script enforces this.
-2. **Combine guidance with response**. Never send sub-agent guidance as a follow-up to an option pick. The `pane-respond` script rejects rebase-multi-choice payloads that don't include the preserve/apply/verify triplet.
-3. **Verify-don't-trust**. Never advance an issue's state on an agent's claim alone. Run the verification grep first.
-4. **Cleanup scope is anchored to the asking pane's registered worktree**, not to a global "what flightdeck thinks". Extract the path from the prompt text and compare to the registry entry for that pane.
-5. **Aggressive autonomy on known shapes; escalate on novel shapes**. The classifier returns a tag for known prompt shapes. `generic-multi-choice` still tries the bounded auto-decide policy in `handle-prompt.md` § 11; it escalates only when options are destructive, ambiguous, or genuinely novel. It does NOT blindly pick the first option.
-6. **Daemon-driven wake; no blocking sleeps**. `flightdeck-daemon` (spawned at session start by `watch.md § 1`) is the canonical wake mechanism — it polls inner panes every `FD_POLL_SEC` seconds (default 2) and delivers a per-harness wake payload to the master when any pane needs attention. Master ends each turn after running `flightdeck-daemon ack` (atomic drain + clear-pending) and removing the master-busy lockfile. No `sleep` workaround, no harness scheduler primitive — the daemon owns wake delivery for every harness uniformly.
-   - **Wake payload is harness-aware** (see `wake_payload_for_harness` in `flightdeck-daemon`). Codex receives `$flightdeck watch --from-daemon`, Pi receives `/skill:flightdeck watch --from-daemon`, Claude / OpenCode / unset receive `/flightdeck watch --from-daemon`. The daemon `start` call accepts `--master-harness <h>` for this; if omitted, the daemon auto-detects Pi via a `pi-bridge list` cwd match against the master pane and otherwise defaults to the slash form.
-   - **Wake transport is harness-aware**. For Pi masters the daemon calls `pi-bridge send --pid <master_pid>` because tmux paste-buffer never reaches Pi's alt-screen input loop; for all other harnesses (and as a fallback when the Pi bridge is unresolved) the daemon uses `tmux load-buffer + paste-buffer + send-keys Enter` against `master_pane_id`.
-   - **Claude Code optional**: `ScheduleWakeup({delaySeconds: 1800})` MAY be armed as a defensive fallback ("if daemon dies, wake me"). Not load-bearing.
-   - **Other harnesses**: no scheduler needed. The daemon owns wake delivery uniformly via the per-harness payload + transport described above.
-7. **All scripts must appear in this SKILL.md's Scripts table.** No "hidden" scripts. README.md mirrors the table for human readers.
-
-## Operational caveats
-
-The daemon (`flightdeck-daemon`) drives wake delivery; the master agent only runs when there's work. Operational caveats worth knowing:
-
-- **Worst-case wake latency on master crash**: `FD_WAKE_PENDING_TTL + FD_POLL_SEC` (default 302s). If master crashes between turn-start and ack-clear, the daemon waits one TTL before reverting in-flight state and re-firing.
-- **State directory privacy**: `FD_STATE_DIR` (default `$XDG_RUNTIME_DIR/flightdeck`, fallback `/tmp/flightdeck-$UID`) must be user-owned and mode 0700. Override via env if you need a different location.
-- **PID reuse race**: stranded `.draining.<pid>` files and stale `BUSY_FILE` recovery can be delayed if the kernel reuses a PID before next startup GC. Acceptable in practice — startup GC sweeps within seconds of next daemon start.
-- **Concurrent flightdecks per tmux session**: refused via flock. One daemon per tmux session_id at a time. Run separate sessions if you need parallel flightdeck instances.
+1. **Aggressive autonomy on known shapes; escalate on novel shapes.** The classifier returns a tag for known prompt shapes. `generic-multi-choice` still tries the bounded auto-decide policy in `handle-prompt.md` § 11; it escalates only when options are destructive, ambiguous, or genuinely novel. It does NOT blindly pick the first option.
+2. **Daemon-driven wake; no blocking sleeps.** `flightdeck-daemon` (spawned in `watch.md` § 1) owns wake delivery for every harness. Master ends each turn after `flightdeck-daemon ack` + `flightdeck-state master-busy unlock`. Never `sleep`. Wake payload reference: `/flightdeck` (claude/opencode/default), `$flightdeck` (codex), `/skill:flightdeck` (pi). Claude Code MAY optionally arm `ScheduleWakeup({delaySeconds: 1800})` as a defensive fallback.
+3. **Pi dashboard is read-only and additive.** Optional `pi-flightdeck` extension renders mission-control UX from the on-disk artifacts master already writes; never bypasses the schema. No harness-specific shortcuts that bypass the on-disk schema in other harnesses either. See README.md.
+4. **One daemon per tmux session.** Concurrent flightdecks within the same tmux session are refused via flock. Run separate sessions for parallel flightdeck instances.
+5. **All scripts must appear in this SKILL.md's Scripts table.** No "hidden" scripts. README.md mirrors the table for human readers.
 
 ## Compaction Recovery
 
-Master state is persisted on every state mutation. On `watch` re-entry:
-1. Read `tmp/flightdeck-state-<SESSION>.json`.
-2. Re-fingerprint each registered window's pane 0 (TUIs may have re-laid-out).
-3. Recompute per-pane `state` from a fresh `pane-poll --batch -` registry snapshot — adapter reads remain primary, tmux capture-pane is only the documented fallback, and persisted state is only a hint.
-4. Resume the merge queue from where it left off; recompute the conflict graph against current PR file lists (PRs may have moved).
-5. Re-evaluate any `paused_for_user` entry — if the user has acted in the pane in the meantime, reclassify and proceed.
-
-The `unknown_since` timer survives compaction so the force-merge clock isn't reset.
+Master state is persisted on every state mutation and rehydrated on `watch` re-entry. The `unknown_since` force-merge timer survives compaction. Procedure: `workflows/watch.md` § 9.

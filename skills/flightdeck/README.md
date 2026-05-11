@@ -44,7 +44,24 @@ Most users never touch these. The ones that occasionally matter:
 | `FLIGHTDECK_LAUNCH_MODEL` / `FLIGHTDECK_LAUNCH_EFFORT` | Default model + thinking level for spawned agents when the user doesn't pass them explicitly. |
 | `FLIGHTDECK_STATE_DIR` | Where flightdeck writes its session state file inside the project. Defaults to `tmp/`. |
 
-The background daemon has its own knobs (timing, cache TTLs, etc.) under `FD_*` env vars. Defaults are fine for normal use — see `SKILL.md § Configuration` if you're tuning. Daemon-private files live outside your project under `~/.cache` / `XDG_RUNTIME_DIR` so they don't show up in commits.
+Daemon-private files live outside your project under `$XDG_RUNTIME_DIR/flightdeck` (fallback `/tmp/flightdeck-$UID`) so they don't show up in commits.
+
+### Daemon tuning (`FD_*` env vars)
+
+The background daemon (`flightdeck-daemon`) is configurable but defaults are fine for normal use. Listed for debugging / advanced setups:
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `FD_POLL_SEC` | `2` | Inner-pane poll cadence |
+| `FD_OC_POLL_SEC` | `2` | OpenCode subscriber base poll cadence |
+| `FD_OC_BACKOFF_MAX_SEC` | `16` | Maximum OpenCode subscriber exponential backoff after unchanged `/question` + `/session/<id>/message` polls; resets on new question ids, response hash change, or daemon bell marker |
+| `FD_GRACE_SEC` | `30` | Cold-start grace per pane; bells suppressed during this window |
+| `FD_WAKE_PENDING_TTL` | `300` | Wake-pending revert threshold when master crashes mid-turn |
+| `FD_MASTER_TURN_TTL` | `3600` | Maximum master turn duration before the busy lock is treated as stale even if the master pane is still alive |
+| `FD_ADAPTER_FRESHNESS_TTL` | `5` | Seconds to cache adapter freshness probe results keyed by URL + session/thread; set `0` to disable cache during debugging |
+| `FD_SPAWN_MODE` | `detach` | `detach` (setsid+nohup, default) or `tmux-window` (visible in-session daemon window). Recommended `tmux-window` for codex/opencode/pi masters where backgrounding is unreliable |
+| `FD_MAX_LIFETIME` | `14400` | Seconds before daemon exec()s itself for a fresh process (0 disables) |
+| `FD_STATE_DIR` | `$XDG_RUNTIME_DIR/flightdeck` (or `/tmp/flightdeck-$UID`) | Daemon-private state directory (heartbeat, busy, wake-pending, subscriber pid files). Must be user-owned, mode 0700 |
 
 ## Scripts
 
@@ -104,6 +121,12 @@ State file lives at `tmp/flightdeck-state-<TMUX_SESSION_NAME>.json` — inspect 
 ```
 
 If flightdeck seems stuck on a prompt, the usual cause is a novel prompt shape the classifier doesn't recognize. The skill escalates these as `generic-multi-choice` for human review. Add a sentinel to `prompt-classify` if it's a shape worth automating.
+
+### Operational caveats
+
+- **Worst-case wake latency on master crash**: `FD_WAKE_PENDING_TTL + FD_POLL_SEC` (default 302s). If master crashes between turn-start and ack-clear, the daemon waits one TTL before reverting in-flight state and re-firing.
+- **State directory privacy**: `FD_STATE_DIR` (default `$XDG_RUNTIME_DIR/flightdeck`, fallback `/tmp/flightdeck-$UID`) must be user-owned and mode 0700.
+- **PID reuse race**: stranded `.draining.<pid>` files and stale `BUSY_FILE` recovery can be delayed if the kernel reuses a PID before next startup GC. Acceptable in practice — startup GC sweeps within seconds of next daemon start.
 
 ## Tests
 
