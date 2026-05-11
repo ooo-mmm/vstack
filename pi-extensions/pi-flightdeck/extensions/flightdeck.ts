@@ -199,7 +199,10 @@ interface DashboardCache {
 
 function usageForIssue(issue: IssueRecord, paneMap: Map<string, string>, bridge: ReturnType<typeof getAgentsBridge>): AgentsBridgeItem | undefined {
 	if (!bridge) return undefined;
-	const paneId = issue.pane_target ? paneMap.get(issue.pane_target) : undefined;
+	// Prefer the registry-recorded pane_id (immutable for the life of the
+	// pane). Fall back to resolving pane_target via tmux for legacy
+	// registry entries that haven't been re-init'd since pane_id support.
+	const paneId = issue.pane_id || (issue.pane_target ? paneMap.get(issue.pane_target) : undefined);
 	if (!paneId) return undefined;
 	return bridge.getByPaneId(paneId);
 }

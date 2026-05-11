@@ -209,16 +209,19 @@ case "${1:-}" in
       fi
     fi
 
-    # 4. Auto-detect: check if PR exists with expected branch patterns
+    # 4. Auto-detect: check if PR exists with expected branch patterns.
+    # Best-effort — if gh auth is broken (e.g. unresolved op:// token in
+    # GH_TOKEN) the command-substitution would otherwise kill the script
+    # under set -e and silently exit 1 with no output (#3).
     if [[ -z "$BASE" ]] && command -v gh &>/dev/null; then
       ISSUE_LOWER=$(echo "$ISSUE" | tr '[:upper:]' '[:lower:]')
       USER_BRANCH="$ISSUE_LOWER"
-      DETECTED_PR=$(gh pr list --head "$USER_BRANCH" --json number -q '.[0].number' 2>/dev/null)
+      DETECTED_PR=$(gh pr list --head "$USER_BRANCH" --json number -q '.[0].number' 2>/dev/null || true)
       if [[ -n "$DETECTED_PR" ]]; then
         BASE="$USER_BRANCH"
       elif [[ -n "${BOT_NAME:-}" ]]; then
         BOT_BRANCH="$BOT_NAME/$ISSUE_LOWER"
-        DETECTED_PR=$(gh pr list --head "$BOT_BRANCH" --json number -q '.[0].number' 2>/dev/null)
+        DETECTED_PR=$(gh pr list --head "$BOT_BRANCH" --json number -q '.[0].number' 2>/dev/null || true)
         if [[ -n "$DETECTED_PR" ]]; then
           BASE="$BOT_BRANCH"
         fi

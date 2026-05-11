@@ -1457,7 +1457,14 @@ run_loop() {
   local HEARTBEAT_COUNTER=0
   local START_EPOCH; START_EPOCH=$(date +%s)
   local HEARTBEAT_FILE; HEARTBEAT_FILE=$(fd_heartbeat_file "$STATE_DIR" "$SESSION_KEY")
-  log start "pid=$$ session_id=$SESSION_ID name=$SESSION_NAME master_id=$master_id inner_ids=${INNER_IDS[*]} oc_subscribed=${#OC_SUBSCRIBED[@]}"
+  # `${#assoc_array[@]}` on an empty `declare -A` array raises
+  # "unbound variable" under set -u (bash quirk — the `:-` default form
+  # doesn't help for the `${#arr[@]}` count form). Pi-only / claude-only /
+  # codex-only sessions never populate OC_SUBSCRIBED, so reading the count
+  # directly here used to kill the daemon at startup with no useful error
+  # other than a stale pid file (#3 finding 2).
+  if [[ -v OC_SUBSCRIBED[@] ]]; then _oc_sub_count=${#OC_SUBSCRIBED[@]}; else _oc_sub_count=0; fi
+  log start "pid=$$ session_id=$SESSION_ID name=$SESSION_NAME master_id=$master_id inner_ids=${INNER_IDS[*]} oc_subscribed=$_oc_sub_count"
   # Separate traps:
   #   - EXIT: cleanup only (called on natural exit too).
   #   - INT/TERM: cleanup + explicit exit (so SIGTERM from `stop` actually

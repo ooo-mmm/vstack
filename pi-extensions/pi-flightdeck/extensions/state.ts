@@ -20,6 +20,10 @@ export interface IssueRecord {
 	harness?: string;
 	worktree?: string;
 	pr_number?: number | null;
+	// Immutable tmux pane id (`%N`) captured by `pane-registry init`.
+	// Optional for legacy registry entries written before pane_id support;
+	// `pane-registry reconcile` backfills these opportunistically.
+	pane_id?: string | null;
 	launch?: { model?: string | null; effort?: string | null } | null;
 	state?: IssueState;
 	substate?: string | null;

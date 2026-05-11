@@ -138,9 +138,20 @@ case "$ACTION" in
     SESSION=$(tmux display-message -p '#S' 2>/dev/null || echo unknown)
     PANE_TARGET="${SESSION}:${WINDOW}.${PANE_INDEX}"
 
+    # Resolve the immutable tmux pane id (`%N`) at init time and store it
+    # alongside the human-readable pane_target. Window names are mutable —
+    # pi/codex auto-rename their window once the TUI starts, which broke
+    # the previous window_name-keyed reconcile path and caused live entries
+    # to be silently dropped (#3 finding 3 + #4 finding 4). `allow-rename
+    # off` doesn't help: pi invokes `tmux rename-window` directly via IPC,
+    # bypassing the OSC-2 gate. pane_id is stable for the life of the
+    # pane, regardless of rename / split / harness restart.
+    PANE_ID=$(tmux display-message -t "$PANE_TARGET" -p '#{pane_id}' 2>/dev/null || echo "")
+
     issue_obj=$(jq -n \
       --arg window "$WINDOW" \
       --arg pane_target "$PANE_TARGET" \
+      --arg pane_id "$PANE_ID" \
       --arg harness "$HARNESS" \
       --arg worktree "$WORKTREE" \
       --arg pr "$PR" \
@@ -162,6 +173,7 @@ case "$ACTION" in
       '{
         window: $window,
         pane_target: $pane_target,
+        pane_id: ($pane_id | if . == "" then null else . end),
         harness: $harness,
         worktree: $worktree,
         pr_number: ($pr | if . == "" then null else (. | tonumber) end),
@@ -389,9 +401,13 @@ case "$ACTION" in
 
   remove-merged)
     # Drop registry entries for issues in terminal state (merged|aborted|dead)
-    # whose tmux windows are already gone. Called by terminate.md § 5 before
-    # archive so the archived state file is scoped to actually-tracked
-    # issues, not zombie post-merge entries.
+    # whose tmux panes are gone. Called by terminate.md § 5 before archive
+    # so the archived state file is scoped to actually-tracked issues, not
+    # zombie post-merge entries. Primary liveness key is the immutable
+    # tmux pane_id (`%N`); window_name is only a fallback for legacy
+    # entries written before #3 fix and for entries whose init-time
+    # pane_id resolution failed.
+    LIVE_PANES=$(tmux list-panes -a -F '#{pane_id}' 2>/dev/null | sort -u || true)
     SESSION=$(tmux display-message -p '#S' 2>/dev/null || echo unknown)
     LIVE_WINDOWS=$(tmux list-windows -t "$SESSION" -F '#{window_name}' 2>/dev/null | sort -u || true)
     REGISTERED=$("$FD_STATE" get '.issues // {} | keys[]?' 2>/dev/null | tr -d '"' || true)
@@ -399,12 +415,19 @@ case "$ACTION" in
     while IFS= read -r issue; do
       [[ -z "$issue" ]] && continue
       state=$("$FD_STATE" get ".issues[\"$issue\"].state // empty" | tr -d '"')
-      window=$("$FD_STATE" get ".issues[\"$issue\"].window // empty" | tr -d '"')
       case "$state" in
         merged|aborted|dead) ;;
         *) continue ;;
       esac
-      if [[ -n "$window" ]] && ! grep -qx "$window" <<< "$LIVE_WINDOWS"; then
+      pane_id=$("$FD_STATE" get ".issues[\"$issue\"].pane_id // empty" | tr -d '"')
+      alive=1
+      if [[ -n "$pane_id" ]]; then
+        grep -qx "$pane_id" <<< "$LIVE_PANES" || alive=0
+      else
+        window=$("$FD_STATE" get ".issues[\"$issue\"].window // empty" | tr -d '"')
+        if [[ -n "$window" ]] && ! grep -qx "$window" <<< "$LIVE_WINDOWS"; then alive=0; fi
+      fi
+      if (( alive == 0 )); then
         "$FD_STATE" set ".issues" "(.issues | del(.[\"$issue\"]))"
         DROPPED+=("$issue:$state")
       fi
@@ -418,16 +441,39 @@ case "$ACTION" in
     ;;
 
   reconcile)
-    # Drop entries whose tmux windows no longer exist. Called by watch.md § 1
+    # Drop entries whose tmux panes no longer exist. Called by watch.md § 1
     # at startup to clean up stale registry state from prior sessions.
+    # Same pane_id-first logic as remove-merged: the previous
+    # window_name-only check silently dropped live entries when pi/codex
+    # auto-renamed their window post-spawn (#3 finding 3). Opportunistic
+    # backfill: for legacy entries with a pane_target but no pane_id, try
+    # to resolve it now so future reconciles use the stable key.
+    LIVE_PANES=$(tmux list-panes -a -F '#{pane_id}' 2>/dev/null | sort -u || true)
     SESSION=$(tmux display-message -p '#S' 2>/dev/null || echo unknown)
     LIVE_WINDOWS=$(tmux list-windows -t "$SESSION" -F '#{window_name}' 2>/dev/null | sort -u || true)
     REGISTERED=$("$FD_STATE" get '.issues // {} | keys[]?' 2>/dev/null | tr -d '"' || true)
     DROPPED=()
+    BACKFILLED=()
     while IFS= read -r issue; do
       [[ -z "$issue" ]] && continue
+      pane_id=$("$FD_STATE" get ".issues[\"$issue\"].pane_id // empty" | tr -d '"')
+      pane_target=$("$FD_STATE" get ".issues[\"$issue\"].pane_target // empty" | tr -d '"')
       window=$("$FD_STATE" get ".issues[\"$issue\"].window // empty" | tr -d '"')
-      if [[ -n "$window" ]] && ! grep -qx "$window" <<< "$LIVE_WINDOWS"; then
+      if [[ -z "$pane_id" && -n "$pane_target" ]]; then
+        resolved=$(tmux display-message -t "$pane_target" -p '#{pane_id}' 2>/dev/null || echo "")
+        if [[ -n "$resolved" ]]; then
+          "$FD_STATE" set ".issues[\"$issue\"].pane_id" "\"$resolved\""
+          pane_id="$resolved"
+          BACKFILLED+=("$issue")
+        fi
+      fi
+      alive=1
+      if [[ -n "$pane_id" ]]; then
+        grep -qx "$pane_id" <<< "$LIVE_PANES" || alive=0
+      else
+        if [[ -n "$window" ]] && ! grep -qx "$window" <<< "$LIVE_WINDOWS"; then alive=0; fi
+      fi
+      if (( alive == 0 )); then
         "$FD_STATE" set ".issues" "(.issues | del(.[\"$issue\"]))"
         DROPPED+=("$issue")
       fi
@@ -437,6 +483,12 @@ case "$ACTION" in
         "${#DROPPED[@]}" \
         "$([ ${#DROPPED[@]} -eq 1 ] && echo y || echo ies)" \
         "$(IFS=,; echo "${DROPPED[*]}")"
+    fi
+    if [[ ${#BACKFILLED[@]} -gt 0 ]]; then
+      printf 'reconciled: backfilled pane_id for %d entr%s (%s)\n' \
+        "${#BACKFILLED[@]}" \
+        "$([ ${#BACKFILLED[@]} -eq 1 ] && echo y || echo ies)" \
+        "$(IFS=,; echo "${BACKFILLED[*]}")"
     fi
     ;;
 
