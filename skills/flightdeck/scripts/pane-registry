@@ -231,9 +231,16 @@ case "$ACTION" in
         "$FD_STATE" get '.issues // {} | to_entries | map({issue: .key} + .value)'
         ;;
       inner-panes)
-        # Comma-separated list of pane_target strings, suitable for
-        # `flightdeck-daemon start --inner`. Each issue's orchestrator pane.
-        "$FD_STATE" get '.issues // {} | to_entries | map(.value.pane_target) | join(",")'
+        # Comma-separated target list, one per issue, suitable for
+        # `flightdeck-daemon start --inner`. Prefer the immutable
+        # `pane_id` (`%N`) when the registry recorded one; fall back to
+        # `pane_target` for legacy entries that haven't been re-init'd
+        # or whose pane_id resolution failed at init. Without preferring
+        # pane_id here, daemon start would resolve targets through the
+        # current window name and could fail on pi/codex auto-renamed
+        # windows even though reconcile keeps the entries alive
+        # (cross-harness review finding #4).
+        "$FD_STATE" get '.issues // {} | to_entries | map(.value.pane_id // .value.pane_target // empty) | join(",")'
         ;;
       inner-harnesses)
         # Comma-separated harness list in the same issue order as
@@ -429,21 +436,29 @@ case "$ACTION" in
     LIVE_PANES=$(tmux list-panes -a -F '#{pane_id}' 2>/dev/null | sort -u || true)
     SESSION=$(tmux display-message -p '#S' 2>/dev/null || echo unknown)
     LIVE_WINDOWS=$(tmux list-windows -t "$SESSION" -F '#{window_name}' 2>/dev/null | sort -u || true)
-    REGISTERED=$("$FD_STATE" get '.issues // {} | keys[]?' 2>/dev/null | tr -d '"' || true)
+    # Single read of .issues (perf review finding #6): the previous loop
+    # called `flightdeck-state get` 3 times per issue (state, pane_id,
+    # window), so N issues =>= 3N bash+jq subprocess launches. Snapshot the
+    # map once and let jq filters run in-process over the cached JSON.
+    ISSUES_JSON=$("$FD_STATE" get '.issues // {}' 2>/dev/null || echo '{}')
+    REGISTERED=$(jq -r 'keys[]?' <<< "$ISSUES_JSON")
     DROPPED=()
     while IFS= read -r issue; do
       [[ -z "$issue" ]] && continue
-      state=$("$FD_STATE" get ".issues[\"$issue\"].state // empty" | tr -d '"')
+      fields=$(jq -r --arg k "$issue" '
+        .[$k] // {} | [(.state // ""), (.pane_id // ""), (.window // "")] | @tsv
+      ' <<< "$ISSUES_JSON")
+      state=$(awk -F'\t' '{print $1}' <<< "$fields")
+      pane_id=$(awk -F'\t' '{print $2}' <<< "$fields")
+      window=$(awk -F'\t' '{print $3}' <<< "$fields")
       case "$state" in
         merged|aborted|dead) ;;
         *) continue ;;
       esac
-      pane_id=$("$FD_STATE" get ".issues[\"$issue\"].pane_id // empty" | tr -d '"')
       alive=1
       if [[ -n "$pane_id" ]]; then
         grep -qx "$pane_id" <<< "$LIVE_PANES" || alive=0
       else
-        window=$("$FD_STATE" get ".issues[\"$issue\"].window // empty" | tr -d '"')
         if [[ -n "$window" ]] && ! grep -qx "$window" <<< "$LIVE_WINDOWS"; then alive=0; fi
       fi
       if (( alive == 0 )); then
@@ -470,14 +485,20 @@ case "$ACTION" in
     LIVE_PANES=$(tmux list-panes -a -F '#{pane_id}' 2>/dev/null | sort -u || true)
     SESSION=$(tmux display-message -p '#S' 2>/dev/null || echo unknown)
     LIVE_WINDOWS=$(tmux list-windows -t "$SESSION" -F '#{window_name}' 2>/dev/null | sort -u || true)
-    REGISTERED=$("$FD_STATE" get '.issues // {} | keys[]?' 2>/dev/null | tr -d '"' || true)
+    # Single read of .issues (perf review finding #6). See remove-merged
+    # above for the rationale.
+    ISSUES_JSON=$("$FD_STATE" get '.issues // {}' 2>/dev/null || echo '{}')
+    REGISTERED=$(jq -r 'keys[]?' <<< "$ISSUES_JSON")
     DROPPED=()
     BACKFILLED=()
     while IFS= read -r issue; do
       [[ -z "$issue" ]] && continue
-      pane_id=$("$FD_STATE" get ".issues[\"$issue\"].pane_id // empty" | tr -d '"')
-      pane_target=$("$FD_STATE" get ".issues[\"$issue\"].pane_target // empty" | tr -d '"')
-      window=$("$FD_STATE" get ".issues[\"$issue\"].window // empty" | tr -d '"')
+      fields=$(jq -r --arg k "$issue" '
+        .[$k] // {} | [(.pane_id // ""), (.pane_target // ""), (.window // "")] | @tsv
+      ' <<< "$ISSUES_JSON")
+      pane_id=$(awk -F'\t' '{print $1}' <<< "$fields")
+      pane_target=$(awk -F'\t' '{print $2}' <<< "$fields")
+      window=$(awk -F'\t' '{print $3}' <<< "$fields")
       if [[ -z "$pane_id" && -n "$pane_target" ]]; then
         # Same list-panes gate as init: avoid tmux's silent fallback to
         # the active pane when the recorded pane_target no longer exists.
