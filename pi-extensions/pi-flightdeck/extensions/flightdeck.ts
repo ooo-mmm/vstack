@@ -47,6 +47,7 @@ import {
 	daemonHealthChip,
 	divider,
 	dotIndicator,
+	formatShortcutHint,
 	frameContentWidth,
 	framePanel,
 	framePopup,
@@ -260,7 +261,15 @@ function renderDashboardLines(snapshot: FlightdeckSnapshot, theme: Theme, width:
 	const daemonHealth = daemonHealthChip(theme, snapshot.daemon.pidAlive, snapshot.daemon.heartbeatAgeSec);
 	const queueLen = snapshot.master?.merge_queue?.length ?? 0;
 	const queueBadge = queueLen > 0 ? ` ${theme.fg("muted", "·")} ${theme.fg("accent", `merge-queue ${queueLen}`)}` : "";
-	const headerLeft = `${theme.fg("customMessageLabel", theme.bold("Flightdeck"))} ${theme.fg("muted", `${totalIssues} issue${totalIssues === 1 ? "" : "s"}`)}${summaryParts.length > 0 ? ` ${theme.fg("muted", "·")} ${summaryParts.join(theme.fg("dim", " "))}` : ""}${queueBadge}`;
+	// Keyhints — same pattern as pi-agents-tmux dashboard header:
+	// `<title> <stats> · Alt+F toggle · F6 popup · <daemon-health>`. Both
+	// shortcuts read from extension settings so user overrides are reflected.
+	const toggleShortcut = settingString("dashboardShortcut", "alt+f", cwd);
+	const popupShortcut = settingString("popupShortcut", "f6", cwd);
+	const toggleHint = toggleShortcut === "none" ? "" : theme.fg("dim", ` · ${formatShortcutHint(toggleShortcut)} toggle`);
+	const popupHint = popupShortcut === "none" ? "" : theme.fg("dim", ` · ${formatShortcutHint(popupShortcut)} popup`);
+	const hints = `${toggleHint}${popupHint}`;
+	const headerLeft = `${theme.fg("customMessageLabel", theme.bold("Flightdeck"))} ${theme.fg("muted", `${totalIssues} issue${totalIssues === 1 ? "" : "s"}`)}${summaryParts.length > 0 ? ` ${theme.fg("muted", "·")} ${summaryParts.join(theme.fg("dim", " "))}` : ""}${queueBadge}${hints}`;
 	const header = `${headerLeft}  ${theme.fg("dim", "·")}  ${daemonHealth}`;
 	const bridge = getAgentsBridge();
 	if (state === "compact") {
@@ -1108,7 +1117,7 @@ export default function flightdeck(pi: ExtensionAPI): void {
 			handler: async (ctx) => openPopup(pi, ctx as ExtensionContext),
 		});
 	}
-	const dashboardShortcut = settingString("dashboardShortcut", "alt+shift+f");
+	const dashboardShortcut = settingString("dashboardShortcut", "alt+f");
 	if (dashboardShortcut !== "none") {
 		pi.registerShortcut(dashboardShortcut as Parameters<typeof pi.registerShortcut>[0], {
 			description: "Cycle the flightdeck dashboard widget",

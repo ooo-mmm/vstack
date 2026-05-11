@@ -244,8 +244,24 @@ EVENTS_FILE=$(fd_events_file "$STATE_DIR" "$SESSION_KEY")
 # to atomically drain events + clear wake-pending.
 SESSION_LOCK=$(fd_session_lock "$STATE_DIR" "$SESSION_KEY")
 
-log()  { printf '%s [%s] %s\n' "$(date -Iseconds)" "$1" "$2" >> "$LOG"; }
-warn() { printf '%s [%s] %s\n' "$(date -Iseconds)" "$1" "$2" | tee -a "$LOG" >&2; }
+# log() writes a structured timestamped line to the daemon log file. When
+# stdout is a tty (i.e., the daemon is running inside a dedicated tmux
+# window in --in-tmux-window mode), we also echo to stdout so the window
+# shows live activity instead of being a blank black screen. Detach mode
+# redirects stdout to the log file itself, so the `-t 1` guard prevents
+# double-writing the same line.
+log() {
+  local line
+  printf -v line '%s [%s] %s\n' "$(date -Iseconds)" "$1" "$2"
+  printf '%s' "$line" >> "$LOG"
+  [[ -t 1 ]] && printf '%s' "$line"
+}
+warn() {
+  local line
+  printf -v line '%s [%s] %s\n' "$(date -Iseconds)" "$1" "$2"
+  printf '%s' "$line" >> "$LOG"
+  printf '%s' "$line" >&2
+}
 
 # Startup GC for orphaned daemon state files (sessions that no longer exist).
 # Uses exact-match comparison via case statement (glob-char safe).
@@ -1329,6 +1345,21 @@ resolve_oc_meta() {
 run_loop() {
   declare -A LAST_HASH HASH_SINCE NOTIFIED_HASH LAST_BELL_HASH LAST_GONE_LOG FIRST_SEEN PANE_HARNESS
   declare -A OC_SUBSCRIBED OC_PANE_TARGET
+  # Startup banner — only visible when the daemon runs in --in-tmux-window
+  # mode (stdout connected to a tty). In detach mode stdout is the log file
+  # so the `-t 1` guard avoids double-writing the same lines.
+  if [[ -t 1 ]]; then
+    printf '\n'
+    printf '  flightdeck-daemon\n'
+    printf '    session   %s (%s)\n' "$SESSION_NAME" "$SESSION_KEY"
+    printf '    master    %s\n' "$MASTER_TARGET"
+    printf '    inner     %s\n' "${INNER_TARGETS:-(none)}"
+    printf '    state dir %s\n' "$STATE_DIR"
+    printf '    log       %s\n' "$LOG"
+    printf '\n'
+    printf '  Live log follows. Closing this window exits the daemon; the master agent\n'
+    printf '  will spawn a new one on next start.\n\n'
+  fi
   IFS=',' read -r -a INNER_TARGET_ARR <<< "$INNER_TARGETS"
   # Parallel harness list. Caller passes either the same length as
   # --inner (per-pane mapping) or omits it entirely (fallback to global

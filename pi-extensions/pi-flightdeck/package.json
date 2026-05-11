@@ -45,7 +45,7 @@
           "label": "Dashboard cycle shortcut",
           "description": "Keyboard shortcut that cycles the persistent dashboard widget through hidden → compact → expanded. Use none to disable.",
           "type": "string",
-          "default": "alt+shift+f",
+          "default": "alt+f",
           "category": "Keyboard",
           "apply": "reload",
           "requiresReload": true

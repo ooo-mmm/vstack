@@ -32,7 +32,7 @@ Configurable in `/extensions:settings` under `Flightdeck Dashboard`.
 |---|---|---|
 | `enabled` | `true` | Master kill-switch (reload required) |
 | `popupShortcut` | `f6` | Open the mission-control popup (`none` to disable) |
-| `dashboardShortcut` | `alt+shift+f` | Cycle widget hidden → compact → expanded |
+| `dashboardShortcut` | `alt+f` | Cycle widget hidden → compact → expanded |
 | `dashboard` | `true` | Render the persistent widget above the editor |
 | `dashboardDefaultState` | `compact` | `hidden` / `compact` / `expanded` on first appearance |
 | `dashboardMaxItems` | `8` | Max issue rows in the widget |
@@ -52,7 +52,7 @@ Configurable in `/extensions:settings` under `Flightdeck Dashboard`.
 | Command | Action |
 |---|---|
 | `/flightdeck` | Open the mission-control popup (also F6) |
-| `/flightdeck:toggle` | Cycle the persistent dashboard widget hidden → compact → expanded (also Alt+Shift+F) |
+| `/flightdeck:toggle` | Cycle the persistent dashboard widget hidden → compact → expanded (also Alt+F) |
 
 ## How it reads state
 
