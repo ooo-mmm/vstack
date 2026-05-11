@@ -5,9 +5,10 @@
 # state. Intended to be called per-tracked-window in the watch loop.
 #
 # Usage:
-#   pane-poll <window-target> [<pane-index>] [--harness <h>] [--worktree <path>] [--pr <N>]
+#   pane-poll <window-target|%pane_id> [<pane-index>] [--harness <h>] [--worktree <path>] [--pr <N>]
 #   pane-poll HT:cc-463
 #   pane-poll HT:cc-463 0 --harness opencode
+#   pane-poll %403 --harness pi
 #   pane-poll HT:cc-463 0 --harness opencode --worktree trees/cc-463 --pr 463
 #
 # When --worktree and --pr are both passed and the worktree directory is
@@ -72,9 +73,15 @@ if [[ -z "$TARGET" ]]; then
   exit 2
 fi
 
-# Optional: pinned pane index (default 0)
-PANE_INDEX="${2:-0}"
-shift || true; shift || true
+# Optional: pinned pane index (default 0). When TARGET is an immutable tmux
+# pane id (`%N`), the second positional is ignored unless it is a flag; direct
+# pane-id mode resolves the live pane index from tmux metadata below.
+shift || true
+PANE_INDEX="0"
+if [[ $# -gt 0 && "${1:-}" != --* && "$TARGET" != %* ]]; then
+  PANE_INDEX="$1"
+  shift || true
+fi
 
 HARNESS=""
 WORKTREE=""
@@ -91,25 +98,48 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-PANE_TARGET="${TARGET}.${PANE_INDEX}"
-
 CAPTURE_ARGS=(-p -S -200)
 
-# Verify window exists; emit dead state if not.
-if ! tmux list-windows -t "${TARGET%:*}" -F '#{window_index}:#{window_name}' 2>/dev/null \
-     | awk -F: -v w="${TARGET#*:}" '$2 == w {found=1} END {exit !found}'; then
-  jq -n --arg w "$TARGET" --arg p "$PANE_TARGET" '{window:$w, pane_target:$p, dead:true, tag:"dead"}'
-  exit 0
+PANE_TARGET=""
+WINDOW_TARGET="$TARGET"
+WINDOW_LIST_TARGET="$TARGET"
+DERIVE_TARGET=""
+bell=0
+activity=0
+silence=0
+
+if [[ "$TARGET" == %* ]]; then
+  PANE_TARGET="$TARGET"
+  if ! tmux list-panes -t "$PANE_TARGET" >/dev/null 2>&1; then
+    jq -n --arg w "$TARGET" --arg p "$PANE_TARGET" '{window:$w, pane_target:$p, dead:true, tag:"dead"}'
+    exit 0
+  fi
+  meta=$(tmux display-message -t "$PANE_TARGET" -p '#{session_name}	#{window_name}	#{window_id}	#{pane_index}	#{window_bell_flag}	#{window_activity_flag}	#{window_silence_flag}' 2>/dev/null || echo "")
+  IFS=$'\t' read -r _sess _wname _wid _pidx bell activity silence <<< "$meta"
+  WINDOW_TARGET="${_sess}:${_wname}"
+  WINDOW_LIST_TARGET="${_wid:-$WINDOW_TARGET}"
+  PANE_INDEX="${_pidx:-$PANE_INDEX}"
+  DERIVE_TARGET="${WINDOW_TARGET}.${PANE_INDEX}"
+else
+  PANE_TARGET="${TARGET}.${PANE_INDEX}"
+  DERIVE_TARGET="$PANE_TARGET"
+
+  # Verify window exists; emit dead state if not.
+  if ! tmux list-windows -t "${TARGET%:*}" -F '#{window_index}:#{window_name}' 2>/dev/null \
+       | awk -F: -v w="${TARGET#*:}" '$2 == w {found=1} END {exit !found}'; then
+    jq -n --arg w "$TARGET" --arg p "$PANE_TARGET" '{window:$w, pane_target:$p, dead:true, tag:"dead"}'
+    exit 0
+  fi
+
+  # Read window flags
+  flags_line=$(tmux list-windows -t "${TARGET%:*}" \
+    -F '#{window_name}|#{window_bell_flag}|#{window_activity_flag}|#{window_silence_flag}' 2>/dev/null \
+    | awk -F'|' -v w="${TARGET#*:}" '$1 == w {print; exit}')
+
+  bell=$(awk -F'|' '{print $2}' <<< "$flags_line")
+  activity=$(awk -F'|' '{print $3}' <<< "$flags_line")
+  silence=$(awk -F'|' '{print $4}' <<< "$flags_line")
 fi
-
-# Read window flags
-flags_line=$(tmux list-windows -t "${TARGET%:*}" \
-  -F '#{window_name}|#{window_bell_flag}|#{window_activity_flag}|#{window_silence_flag}' 2>/dev/null \
-  | awk -F'|' -v w="${TARGET#*:}" '$1 == w {print; exit}')
-
-bell=$(awk -F'|' '{print $2}' <<< "$flags_line")
-activity=$(awk -F'|' '{print $3}' <<< "$flags_line")
-silence=$(awk -F'|' '{print $4}' <<< "$flags_line")
 
 # Capture and classify. For opencode panes with HTTP-attach metadata in
 # the registry, fetch the message log via the adapter and classify the
@@ -137,7 +167,7 @@ if [[ "$HARNESS" == "opencode" ]]; then
   # issue from the window name and read the spawn file directly so the
   # adapter still drives polling. Symmetric with pane-respond.
   if [[ -z "$oc_attach_args" ]]; then
-    derived_issue=$(oc_issue_from_pane_target "$PANE_TARGET")
+    derived_issue=$(oc_issue_from_pane_target "$DERIVE_TARGET")
     if [[ -n "$derived_issue" ]]; then
       oc_attach_args=$(oc_attach_args_from_spawn "$derived_issue" 2>/dev/null || echo "")
     fi
@@ -160,7 +190,7 @@ if [[ "$HARNESS" == "claude" && $oc_used -eq 0 ]]; then
     cc_args=$("$SCRIPT_DIR/pane-registry" cc-channel-args "$cc_issue" 2>/dev/null || echo "")
   fi
   if [[ -z "$cc_args" ]]; then
-    derived_issue=$(oc_issue_from_pane_target "$PANE_TARGET")
+    derived_issue=$(oc_issue_from_pane_target "$DERIVE_TARGET")
     if [[ -n "$derived_issue" ]]; then
       cc_spawn="$(cc_spawn_file "$derived_issue")"
       if [[ -f "$cc_spawn" ]]; then
@@ -188,7 +218,7 @@ if [[ "$HARNESS" == "pi" && $oc_used -eq 0 && $cc_used -eq 0 ]]; then
     pi_args=$("$SCRIPT_DIR/pane-registry" pi-bridge-args "$pi_issue" 2>/dev/null || echo "")
   fi
   if [[ -z "$pi_args" ]]; then
-    derived_issue=$(oc_issue_from_pane_target "$PANE_TARGET")
+    derived_issue=$(oc_issue_from_pane_target "$DERIVE_TARGET")
     if [[ -n "$derived_issue" ]]; then
       pi_spawn="$(pi_spawn_file "$derived_issue")"
       if [[ -f "$pi_spawn" ]]; then
@@ -227,7 +257,7 @@ if [[ "$HARNESS" == "codex" && $oc_used -eq 0 && $cc_used -eq 0 && $pi_used -eq 
     cx_args=$("$SCRIPT_DIR/pane-registry" cx-bridge-args "$cx_issue" 2>/dev/null || echo "")
   fi
   if [[ -z "$cx_args" ]]; then
-    derived_issue=$(oc_issue_from_pane_target "$PANE_TARGET")
+    derived_issue=$(oc_issue_from_pane_target "$DERIVE_TARGET")
     if [[ -n "$derived_issue" ]]; then
       cx_spawn="$(cx_spawn_file "$derived_issue")"
       if [[ -f "$cx_spawn" ]]; then
@@ -298,19 +328,19 @@ if [[ $oc_used -eq 0 && $cc_used -eq 0 && $pi_used -eq 0 && $cx_used -eq 0 ]]; t
   fingerprint_sentinel='❯ |claude code|opencode|codex>|■■■|⠋|⠙|⠸|⠴|⠦|⠧'
   if ! grep -qE "$fingerprint_sentinel" <<< "$buf"; then
     fingerprint_match=false
-    while read -r idx; do
-      [[ -z "$idx" || "$idx" == "$PANE_INDEX" ]] && continue
-      sib_buf=$(tmux capture-pane -t "${TARGET}.${idx}" -p -S -50 2>/dev/null || echo "")
+    while IFS=$'\t' read -r idx sib_pane_id; do
+      [[ -z "$idx" || "$idx" == "$PANE_INDEX" || "$sib_pane_id" == "$PANE_TARGET" ]] && continue
+      sib_buf=$(tmux capture-pane -t "$sib_pane_id" -p -S -50 2>/dev/null || echo "")
       if grep -qE "$fingerprint_sentinel" <<< "$sib_buf"; then
         pane_index_suggest="$idx"
         break
       fi
-    done < <(tmux list-panes -t "$TARGET" -F '#{pane_index}' 2>/dev/null)
+    done < <(tmux list-panes -t "$WINDOW_LIST_TARGET" -F '#{pane_index}\t#{pane_id}' 2>/dev/null)
   fi
 fi
 
 jq -n \
-  --arg window "$TARGET" \
+  --arg window "$WINDOW_TARGET" \
   --arg pane "$PANE_TARGET" \
   --argjson bell "$([ "${bell:-0}" = "1" ] && echo true || echo false)" \
   --argjson activity "$([ "${activity:-0}" = "1" ] && echo true || echo false)" \

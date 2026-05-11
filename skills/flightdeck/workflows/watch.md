@@ -84,8 +84,14 @@ For each tracked issue currently in a non-terminal state (`waiting | prompting |
 0.5. **Pane-hijack check** — only if `orchestration_started` is `false` for this issue:
    - If the orchestration workflow-state file exists at `tmp/workflow-state-<ISSUE>.json` (or wherever `ORCH_STATE_DIR` resolves to), set `orchestration_started: true` via `pane-registry set <ISSUE> orchestration_started true` and proceed to step 1.
    - Otherwise check `(now - spawned_at)`. If elapsed exceeds `FLIGHTDECK_HIJACK_GRACE_SECS` (default 90), the pane was either hijacked for unrelated work or orchestration silently failed to start. Escalate: `paused_for_user = {issue_id, reason: "orchestration-never-started", prompt_text: "<ISSUE> spawned <elapsed>s ago; no workflow-state file. Pane may have been hijacked or orchestration failed to start."}`. Skip the rest of § 2 for this issue.
-1. Run `pane-poll`. Pass `--harness <h>`, `--worktree <path>`, and `--pr <N>` from the registry so harness-specific capture quirks (e.g., opencode viewport scroll) are handled and the orphan cross-check can synthesize `terminal-state-reached` when the buffer's own sentinels miss but the worktree is gone + PR merged:
+1. Run `pane-poll`. Prefer the registry's immutable `pane_id` (`%N`) as the first argument; fall back to `<session>:<window> <pinned-pane-index>` only for legacy entries without `pane_id`. Pass `--harness <h>`, `--worktree <path>`, and `--pr <N>` from the registry so harness-specific capture quirks (e.g., opencode viewport scroll) are handled and the orphan cross-check can synthesize `terminal-state-reached` when the buffer's own sentinels miss but the worktree is gone + PR merged:
    ```
+   .agents/skills/flightdeck/scripts/pane-poll <pane_id-from-registry> \
+     --harness <h> \
+     --worktree <worktree-path-from-registry> \
+     --pr <pr-number-from-registry>
+
+   # legacy fallback when pane_id is absent:
    .agents/skills/flightdeck/scripts/pane-poll <session>:<window> <pinned-pane-index> \
      --harness <h> \
      --worktree <worktree-path-from-registry> \
