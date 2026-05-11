@@ -1764,11 +1764,37 @@ run_loop() {
         continue
       fi
 
-      # Adapter-covered panes: subscriber emits wake events; main loop
-      # processed them above. Skip the capture-pane / bell / hash-stable
-      # path entirely so we don't double-wake on the same turn.
+      # Subscriber-liveness watchdog (bugs review finding #4). The Pi /
+      # Codex / Claude subscribers are one-shot stream pipelines: if the
+      # bridge socket drops or the jq pipeline exits, the subscriber
+      # function returns and only a stale pid file remains. Previously
+      # the daemon trusted OC_SUBSCRIBED[$inner_id]=1 forever, which
+      # silently disabled the capture-pane fallback for the affected
+      # pane. Verify the subscriber pid is still alive each tick; if
+      # dead, clear the flag and let this tick fall through to the
+      # legacy bell/hash branch below. Subscriber respawn is left to
+      # daemon restart (one-shot stream pipelines are spawned once at
+      # start; reconnect loops are a follow-up).
       if [[ "${OC_SUBSCRIBED[$inner_id]:-}" == "1" ]]; then
-        continue
+        local _sub_harness="${PANE_HARNESS[$inner_id]:-$HARNESS}"
+        local _sub_pid_file="" _sub_pid=""
+        case "$_sub_harness" in
+          opencode) _sub_pid_file=$(oc_subscriber_pid_file "$inner_id" "$SESSION_KEY") ;;
+          claude)   _sub_pid_file=$(cc_subscriber_pid_file "$inner_id" "$SESSION_KEY") ;;
+          pi)       _sub_pid_file=$(pi_subscriber_pid_file "$inner_id" "$SESSION_KEY") ;;
+          codex)    _sub_pid_file=$(cx_subscriber_pid_file "$inner_id" "$SESSION_KEY") ;;
+        esac
+        if [[ -n "$_sub_pid_file" && -f "$_sub_pid_file" ]]; then
+          _sub_pid=$(cat "$_sub_pid_file" 2>/dev/null || echo "")
+        fi
+        if [[ "$_sub_pid" =~ ^[1-9][0-9]*$ ]] && kill -0 "$_sub_pid" 2>/dev/null; then
+          # Subscriber alive — skip fallback as before.
+          continue
+        fi
+        log subscriber-dead "pane=$inner_id harness=$_sub_harness pid=${_sub_pid:-missing}; clearing OC_SUBSCRIBED and falling back to capture-pane"
+        unset 'OC_SUBSCRIBED[$inner_id]'
+        rm -f "$_sub_pid_file" 2>/dev/null
+        # Fall through to the legacy bell/hash branch below this tick.
       fi
 
       # Record first sighting for the cold-start grace window. Newly
