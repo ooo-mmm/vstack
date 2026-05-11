@@ -85,13 +85,17 @@ pi_resolve_bridge_extension() {
   return 1
 }
 
-# Find the latest pi bridge pid whose cwd matches the given worktree.
-# Polls `pi-bridge list --bridge-dir <dir>` (with optional override),
-# selects the entry whose cwd matches absolute worktree path. Returns
-# pid on success.
+# Find the pi bridge pid whose cwd matches the given worktree and which
+# was NOT in the pre-spawn snapshot. Caller passes the snapshot of pids
+# present before the new pane was spawned via `pi-bridge list --json |
+# jq -c '[.[].pid]'` (or `[]` if it failed). Without the snapshot exclude,
+# discovery would happily return a pre-existing pi process in the same
+# worktree before the new pane registers, and downstream spawn metadata
+# would target the wrong session (bugs review finding #7).
 pi_discover_pid() {
   local wt_path="$1"
   local timeout_secs="${2:-30}"
+  local pre_pids_json="${3:-[]}"
   local bin
   bin=$(pi_resolve_bridge_bin) || return 1
   local abs_wt
@@ -103,9 +107,10 @@ pi_discover_pid() {
     out=$("$bin" list --json 2>/dev/null || echo "[]")
     if [[ -n "$out" ]]; then
       local pid
-      pid=$(jq -r --arg dir "$abs_wt" '
+      pid=$(jq -r --arg dir "$abs_wt" --argjson pre "$pre_pids_json" '
         ( . // [] )
         | map(select((.cwd // "") == $dir))
+        | map(select(.pid as $p | ($pre // []) | index($p) | not))
         | sort_by(.startedAt // .started_at // 0)
         | last
         | (.pid // empty)
@@ -118,6 +123,15 @@ pi_discover_pid() {
     sleep 0.5
   done
   return 1
+}
+
+# Snapshot existing pi-bridge pids. Caller takes this BEFORE spawning the
+# new pi pane and passes the result to `pi_discover_pid` so we can
+# exclude already-running pi processes from the cwd match.
+pi_snapshot_pids() {
+  local bin; bin=$(pi_resolve_bridge_bin 2>/dev/null) || { echo "[]"; return 0; }
+  local out; out=$("$bin" list --json 2>/dev/null || echo "[]")
+  jq -c '( . // [] ) | map(.pid) | map(select(. != null))' <<< "$out" 2>/dev/null || echo "[]"
 }
 
 # Stale check: pid alive + socket exists + protocol matches.

@@ -566,12 +566,46 @@ wake_payload_for_harness() {
 resolve_pi_master_pid() {
   local master_id="$1"
   local bridge_bin; bridge_bin=$(pi_resolve_bridge_bin 2>/dev/null) || return 1
-  local master_cwd
-  master_cwd=$(tmux display-message -t "$master_id" -p '#{pane_current_path}' 2>/dev/null || echo "")
-  [[ -z "$master_cwd" ]] && return 1
   local out
   out=$("$bridge_bin" list --json 2>/dev/null) || return 1
   [[ -z "$out" || "$out" == "null" ]] && return 1
+
+  # Prefer matching the master pane's process tree to the bridge pid: the
+  # pane's shell pid is the parent of the running pi process, and bridge
+  # entries record the pi pid. This avoids the cwd-only ambiguity where
+  # two pi sessions sharing a cwd (e.g., master + a sibling worktree
+  # pane) could be confused for each other (bugs review finding #7).
+  local master_shell_pid
+  master_shell_pid=$(tmux display-message -t "$master_id" -p '#{pane_pid}' 2>/dev/null || echo "")
+  if [[ "$master_shell_pid" =~ ^[1-9][0-9]*$ ]]; then
+    # Collect descendants of the shell pid; one of them is the pi process.
+    local descendants
+    descendants=$(pgrep -P "$master_shell_pid" 2>/dev/null; pgrep -P "$master_shell_pid" 2>/dev/null | xargs -r pgrep -P 2>/dev/null)
+    if [[ -n "$descendants" ]]; then
+      local descendants_json
+      descendants_json=$(echo "$descendants" | tr '\n' ',' | sed 's/,*$//' | awk 'BEGIN{printf "["} {printf "%s", $0} END{printf "]"}')
+      [[ "$descendants_json" == "[]" ]] || descendants_json="[$(echo "$descendants" | paste -sd,)]"
+      local pid_by_tree
+      pid_by_tree=$(jq -r --argjson tree "$descendants_json" '
+        ( . // [] )
+        | map(select(.pid as $p | $tree | index($p)))
+        | last
+        | (.pid // empty)
+      ' <<< "$out" 2>/dev/null)
+      if [[ -n "$pid_by_tree" && "$pid_by_tree" != "null" ]]; then
+        echo "$pid_by_tree"
+        return 0
+      fi
+    fi
+  fi
+
+  # Fallback: cwd match. Less precise (two pi processes in the same cwd
+  # can both qualify) but better than nothing when pane_pid resolution
+  # fails (e.g., the master pane reported via target but tmux can't
+  # currently introspect it).
+  local master_cwd
+  master_cwd=$(tmux display-message -t "$master_id" -p '#{pane_current_path}' 2>/dev/null || echo "")
+  [[ -z "$master_cwd" ]] && return 1
   local pid
   pid=$(jq -r --arg dir "$master_cwd" '
     ( . // [] )
@@ -1979,10 +2013,19 @@ case "$ACTION" in
     if [[ -f "$PID_FILE" ]]; then
       old=$(cat "$PID_FILE" 2>/dev/null || echo "")
       if [[ -n "$old" ]] && kill -0 "$old" 2>/dev/null; then
-        echo "PID file claims pid=$old which is alive but lock free — race?" >&2
-        exit 1
+        # Allow same-pid case: max-lifetime self-exec preserves the PID,
+        # so the re-entered start path legitimately sees PID_FILE
+        # containing its own pid. Without this allowance the daemon
+        # would exit with "race?" immediately after every self-exec
+        # (bugs review finding #2).
+        if [[ "$old" != "$$" ]]; then
+          echo "PID file claims pid=$old which is alive but lock free — race?" >&2
+          exit 1
+        fi
+        log self-exec-resume "reusing pid_file pid=$$ (max-lifetime exec)"
+      else
+        log refuse-stale "removing stale pid file pid=$old"
       fi
-      log refuse-stale "removing stale pid file pid=$old"
     fi
 
     # Startup GC: sweep state files for tmux sessions that no longer exist.

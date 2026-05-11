@@ -812,19 +812,26 @@ spawn_pi_bridge_tmux() {
   add_launch_args pi launch_args
   if [[ -n "$ext_path" ]]; then bridge_args=(-e "$ext_path"); fi
   cmd=$(shell_join "$pi_bin" "${launch_args[@]}" "${bridge_args[@]}" "/skill:orchestration start $issue")
+
+  # Snapshot existing pi-bridge pids BEFORE spawning so discovery can
+  # exclude already-running pi processes in the same worktree (bugs
+  # review finding #7). Without the snapshot, an existing pi session in
+  # the worktree would be matched immediately and the new pane's
+  # spawn-file would point at the wrong bridge target.
+  local pre_pids; pre_pids=$(pi_snapshot_pids 2>/dev/null || echo "[]")
   if ! open_tmux "$wt_path" "$issue" "$cmd"; then
     return 1
   fi
 
-  # Discover the new pi pid by cwd match. If discovery fails after the
-  # pane is already open, do NOT fall through to legacy spawn — that
-  # would create a duplicate issue pane. The open pane simply runs with
-  # tmux send-keys / capture-pane fallback because no bridge metadata
-  # was persisted.
+  # Discover the new pi pid by cwd match + pre-snapshot exclude. If
+  # discovery fails after the pane is already open, do NOT fall through
+  # to legacy spawn — that would create a duplicate issue pane. The open
+  # pane simply runs with tmux send-keys / capture-pane fallback because
+  # no bridge metadata was persisted.
   local pid discovery_timeout
   discovery_timeout="${PI_BRIDGE_DISCOVERY_TIMEOUT:-30}"
-  if ! pid=$(pi_discover_pid "$wt_path" "$discovery_timeout"); then
-    echo "  pi-bridge-unavailable: bridge discovery timed out (no pi instance with matching cwd); keeping opened pane on tmux fallback" >&2
+  if ! pid=$(pi_discover_pid "$wt_path" "$discovery_timeout" "$pre_pids"); then
+    echo "  pi-bridge-unavailable: bridge discovery timed out (no NEW pi instance with matching cwd); keeping opened pane on tmux fallback" >&2
     return 0
   fi
 
@@ -919,8 +926,15 @@ spawn_cx_remote_tmux() {
     sleep 1
   done
   if [[ -z "$thread_id" || "$thread_id" == "null" ]]; then
-    echo "  cx-bridge-unavailable: thread discovery timed out for $issue (no new thread on $ws_url after spawn)" >&2
-    return 1
+    # Mirror the Pi post-open behavior: once open_tmux has succeeded the
+    # pane is on screen and the user expects exactly one pane per issue.
+    # If thread discovery times out here, returning non-zero would make
+    # the caller fall through to the legacy open_tmux path and spawn a
+    # duplicate pane for the same issue (bugs review finding #6 /
+    # cross-harness review finding #3). Keep the open pane on tmux
+    # fallback (no spawn metadata persisted) instead.
+    echo "  cx-bridge-unavailable: thread discovery timed out for $issue (no new thread on $ws_url after spawn); keeping opened pane on tmux fallback" >&2
+    return 0
   fi
 
   local spawn_file abs_wt launch_meta
