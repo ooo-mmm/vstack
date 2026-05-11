@@ -114,6 +114,20 @@ GH_DASHBOARD_TOKEN="${GH_MAIN_TOKEN:-$GH_BOT_TOKEN_RESOLVED}"
 # Data Collection (silent)
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Flightdeck preflight: when the orchestration dashboard is being run as
+# part of `flightdeck start` (the workflow exports FLIGHTDECK_PREFLIGHT=1
+# before invoking us), check the runtime deps flightdeck itself needs so
+# the user finds out before spawning panes. "missing" surfaces a warning
+# line in the Environment block; non-flightdeck callers never see it.
+FLIGHTDECK_BUN_STATUS="n/a"
+if [[ "${FLIGHTDECK_PREFLIGHT:-0}" == "1" ]]; then
+  if command -v bun &>/dev/null; then
+    FLIGHTDECK_BUN_STATUS="ok"
+  else
+    FLIGHTDECK_BUN_STATUS="missing"
+  fi
+fi
+
 # Platform detection
 if [[ "$OSTYPE" == "linux-gnu"* ]]; then
   PLATFORM="linux"
@@ -186,7 +200,8 @@ if [[ -n "$GIT_COMMON_DIR" && "$GIT_COMMON_DIR" != ".git" && "$GIT_COMMON_DIR" !
       --arg lang_version "$LANG_VERSION" \
       --arg branch "$BRANCH" \
       --arg issue_id "$ISSUE_ID" \
-      '{is_worktree: true, worktree_name: $worktree_name, platform: $platform, lang: $lang, lang_version: $lang_version, branch: $branch, issue_id: $issue_id, gh_auth: $gh, linear_auth: $linear, lsp: $lsp}'
+      --arg flightdeck_bun "$FLIGHTDECK_BUN_STATUS" \
+      '{is_worktree: true, worktree_name: $worktree_name, platform: $platform, lang: $lang, lang_version: $lang_version, branch: $branch, issue_id: $issue_id, gh_auth: $gh, linear_auth: $linear, lsp: $lsp, flightdeck_bun: $flightdeck_bun}'
   else
     GH_ICON=$([[ "$WT_GH_OK" == "true" ]] && echo "✓" || echo "✗")
     LINEAR_ICON=$([[ "$WT_LINEAR_OK" == "true" ]] && echo "✓" || echo "✗")
@@ -196,6 +211,7 @@ if [[ -n "$GIT_COMMON_DIR" && "$GIT_COMMON_DIR" != ".git" && "$GIT_COMMON_DIR" !
     echo "GitHub: $GH_ICON · Linear: $LINEAR_ICON"
     [[ "$WT_GH_OK" != "true" ]] && echo "🔴 GitHub auth failed — run: gh auth login"
     [[ "$WT_LINEAR_OK" != "true" ]] && echo "🔴 Linear auth failed${WT_LINEAR_ERR:+ — $WT_LINEAR_ERR}"
+    [[ "$FLIGHTDECK_BUN_STATUS" == "missing" ]] && echo "⚠️ flightdeck preflight: bun not installed — install: https://bun.sh"
   fi
   exit 0
 fi
@@ -537,6 +553,7 @@ SESSION_JSON=$(jq -n \
   --argjson cross_check "$CROSS_CHECK" \
   --argjson parallel_groups "$PARALLEL_GROUPS" \
   --argjson parallel_check "$PARALLEL_CHECK" \
+  --arg flightdeck_bun "$FLIGHTDECK_BUN_STATUS" \
   '{
   platform: $platform,
   lang: $lang,
@@ -554,7 +571,8 @@ SESSION_JSON=$(jq -n \
   prs: $prs,
   cross_check: $cross_check,
   parallel_groups: $parallel_groups,
-  parallel_check: $parallel_check
+  parallel_check: $parallel_check,
+  flightdeck_bun: $flightdeck_bun
   }')
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -627,6 +645,7 @@ def research_block:
   "\(.platform)\(if .lang != "" then " · \(.lang) \(.lang_version)" else "" end) · \(.branch)\(if .build_status == "pass" then " · 🟢 Build" elif .build_status == "fail" then " · 🔴 Build" else "" end)",
   "GitHub: \(.gh_auth.accounts | map(if .status == "ok" then "✓ \(.name) (\(.method))" else "✗ \(.name) (\(.method))" end) | join(" · "))",
   (if .uncommitted > 0 then "⚠️ \(.uncommitted) uncommitted files" else empty end),
+  (if .flightdeck_bun == "missing" then "⚠️ flightdeck preflight: bun not installed — claude-channel and codex-bridge transports will fall back to tmux keystrokes. Install: https://bun.sh" else empty end),
   (if (.gh_auth.accounts | any(.status == "invalid")) then
   "⚠️ gh auth invalid: \(.gh_auth.accounts | map(select(.status == "invalid")) | map(.name) | join(", ")) — run: gh auth logout -u <account>"
   else empty end),

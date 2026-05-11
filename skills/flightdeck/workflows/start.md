@@ -12,7 +12,9 @@ Initialize development session, display status, select work, evaluate research, 
 
 ### 1.2 Present Dashboard
 
-1. **Run**: `.agents/skills/orchestration/scripts/session-init`
+1. **Run**: `FLIGHTDECK_PREFLIGHT=1 .agents/skills/orchestration/scripts/session-init`
+
+   The `FLIGHTDECK_PREFLIGHT=1` signal tells session-init to also check the runtime deps flightdeck itself needs (currently: `bun`, used by the claude-channel and codex-bridge transports). If bun is missing the dashboard adds a one-line warning; you can still proceed but channel transports will fall back to tmux keystrokes.
 
 2. **Output the result exactly as shown** — no reformatting, no additions, no commentary before/after the dashboard. The script output IS the dashboard. Script output uses backticks and markdown syntax.
 
