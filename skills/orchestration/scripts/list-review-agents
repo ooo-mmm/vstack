@@ -4,12 +4,12 @@
 # to enumerate the default review set without hardcoding a count.
 #
 # Sources scanned (in order): .pi/agents, .claude/agents, .agents (vstack-installed),
-# .codex/agents, .opencode/agent. Missing dirs are skipped silently.
+# .codex/agents, .opencode/agents. Missing dirs are skipped silently.
 # Exit code is 0 if at least one reviewer was found, 1 if none.
 
 set -u
 
-dirs=(.pi/agents .claude/agents .agents .codex/agents .opencode/agent)
+dirs=(.pi/agents .claude/agents .agents .codex/agents .opencode/agents)
 names=()
 
 for dir in "${dirs[@]}"; do

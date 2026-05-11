@@ -90,7 +90,7 @@ if [ $? -ne 0 ] || [ -z "$AGENTS" ]; then
 fi
 ```
 
-The `list-review-agents` script scans `.pi/agents`, `.claude/agents`, `.agents`, `.codex/agents`, and `.opencode/agent` (whichever exist) for `reviewer-*` files, dedupes, and exits non-zero if none are found. The output is one agent name per line.
+The `list-review-agents` script scans `.pi/agents`, `.claude/agents`, `.agents`, `.codex/agents`, and `.opencode/agents` (whichever exist) for `reviewer-*` files, dedupes, and exits non-zero if none are found. The output is one agent name per line.
 
 Before any spawn, read existing reviewer state:
 ```bash
