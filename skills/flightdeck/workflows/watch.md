@@ -45,9 +45,13 @@ Master mode entry point. Polls every spawned issue pane, classifies their prompt
    .agents/skills/flightdeck/scripts/flightdeck-daemon start \
      --session "$SESSION" \
      --master "$MASTER_PANE" \
+     --master-harness "$MASTER_HARNESS" \
      --inner "$INNER_PANES" \
      --inner-harnesses "$INNER_HARNESSES"
    ```
+
+   `MASTER_HARNESS` is `pi | claude | codex | opencode` — the harness running this master. Pi masters require it (or rely on auto-detection via `pi-bridge list`) because pi runs in alt-screen mode and `tmux paste-buffer` wake delivery silently drops every keystroke; the daemon routes pi wakes through `pi-bridge send --pid <master_pid>` instead. Other harnesses use the tmux paste path.
+
    `start` self-daemonizes via `setsid + nohup`: the call blocks until the child writes its PID file, then returns. Do NOT add `&` or harness-specific backgrounding — the daemon survives the calling shell's lifecycle on its own. The daemon refuses via flock if already running for this session, so the call is idempotent and safe on every `watch` re-entry.
 
    For codex / opencode / pi masters, prefer the tmux-window spawn mode (set `FD_SPAWN_MODE=tmux-window` env or pass `--in-tmux-window`). The daemon runs inside a dedicated tmux window in the same session; lifetime ties to the tmux session (which is the architectural boundary of a flightdeck session anyway). When stdout is a tty (i.e., this mode) the daemon prints a startup banner and tees every `log()` / `warn()` line to the window in addition to the on-disk log, so the window shows live activity instead of being blank — detach mode keeps stdout pointed at the log file and writes only to disk. Detach mode is the default for Claude Code where `run_in_background` reparenting is reliable.

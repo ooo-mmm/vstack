@@ -786,22 +786,32 @@ spawn_pi_bridge_tmux() {
     echo "  pi-bridge-unavailable: pi-bridge CLI not found (PATH or ~/.pi/agent/bin/pi-bridge)" >&2
     return 1
   fi
-  local ext_path
-  if ! ext_path=$(pi_resolve_bridge_extension); then
-    echo "  pi-bridge-unavailable: session-bridge extension not found at ~/.pi/agent/packages/pi-session-bridge/extensions/session-bridge.ts" >&2
-    return 1
+  # Resolving the session-bridge extension file is a soft signal, not a
+  # hard gate (#4 finding 2). When the file exists we pass it via `-e` so
+  # the bridge auto-loads deterministically. When it's missing we still
+  # spawn pi — the bridge can also load via the `packages` array in
+  # settings.json (which is how vstack installs it). `pi_discover_pid`
+  # below polls `pi-bridge list` for a cwd match, which is what actually
+  # determines bridge availability; the file-presence pre-flight check
+  # used to silently disable subscriber spawn even when the bridge was
+  # functional via packages.
+  local ext_path=""
+  ext_path=$(pi_resolve_bridge_extension 2>/dev/null || echo "")
+  if [[ -z "$ext_path" ]]; then
+    echo "  pi-bridge: session-bridge extension file not found at the legacy path; relying on settings.json 'packages' for auto-load" >&2
   fi
 
-  # Spawn pi with explicit `-e <ext>` so the bridge always auto-loads,
-  # regardless of whether the package is registered in settings.json's
-  # packages array (the array can drift; -e is deterministic).
+  # Spawn pi. When ext_path is set, pass `-e <ext>` so the bridge
+  # auto-loads deterministically regardless of settings.json drift. When
+  # it's empty, the bridge loads via the `packages` array.
   #
   # Pi's slash grammar requires the `/skill:` prefix for native skill
   # expansion (`_expandSkillCommand` only matches `/skill:`). Bare
   # `/orchestration` would fall through to the LLM as raw text.
-  local cmd launch_args=()
+  local cmd launch_args=() bridge_args=()
   add_launch_args pi launch_args
-  cmd=$(shell_join "$pi_bin" "${launch_args[@]}" -e "$ext_path" "/skill:orchestration start $issue")
+  if [[ -n "$ext_path" ]]; then bridge_args=(-e "$ext_path"); fi
+  cmd=$(shell_join "$pi_bin" "${launch_args[@]}" "${bridge_args[@]}" "/skill:orchestration start $issue")
   if ! open_tmux "$wt_path" "$issue" "$cmd"; then
     return 1
   fi

@@ -137,7 +137,7 @@ is_canonical_tag() {
 
 usage() { cat >&2 <<EOF
 Usage:
-  flightdeck-daemon start       --session <S> --master <pane> --inner <p1>[,<p2>...] [--inner-harnesses <h1>[,<h2>...]] [--foreground|--in-tmux-window] [--debug-pane <pane_id>]
+  flightdeck-daemon start       --session <S> --master <pane> --inner <p1>[,<p2>...] [--master-harness <h>] [--inner-harnesses <h1>[,<h2>...]] [--foreground|--in-tmux-window] [--debug-pane <pane_id>]
   flightdeck-daemon stop        --session <S>
   flightdeck-daemon status      --session <S>
   flightdeck-daemon health      --session <S>     # operator-friendly diagnosis
@@ -165,6 +165,7 @@ ORIG_ARGS=("$@")
 ACTION="${1:-}"; [[ -z "$ACTION" ]] && usage; shift
 
 SESSION_NAME="" MASTER_TARGET="" INNER_TARGETS="" INNER_HARNESSES=""
+MASTER_HARNESS=""
 FOREGROUND=0
 SPAWN_MODE="${FD_SPAWN_MODE:-detach}"  # detach | tmux-window
 DEBUG_PANE=""
@@ -172,6 +173,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --session) SESSION_NAME="$2"; shift 2 ;;
     --master)  MASTER_TARGET="$2"; shift 2 ;;
+    --master-harness) MASTER_HARNESS="$2"; shift 2 ;;
     --inner)   INNER_TARGETS="$2"; shift 2 ;;
     --inner-harnesses) INNER_HARNESSES="$2"; shift 2 ;;
     --foreground|--no-detach) FOREGROUND=1; shift ;;
@@ -509,6 +511,39 @@ clear_stale_wake_pending() {
 }
 
 # --- Wake delivery -------------------------------------------------------------
+
+# Resolve the pi-bridge pid for a pi master pane. Pi runs in alt-screen mode
+# and reads keyboard input through its own loop, NOT through tmux's pasted
+# scrollback; `tmux paste-buffer` writes bytes that pi's UI treats as
+# decorative escape sequences and the wake message never lands in the input
+# buffer (#4 finding 1). For pi masters we route the wake through
+# `pi-bridge send --pid <pid>`, which is the same channel a sibling Pi
+# session uses to deliver a follow-up to a peer.
+#
+# Resolution: ask `pi-bridge list --json` for an entry whose cwd matches
+# the master pane's current working directory. Cheap (single CLI call per
+# wake) and self-healing if the master pi restarts between wakes.
+resolve_pi_master_pid() {
+  local master_id="$1"
+  local bridge_bin; bridge_bin=$(pi_resolve_bridge_bin 2>/dev/null) || return 1
+  local master_cwd
+  master_cwd=$(tmux display-message -t "$master_id" -p '#{pane_current_path}' 2>/dev/null || echo "")
+  [[ -z "$master_cwd" ]] && return 1
+  local out
+  out=$("$bridge_bin" list --json 2>/dev/null) || return 1
+  [[ -z "$out" || "$out" == "null" ]] && return 1
+  local pid
+  pid=$(jq -r --arg dir "$master_cwd" '
+    ( . // [] )
+    | map(select((.cwd // "") == $dir))
+    | sort_by(.startedAt // .started_at // 0)
+    | last
+    | (.pid // empty)
+  ' <<< "$out" 2>/dev/null)
+  [[ -z "$pid" || "$pid" == "null" ]] && return 1
+  echo "$pid"
+}
+
 # wake_master takes master_id, joined reason string, and an in-flight JSON
 # array of {pane_id, hash} entries. Records the in-flight list in
 # WAKE_PENDING so stale-recovery can revert NOTIFIED_HASH on master crash.
@@ -560,6 +595,25 @@ wake_master() {
   # Wake delivery happens AFTER releasing SESSION_LOCK to avoid blocking
   # daemon's append paths during tmux IO. If delivery fails, we re-take the
   # lock to clean up wake-pending atomically.
+
+  # Pi master: bypass tmux paste entirely — pi's alt-screen input loop
+  # doesn't read pasted scrollback, so the wake message would be invisible
+  # to the agent (#4 finding 1). pi-bridge `send` is the canonical channel.
+  if [[ "$MASTER_HARNESS" == "pi" ]]; then
+    local bridge_bin master_pid
+    bridge_bin=$(pi_resolve_bridge_bin 2>/dev/null || echo "")
+    master_pid=$(resolve_pi_master_pid "$master_id" || echo "")
+    if [[ -n "$bridge_bin" && -n "$master_pid" ]]; then
+      if "$bridge_bin" send --pid "$master_pid" '/flightdeck watch --from-daemon' >/dev/null 2>&1; then
+        log wake "master=$master_id harness=pi via=pi-bridge pid=$master_pid reasons=$combined"
+        return 0
+      fi
+      log wake-fail "pi-bridge send failed pid=$master_pid; falling back to tmux paste"
+    else
+      log wake-fail "pi master bridge unresolved (bin=${bridge_bin:-missing} pid=${master_pid:-unknown}); falling back to tmux paste"
+    fi
+  fi
+
   local buffer_name="fd-wake-${SESSION_KEY}"
   if ! printf '%s' '/flightdeck watch --from-daemon' | tmux load-buffer -b "$buffer_name" -; then
     log wake-fail "load-buffer failed"
@@ -576,7 +630,7 @@ wake_master() {
     locked_rm_wake_pending
     return 1
   fi
-  log wake "master=$master_id reasons=$combined"
+  log wake "master=$master_id harness=${MASTER_HARNESS:-?} via=tmux reasons=$combined"
   return 0
 }
 
@@ -1352,7 +1406,7 @@ run_loop() {
     printf '\n'
     printf '  flightdeck-daemon\n'
     printf '    session   %s (%s)\n' "$SESSION_NAME" "$SESSION_KEY"
-    printf '    master    %s\n' "$MASTER_TARGET"
+    printf '    master    %s (harness=%s)\n' "$MASTER_TARGET" "${MASTER_HARNESS:-unset}"
     printf '    inner     %s\n' "${INNER_TARGETS:-(none)}"
     printf '    state dir %s\n' "$STATE_DIR"
     printf '    log       %s\n' "$LOG"
@@ -1464,7 +1518,19 @@ run_loop() {
   # directly here used to kill the daemon at startup with no useful error
   # other than a stale pid file (#3 finding 2).
   if [[ -v OC_SUBSCRIBED[@] ]]; then _oc_sub_count=${#OC_SUBSCRIBED[@]}; else _oc_sub_count=0; fi
-  log start "pid=$$ session_id=$SESSION_ID name=$SESSION_NAME master_id=$master_id inner_ids=${INNER_IDS[*]} oc_subscribed=$_oc_sub_count"
+
+  # Auto-detect master harness when caller didn't pass --master-harness.
+  # `pi-bridge list` is authoritative for pi masters: if there's a bridge
+  # entry whose cwd matches the master pane's cwd, the master is a pi
+  # session and wake delivery must route through pi-bridge (#4 finding 1).
+  # Other harnesses fall through to the tmux paste-buffer path.
+  if [[ -z "$MASTER_HARNESS" ]]; then
+    if [[ -n "$(resolve_pi_master_pid "$master_id" 2>/dev/null || echo "")" ]]; then
+      MASTER_HARNESS="pi"
+      log master-harness "auto-detected master harness=pi via pi-bridge list cwd match"
+    fi
+  fi
+  log start "pid=$$ session_id=$SESSION_ID name=$SESSION_NAME master_id=$master_id master_harness=${MASTER_HARNESS:-unknown} inner_ids=${INNER_IDS[*]} oc_subscribed=$_oc_sub_count"
   # Separate traps:
   #   - EXIT: cleanup only (called on natural exit too).
   #   - INT/TERM: cleanup + explicit exit (so SIGTERM from `stop` actually

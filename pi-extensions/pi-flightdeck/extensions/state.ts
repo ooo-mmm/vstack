@@ -170,6 +170,15 @@ export function resolveStateDir(settings?: SettingsLike): string {
 }
 
 export function resolveProjectRoot(cwd: string): string {
+	// Inside a git worktree, prefer the main repo root (the parent of
+	// `--git-common-dir`) so flightdeck state lookup resolves to the
+	// canonical `<main-root>/tmp/flightdeck-state-*.json` instead of the
+	// worktree's own (non-existent) tmp dir. Without this, the overlay
+	// rendered inside a worktree pane would correctly detect the daemon
+	// (daemon files are uid-scoped, not cwd-scoped) but fail to load the
+	// master state file, falsely showing "0 issues" (#4 finding 3).
+	const worktreeRoot = gitMainWorktreeRoot(cwd);
+	if (worktreeRoot) return worktreeRoot;
 	let current = resolve(cwd);
 	const markers = [".vstack-lock.json", ".pi", ".git"];
 	while (true) {
@@ -180,6 +189,18 @@ export function resolveProjectRoot(cwd: string): string {
 		if (parent === current) return resolve(cwd);
 		current = parent;
 	}
+}
+
+function gitMainWorktreeRoot(cwd: string): string | undefined {
+	const result = spawnSync("git", ["-C", cwd, "rev-parse", "--path-format=absolute", "--git-common-dir"], {
+		encoding: "utf8",
+		timeout: 1500,
+	});
+	if (result.status !== 0) return undefined;
+	const gitDir = (result.stdout ?? "").trim();
+	if (!gitDir) return undefined;
+	const main = resolve(gitDir, "..");
+	return existsSync(main) ? main : undefined;
 }
 
 export function masterStatePath(projectRoot: string, settings: SettingsLike, sessionName: string): string {
