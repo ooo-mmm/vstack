@@ -757,16 +757,21 @@ function formatSubscriberCounts(theme: Theme, counts: Record<HarnessKey, number>
 	return parts.join(theme.fg("dim", " "));
 }
 
+function shortSubscriberHarnesses(expected: Record<HarnessKey, number>, counts: Record<HarnessKey, number>): Set<HarnessKey> {
+	const out = new Set<HarnessKey>();
+	for (const key of Object.keys(expected) as HarnessKey[]) {
+		if (expected[key] > counts[key]) out.add(key);
+	}
+	return out;
+}
+
 function unsubscribedPanes(snapshot: FlightdeckSnapshot, expected: Record<HarnessKey, number>, counts: Record<HarnessKey, number>): IssueRecord[] {
 	// Only surface adapter-eligible issues whose harness is short on
 	// subscribers. Panes intentionally on tmux fallback (no adapter
 	// metadata recorded) are not surfaced as "unsubscribed" since the
 	// daemon never tried to subscribe them in the first place
 	// (cross-harness review finding #5).
-	const missingHarnesses = new Set<HarnessKey>();
-	for (const key of Object.keys(expected) as HarnessKey[]) {
-		if (expected[key] > counts[key]) missingHarnesses.add(key);
-	}
+	const missingHarnesses = shortSubscriberHarnesses(expected, counts);
 	if (missingHarnesses.size === 0) return [];
 	const out: IssueRecord[] = [];
 	for (const issue of Object.values(snapshot.master?.issues ?? {})) {
@@ -775,6 +780,10 @@ function unsubscribedPanes(snapshot: FlightdeckSnapshot, expected: Record<Harnes
 		if (key && missingHarnesses.has(key) && issueIsAdapterEligible(issue, key)) out.push(issue);
 	}
 	return out;
+}
+
+function issueForPane(snapshot: FlightdeckSnapshot, paneId: string): IssueRecord | undefined {
+	return Object.values(snapshot.master?.issues ?? {}).find((issue) => issue.pane_id === paneId || issue.pane_target === paneId);
 }
 
 function renderDaemonTab(snapshot: FlightdeckSnapshot, ui: PopupUiState, width: number, theme: Theme, viewportRows: number): string[] {
@@ -792,6 +801,17 @@ function renderDaemonTab(snapshot: FlightdeckSnapshot, ui: PopupUiState, width: 
 	const counts = d.subscriberCounts;
 	const expected = expectedSubscribersByHarness(snapshot);
 	lines.push(`${label(theme, "subscribers:")} ${formatSubscriberCounts(theme, counts, expected)}`);
+	const shortHarnesses = shortSubscriberHarnesses(expected, counts);
+	const liveShortSubscribers = (d.subscribers ?? []).filter((sub) => shortHarnesses.has(sub.harness));
+	if (liveShortSubscribers.length > 0) {
+		lines.push(`${label(theme, "live subs:")} ${theme.fg("dim", "pids for short harness buckets")}`);
+		for (const sub of liveShortSubscribers.slice(0, 8)) {
+			const issue = issueForPane(snapshot, sub.paneId);
+			const issueLabel = issue?.issue ? `${issue.issue} ` : "";
+			lines.push(`   ${theme.fg("dim", "· ")}${theme.fg("text", `${issueLabel}${sub.paneId}`)} ${theme.fg("dim", "·")} ${harnessChip(theme, sub.harness)} ${theme.fg("dim", "·")} ${theme.fg("dim", `pid=${sub.pid}`)}`);
+		}
+		if (liveShortSubscribers.length > 8) lines.push(`   ${theme.fg("dim", `… ${liveShortSubscribers.length - 8} more`)}`);
+	}
 	const unsubscribed = unsubscribedPanes(snapshot, expected, counts);
 	if (unsubscribed.length > 0) {
 		lines.push(`${label(theme, "unsubscribed:")} ${theme.fg("warning", `${unsubscribed.length} tracked pane${unsubscribed.length === 1 ? "" : "s"} without an adapter subscriber`)}`);

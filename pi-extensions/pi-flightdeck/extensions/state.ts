@@ -81,6 +81,14 @@ export interface DaemonHealth {
 	wakeEventsPath?: string;
 	wakeEventsRecent?: WakeEvent[];
 	subscriberCounts: { opencode: number; claude: number; pi: number; codex: number };
+	subscribers: SubscriberProcess[];
+}
+
+export interface SubscriberProcess {
+	harness: "opencode" | "claude" | "pi" | "codex";
+	paneId: string;
+	pid: number;
+	pidFile: string;
 }
 
 export interface WakeEvent {
@@ -418,13 +426,14 @@ function readJsonLines(path: string, maxLines: number): unknown[] {
 	return out;
 }
 
-function countSubscribers(stateDir: string, sessionKey: string | undefined): DaemonHealth["subscriberCounts"] {
+function readSubscribers(stateDir: string, sessionKey: string | undefined): { counts: DaemonHealth["subscriberCounts"]; subscribers: SubscriberProcess[] } {
 	const counts = { opencode: 0, claude: 0, pi: 0, codex: 0 };
+	const subscribers: SubscriberProcess[] = [];
 	let entries: string[];
 	try {
 		entries = readdirSync(stateDir);
 	} catch {
-		return counts;
+		return { counts, subscribers };
 	}
 	// Subscriber pid filenames are scoped by session key:
 	// `fd-<type>-subscriber-<session_key>-<pane_safe>.pid`. Filtering keeps
@@ -439,16 +448,23 @@ function countSubscribers(stateDir: string, sessionKey: string | undefined): Dae
 	for (const entry of entries) {
 		if (!entry.endsWith(".pid")) continue;
 		if (!entry.includes(infix)) continue;
-		let bucket: keyof typeof counts | undefined;
-		if (entry.startsWith("fd-subscriber-")) bucket = "opencode";
-		else if (entry.startsWith("fd-cc-subscriber-")) bucket = "claude";
-		else if (entry.startsWith("fd-pi-subscriber-")) bucket = "pi";
-		else if (entry.startsWith("fd-cx-subscriber-")) bucket = "codex";
-		if (!bucket) continue;
-		const pid = readPidFile(join(stateDir, entry));
-		if (isPidAlive(pid)) counts[bucket] += 1;
+		let bucket: SubscriberProcess["harness"] | undefined;
+		let prefix = "";
+		if (entry.startsWith("fd-subscriber-")) { bucket = "opencode"; prefix = "fd-subscriber-"; }
+		else if (entry.startsWith("fd-cc-subscriber-")) { bucket = "claude"; prefix = "fd-cc-subscriber-"; }
+		else if (entry.startsWith("fd-pi-subscriber-")) { bucket = "pi"; prefix = "fd-pi-subscriber-"; }
+		else if (entry.startsWith("fd-cx-subscriber-")) { bucket = "codex"; prefix = "fd-cx-subscriber-"; }
+		if (!bucket || !prefix) continue;
+		const path = join(stateDir, entry);
+		const pid = readPidFile(path);
+		if (!isPidAlive(pid) || !pid) continue;
+		counts[bucket] += 1;
+		let paneSafe = entry.slice(prefix.length, -".pid".length);
+		if (sessionKey && paneSafe.startsWith(`${sessionKey}-`)) paneSafe = paneSafe.slice(sessionKey.length + 1);
+		const paneId = paneSafe.startsWith("%") ? paneSafe : `%${paneSafe}`;
+		subscribers.push({ harness: bucket, paneId, pid, pidFile: path });
 	}
-	return counts;
+	return { counts, subscribers };
 }
 
 export function readDaemonHealth(
@@ -468,6 +484,7 @@ export function readDaemonHealth(
 	const wakePending = readJsonFile<DaemonHealth["wakePending"]>(paths.wakePending);
 	const logTailLines = readLastLines(paths.log, logTail);
 	const wakeEventsRecent = readJsonLines(paths.wakeEvents, wakeTail) as WakeEvent[];
+	const subscriberSnapshot = readSubscribers(stateDir, sessionKey);
 	return {
 		busy,
 		busyPath: paths.busy,
@@ -481,7 +498,8 @@ export function readDaemonHealth(
 		pidFile: paths.pid,
 		sessionKey,
 		stateDir,
-		subscriberCounts: countSubscribers(stateDir, sessionKey),
+		subscriberCounts: subscriberSnapshot.counts,
+		subscribers: subscriberSnapshot.subscribers,
 		wakeEventsPath: paths.wakeEvents,
 		wakeEventsRecent,
 		wakePending,

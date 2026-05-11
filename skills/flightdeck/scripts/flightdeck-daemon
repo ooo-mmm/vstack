@@ -466,14 +466,17 @@ is_master_busy() {
   fi
 
   # TTL gate: if started_at parses and exceeds MASTER_TURN_TTL, treat the
-  # lock as stale even if the pane is still alive.
+  # lock as stale even if the pane is still alive. `date -d` is GNU-only;
+  # on platforms without it, skip the TTL rather than mis-parsing to epoch
+  # 0 and declaring a live missing-owner lock stale immediately.
   if [[ -n "$lock_started" ]]; then
     local started_epoch now_epoch age
-    started_epoch=$(date -d "$lock_started" +%s 2>/dev/null || echo 0)
-    now_epoch=$(date +%s)
-    age=$(( now_epoch - started_epoch ))
-    if (( age > MASTER_TURN_TTL )); then
-      return 1
+    if started_epoch=$(date -d "$lock_started" +%s 2>/dev/null); then
+      now_epoch=$(date +%s)
+      age=$(( now_epoch - started_epoch ))
+      if (( age > MASTER_TURN_TTL )); then
+        return 1
+      fi
     fi
   fi
 
@@ -566,9 +569,10 @@ wake_payload_for_harness() {
 # `pi-bridge send --pid <pid>`, which is the same channel a sibling Pi
 # session uses to deliver a follow-up to a peer.
 #
-# Resolution: ask `pi-bridge list --json` for an entry whose cwd matches
-# the master pane's current working directory. Cheap (single CLI call per
-# wake) and self-healing if the master pi restarts between wakes.
+# Resolution: ask `pi-bridge list --json`, prefer a bridge pid in the
+# master pane's process tree, then use an unambiguous cwd + /proc + pane-tty
+# match. Cheap (single CLI call per wake) and self-healing if the master pi
+# restarts between wakes.
 resolve_pi_master_pid() {
   local master_id="$1"
   local bridge_bin; bridge_bin=$(pi_resolve_bridge_bin 2>/dev/null) || return 1
@@ -584,13 +588,13 @@ resolve_pi_master_pid() {
   local master_shell_pid
   master_shell_pid=$(tmux display-message -t "$master_id" -p '#{pane_pid}' 2>/dev/null || echo "")
   if [[ "$master_shell_pid" =~ ^[1-9][0-9]*$ ]]; then
-    # Collect descendants of the shell pid; one of them is the pi process.
-    local descendants
-    descendants=$(pgrep -P "$master_shell_pid" 2>/dev/null; pgrep -P "$master_shell_pid" 2>/dev/null | xargs -r pgrep -P 2>/dev/null)
-    if [[ -n "$descendants" ]]; then
-      local descendants_json
-      descendants_json=$(echo "$descendants" | tr '\n' ',' | sed 's/,*$//' | awk 'BEGIN{printf "["} {printf "%s", $0} END{printf "]"}')
-      [[ "$descendants_json" == "[]" ]] || descendants_json="[$(echo "$descendants" | paste -sd,)]"
+    # Collect the full descendant tree plus the pane pid itself: tmux may
+    # report the pi process directly when the pane was launched without an
+    # intermediate shell, and deeper wrappers can put pi below grandchildren.
+    local descendants descendants_json
+    descendants=$(printf '%s\n' "$master_shell_pid"; collect_descendants "$master_shell_pid" 2>/dev/null || true)
+    descendants_json=$(printf '%s\n' "$descendants" | awk 'NF && $1 ~ /^[0-9]+$/ {print $1}' | sort -u | jq -Rsc 'split("\n") | map(select(length > 0) | tonumber)' 2>/dev/null || echo "[]")
+    if [[ "$descendants_json" != "[]" ]]; then
       local pid_by_tree
       pid_by_tree=$(jq -r --argjson tree "$descendants_json" '
         ( . // [] )
@@ -605,23 +609,61 @@ resolve_pi_master_pid() {
     fi
   fi
 
-  # Fallback: cwd match. Less precise (two pi processes in the same cwd
-  # can both qualify) but better than nothing when pane_pid resolution
-  # fails (e.g., the master pane reported via target but tmux can't
-  # currently introspect it).
-  local master_cwd
+  # Fallback: cwd + process identity match. Cwd alone is ambiguous when
+  # two Pi sessions share a repo. Intersect bridge entries with real `pi`
+  # processes whose /proc cwd matches the master pane, then prefer a pid
+  # attached to the master pane's tty. If more than one candidate remains,
+  # fail closed so wake_master falls back to tmux instead of sending the
+  # wake to the wrong Pi session.
+  local master_cwd master_tty
   master_cwd=$(tmux display-message -t "$master_id" -p '#{pane_current_path}' 2>/dev/null || echo "")
   [[ -z "$master_cwd" ]] && return 1
-  local pid
-  pid=$(jq -r --arg dir "$master_cwd" '
+  master_tty=$(tmux display-message -t "$master_id" -p '#{pane_tty}' 2>/dev/null || echo "")
+
+  local bridge_cwd_pids
+  bridge_cwd_pids=$(jq -r --arg dir "$master_cwd" '
     ( . // [] )
     | map(select((.cwd // "") == $dir))
     | sort_by(.startedAt // .started_at // 0)
-    | last
-    | (.pid // empty)
+    | .[].pid
   ' <<< "$out" 2>/dev/null)
-  [[ -z "$pid" || "$pid" == "null" ]] && return 1
-  echo "$pid"
+  [[ -z "$bridge_cwd_pids" ]] && return 1
+
+  local pi_cwd_pids
+  pi_cwd_pids=$(pgrep -a -f '(^|/)pi( |$)' 2>/dev/null | while read -r p _cmd; do
+    [[ "$p" =~ ^[1-9][0-9]*$ ]] || continue
+    local pcwd
+    pcwd=$(readlink -f "/proc/$p/cwd" 2>/dev/null || echo "")
+    [[ "$pcwd" == "$master_cwd" ]] && echo "$p"
+  done | sort -u)
+  [[ -z "$pi_cwd_pids" ]] && return 1
+
+  local candidates=() tty_candidates=() p fd_target
+  for p in $bridge_cwd_pids; do
+    [[ "$p" =~ ^[1-9][0-9]*$ ]] || continue
+    grep -qx "$p" <<< "$pi_cwd_pids" || continue
+    kill -0 "$p" 2>/dev/null || continue
+    candidates+=("$p")
+    if [[ -n "$master_tty" ]]; then
+      for _fd in 0 1 2; do
+        fd_target=$(readlink -f "/proc/$p/fd/$_fd" 2>/dev/null || echo "")
+        if [[ "$fd_target" == "$master_tty" ]]; then
+          tty_candidates+=("$p")
+          break
+        fi
+      done
+    fi
+  done
+
+  if (( ${#tty_candidates[@]} == 1 )); then
+    echo "${tty_candidates[0]}"
+    return 0
+  fi
+  if (( ${#candidates[@]} == 1 )); then
+    echo "${candidates[0]}"
+    return 0
+  fi
+  return 1
 }
 
 # wake_master takes master_id, joined reason string, and an in-flight JSON
@@ -1132,7 +1174,7 @@ pi_subscriber_loop() {
   local pi_bin; pi_bin=$(pi_resolve_bridge_bin) || {
     printf '%s [pi-sub-error] pi-bridge bin not found\n' "$(date -Iseconds)" \
       >> "$sub_log" 2>/dev/null || true
-    exit 1
+    return 1
   }
   local pi_target_args=()
   if [[ -n "$pi_socket" ]]; then
@@ -1267,7 +1309,22 @@ spawn_pi_subscriber() {
       return 0
     fi
   fi
-  pi_subscriber_loop "$pane_id" "$pi_pid" "$pi_socket" $$ &
+  local parent_pid=$$
+  (
+    set +e
+    set +o pipefail
+    exec 200<&- 2>/dev/null || true
+    local rc sub_log
+    sub_log="${LOG}.pi-sub-$(pi_pane_id_safe "$pane_id")"
+    while kill -0 "$parent_pid" 2>/dev/null; do
+      pi_subscriber_loop "$pane_id" "$pi_pid" "$pi_socket" "$parent_pid"
+      rc=$?
+      kill -0 "$parent_pid" 2>/dev/null || exit 0
+      printf '%s [pi-sub-restart] pane=%s stream exited rc=%s; reconnecting in 1s\n' \
+        "$(date -Iseconds)" "$pane_id" "$rc" >> "$sub_log" 2>/dev/null || true
+      sleep 1
+    done
+  ) &
   local sub_pid=$!
   echo "$sub_pid" > "$pid_file"
   log pi-subscriber-spawn "pane=$pane_id pid=$sub_pid pi_pid=$pi_pid socket=$pi_socket"
@@ -1352,7 +1409,22 @@ spawn_cx_subscriber() {
       return 0
     fi
   fi
-  cx_subscriber_loop "$pane_id" "$cx_url" "$thread_id" $$ &
+  local parent_pid=$$
+  (
+    set +e
+    set +o pipefail
+    exec 200<&- 2>/dev/null || true
+    local rc sub_log
+    sub_log="${LOG}.cx-sub-$(cx_pane_id_safe "$pane_id")"
+    while kill -0 "$parent_pid" 2>/dev/null; do
+      cx_subscriber_loop "$pane_id" "$cx_url" "$thread_id" "$parent_pid"
+      rc=$?
+      kill -0 "$parent_pid" 2>/dev/null || exit 0
+      printf '%s [cx-sub-restart] pane=%s stream exited rc=%s; reconnecting in 1s\n' \
+        "$(date -Iseconds)" "$pane_id" "$rc" >> "$sub_log" 2>/dev/null || true
+      sleep 1
+    done
+  ) &
   local sub_pid=$!
   echo "$sub_pid" > "$pid_file"
   log cx-subscriber-spawn "pane=$pane_id pid=$sub_pid url=$cx_url thread=$thread_id"
@@ -1764,17 +1836,12 @@ run_loop() {
         continue
       fi
 
-      # Subscriber-liveness watchdog (bugs review finding #4). The Pi /
-      # Codex / Claude subscribers are one-shot stream pipelines: if the
-      # bridge socket drops or the jq pipeline exits, the subscriber
-      # function returns and only a stale pid file remains. Previously
-      # the daemon trusted OC_SUBSCRIBED[$inner_id]=1 forever, which
-      # silently disabled the capture-pane fallback for the affected
-      # pane. Verify the subscriber pid is still alive each tick; if
-      # dead, clear the flag and let this tick fall through to the
-      # legacy bell/hash branch below. Subscriber respawn is left to
-      # daemon restart (one-shot stream pipelines are spawned once at
-      # start; reconnect loops are a follow-up).
+      # Subscriber-liveness watchdog (bugs review finding #4). Stream
+      # subscribers now run under reconnecting wrappers for pi/codex, but
+      # the wrapper itself can still die (missing binary, killed process,
+      # bad metadata). Verify the subscriber pid is alive each tick; if
+      # dead, clear the flag and let this tick fall through to the legacy
+      # bell/hash branch below until daemon restart or a later respawn.
       if [[ "${OC_SUBSCRIBED[$inner_id]:-}" == "1" ]]; then
         local _sub_harness="${PANE_HARNESS[$inner_id]:-$HARNESS}"
         local _sub_pid_file="" _sub_pid=""

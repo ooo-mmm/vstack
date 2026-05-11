@@ -16,7 +16,7 @@ When Pi is running as the flightdeck **master agent** in a tmux session, this ex
   - **Conversations** — last assistant turn per inner pane, captured from adapter wake events.
   - **Conflicts & merges** — merge queue + file-level conflict graph edges.
   - **Decisions** — flat audit of every prompt-tag → answer master has issued.
-  - **Daemon** — pid, heartbeat age, busy/wake-pending state, subscriber counts shown as `actual/expected` per harness (green when matched, yellow when short). Expected is gated on **adapter eligibility**: only issues whose registry record carries the adapter metadata fields the daemon's `spawn_<h>_subscriber` path reads (`oc_url`+`oc_session_id`, `cc_url`+`cc_transcript`, `pi_bridge_socket`/`pi_bridge_pid`, `cx_ws`+`cx_thread_id`) are counted, so panes intentionally on tmux fallback don't trigger false warnings. The `unsubscribed:` row lists only adapter-eligible panes missing a live sidecar. Daemon log tail follows.
+  - **Daemon** — pid, heartbeat age, busy/wake-pending state, subscriber counts shown as `actual/expected` per harness (green when matched, yellow when short). Expected is gated on **adapter eligibility**: only issues whose registry record carries the adapter metadata fields the daemon's `spawn_<h>_subscriber` path reads (`oc_url`+`oc_session_id`, `cc_url`+`cc_transcript`, `pi_bridge_socket`/`pi_bridge_pid`, `cx_ws`+`cx_thread_id`) are counted, so panes intentionally on tmux fallback don't trigger false warnings. When a harness is short, `live subs:` lists the live subscriber pid + pane id entries that do exist for that short bucket, and `unsubscribed:` lists only adapter-eligible panes missing a live sidecar. Daemon log tail follows.
 
 ## Read-only by design
 
@@ -60,7 +60,7 @@ State paths mirror `skills/flightdeck/scripts/lib/daemon-paths.sh` and `flightde
 
 - Master state — `<project-root>/<FLIGHTDECK_STATE_DIR>/flightdeck-state-<TMUX_SESSION_NAME>.json`
 - Daemon files — `${FD_STATE_DIR}/fd-{daemon,master,wake,...}-<SESSION_KEY>.{pid,log,heartbeat,busy,jsonl}`
-- Subscriber pid files — `${FD_STATE_DIR}/fd-{,cc-,pi-,cx-}subscriber-<SESSION_KEY>-<pane_safe>.pid`. The `<SESSION_KEY>` infix scopes counts to the current flightdeck session; the overlay's per-harness counts use it to filter out subscribers belonging to other concurrent daemons in the shared state dir.
+- Subscriber pid files — `${FD_STATE_DIR}/fd-{,cc-,pi-,cx-}subscriber-<SESSION_KEY>-<pane_safe>.pid`. The `<SESSION_KEY>` infix scopes counts to the current flightdeck session; the overlay's per-harness counts and `live subs:` rows use it to filter out subscribers belonging to other concurrent daemons in the shared state dir, then verify each recorded pid is alive before rendering it.
 
 The daemon files key off the stable tmux `session_id`, so they survive a tmux session rename. The master state filename embeds the **session name**, so renaming the tmux session orphans the existing state file — flightdeck will look for `flightdeck-state-<NEW_NAME>.json` and miss the old one. Tmux window/tab names are not used.
 
