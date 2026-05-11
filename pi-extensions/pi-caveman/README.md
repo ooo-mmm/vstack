@@ -52,4 +52,4 @@ Arguments support autocomplete.
 - Settings live in Pi/vstack `settings.json`; project settings override user settings.
 - QOL can use the caveman bridge for its compact statusline badge and `Alt+C` editor shortcut.
 - The hard clarity-safety escape only fires when the user prompt names an explicit irreversible destructive operation (force-push, drop table, rm -rf, hard reset, destructive/irreversible). The model still self-elects plain prose for genuine destructive confirmations via an inline auto-clarity rule, but no longer escapes on soft signals like "confused" or "security".
-- Boundary toggles keep caveman out of text destined for other systems: code/identifiers, commit messages and PR descriptions, formal reviews, and external writes (Linear/GitHub issues + comments, PR/code-review comments, chat). Caveman is for in-chat replies.
+- Boundary toggles keep caveman out of text destined for other systems: code/identifiers, commit messages and PR descriptions, formal reviews, and external writes (issue/PR bodies + comments, code review, chat/email). Caveman is for in-chat replies.

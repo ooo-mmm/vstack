@@ -4,4 +4,4 @@ Destructive op confirmations (force-push/drop table/rm -rf/hard reset/branch del
 Code/commands/identifiers/quoted errors unchanged.
 Commit/PR text normal unless user asks caveman.
 Formal reviews normal unless user asks caveman.
-External writes (Linear/GitHub issue bodies + comments, PR/code-review, chat) normal unless user asks caveman.
+External writes (issue/PR bodies + comments, code review, chat/email) normal unless user asks caveman.

@@ -74,7 +74,7 @@ describe("instructions() snapshot matrix", () => {
 	});
 
 	it("clarity-escape branch puts the sentinel directive on the LAST non-empty line (F2 fix)", () => {
-		writeUserConfig({ mode: "full", boundaryNormalForCode: true, boundaryNormalForCommits: true, boundaryNormalForReviews: true, customPromptSuffix: "PROJECT-SUFFIX" });
+		writeUserConfig({ mode: "full", boundaryNormalForCode: true, boundaryNormalForCommits: true, boundaryNormalForReviews: true, boundaryNormalForExternalWrites: true, customPromptSuffix: "PROJECT-SUFFIX" });
 		for (const mode of MODES) {
 			const rendered = instructions(mode, projectDir, true);
 			// Sentinel literal is the two-word phrase 'Caveman resume' (no period
@@ -88,7 +88,7 @@ describe("instructions() snapshot matrix", () => {
 	});
 
 	it("clarity-escape branch double-anchors imperative directives (opener + sentinel) (F2 fix)", () => {
-		writeUserConfig({ mode: "full", boundaryNormalForCode: true, boundaryNormalForCommits: true, boundaryNormalForReviews: true });
+		writeUserConfig({ mode: "full", boundaryNormalForCode: true, boundaryNormalForCommits: true, boundaryNormalForReviews: true, boundaryNormalForExternalWrites: true });
 		for (const mode of MODES) {
 			const rendered = instructions(mode, projectDir, true);
 			const mustHits = rendered.match(/\bYou MUST\b/g) ?? [];
@@ -97,7 +97,7 @@ describe("instructions() snapshot matrix", () => {
 	});
 
 	it("lite directive includes explicit filler/hedge/article guidance (F1 fix)", () => {
-		writeUserConfig({ mode: "lite", boundaryNormalForCode: true, boundaryNormalForCommits: true, boundaryNormalForReviews: true });
+		writeUserConfig({ mode: "lite", boundaryNormalForCode: true, boundaryNormalForCommits: true, boundaryNormalForReviews: true, boundaryNormalForExternalWrites: true });
 		const rendered = instructions("lite", projectDir, false);
 		assert.match(rendered, /article/i, "lite must explicitly call out article handling");
 		assert.match(rendered, /(filler|basically|essentially)/i, "lite must explicitly call out filler words");
@@ -112,7 +112,7 @@ describe("instructions() snapshot matrix", () => {
 	});
 
 	it("every active mode renders imperative directives", () => {
-		writeUserConfig({ mode: "full", boundaryNormalForCode: true, boundaryNormalForCommits: true, boundaryNormalForReviews: true });
+		writeUserConfig({ mode: "full", boundaryNormalForCode: true, boundaryNormalForCommits: true, boundaryNormalForReviews: true, boundaryNormalForExternalWrites: true });
 		for (const mode of MODES) {
 			const clean = instructions(mode, projectDir, false);
 			assert.match(clean, /\bMUST\b/, `${mode} clean missing MUST directive`);

@@ -169,7 +169,7 @@ export function instructions(mode: Mode, cwd: string, clarityEscape: boolean): s
 		if (settingBoolean("boundaryNormalForCode", true, cwd)) compactBoundaries.push("Code/commands/identifiers/quoted errors unchanged.");
 		if (settingBoolean("boundaryNormalForCommits", true, cwd)) compactBoundaries.push("Commit/PR text normal unless user asks caveman.");
 		if (settingBoolean("boundaryNormalForReviews", true, cwd)) compactBoundaries.push("Formal reviews normal unless user asks caveman.");
-		if (settingBoolean("boundaryNormalForExternalWrites", true, cwd)) compactBoundaries.push("External writes (Linear/GitHub issue bodies + comments, PR/code-review, chat) normal unless user asks caveman.");
+		if (settingBoolean("boundaryNormalForExternalWrites", true, cwd)) compactBoundaries.push("External writes (issue/PR bodies + comments, code review, chat/email) normal unless user asks caveman.");
 		return [
 			"You MUST respond in caveman micro style.",
 			"Cut filler/pleasantries/hedging. Fragments OK. Technical terms exact. Accuracy > brevity.",
