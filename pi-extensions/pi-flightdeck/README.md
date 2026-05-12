@@ -9,7 +9,7 @@ Read-only mission-control dashboard for the [`flightdeck`](../../skills/flightde
 - **Pause banner** — high-contrast yellow frame above the editor when flightdeck master pauses for the user. Clears automatically on resume.
 - **Persistent dashboard widget** — compact tree of tracked issues with state badges, harness, model, PR number, last decision, age, and per-pane cost/turns/tokens.
 - **Expanded dashboard tree** — issue details render as proper child rows, with ASCII or Unicode connectors matching the Tree connector style setting.
-- **`/flightdeck` popup** (F6) — mission-control view with six tabs: Overview, Live feed, Conversations, Conflicts & merges, Decisions, Daemon. Conversations are grouped by issue first, keep raw pane ids as muted metadata, and collapse Pi streaming partials into one finalized turn. Decisions are selectable; press Enter to open the full wrapped answer, then Esc or Backspace to return.
+- **`/flightdeck` popup** (F6) — mission-control view with six tabs: Overview, Live feed, Conversations, Conflicts & merges, Decisions, Daemon. Conversations render as a newest-first stream keyed by issue/session names, hide raw pane ids from normal view, and collapse Pi streaming partials into one finalized turn. Decisions are selectable; press Enter to open the full wrapped answer, then Esc or Backspace to return.
 - Dashboard suppresses in child panes so the same state doesn't echo inside every agent.
 - Participates in vstack's stable mini-dashboard stack order: Flightdeck → Tasks → Agents → BG tasks.
 - Optional terminal bell and auto-popup when master pauses.
@@ -42,7 +42,7 @@ Restart Pi after installation.
 | `/flightdeck watch [args]` | Legacy bridge workaround that dispatches the `flightdeck watch` workflow. The daemon now sends `/skill:flightdeck watch --from-daemon` through pi-session-bridge directly. |
 | `/flightdeck:toggle` | Cycle the persistent dashboard widget (also Alt+M). |
 
-Inside the popup, use Tab / Shift+Tab to switch tabs, arrows to move or scroll, `-/=` to page, and type to filter. Selected rows brighten muted metadata for contrast. Live feed is a compact event stream with a wrapped selected-event preview; Enter opens the full raw event with scroll. In Decisions, Enter opens a detail popup for the selected decision; the detail view wraps the full answer and scrolls with arrows/page keys. Esc or Backspace returns to the main Flightdeck popup. In Daemon, heartbeat runs are folded into one summary row so real daemon events stay visible while the log remains scrollable.
+Inside the popup, use Tab / Shift+Tab to switch tabs, arrows to move or scroll, `-/=` to page, and type to filter. Selected rows brighten muted metadata for contrast. Conversations and Live feed use compact streams with a wrapped selected-item preview; Enter opens the full retained turn/event with scroll. In Decisions, Enter opens a detail popup for the selected decision; the detail view wraps the full answer and scrolls with arrows/page keys. Esc or Backspace returns to the main Flightdeck popup. In Daemon, heartbeat runs are folded into one summary row so real daemon events stay visible while the log remains scrollable.
 
 ## Settings
 

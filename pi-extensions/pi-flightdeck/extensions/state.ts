@@ -648,14 +648,22 @@ function turnTimeMs(turn: ConversationTurn): number {
 	return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function nearSameTurn(a: ConversationTurn, b: ConversationTurn): boolean {
+function turnTimeDiffMs(a: ConversationTurn, b: ConversationTurn): number {
+	return Math.abs(turnTimeMs(a) - turnTimeMs(b));
+}
+
+function nearDuplicateWindow(a: ConversationTurn, b: ConversationTurn): boolean {
+	return turnTimeDiffMs(a, b) <= 5 * 60 * 1000;
+}
+
+function nearStreamingWindow(a: ConversationTurn, b: ConversationTurn): boolean {
 	const diff = Math.abs(turnTimeMs(a) - turnTimeMs(b));
-	return diff <= 5 * 60 * 1000;
+	return diff <= 30 * 1000;
 }
 
 function shouldMergeConversationTurn(previous: ConversationTurn, next: ConversationTurn): "replace" | "keep" | "append" {
 	if (previous.hash && next.hash && previous.hash === next.hash) return "keep";
-	if (!nearSameTurn(previous, next)) return "append";
+	if (!nearDuplicateWindow(previous, next)) return "append";
 
 	const before = normalizeConversationExcerpt(previous.excerpt);
 	const after = normalizeConversationExcerpt(next.excerpt);
@@ -663,11 +671,13 @@ function shouldMergeConversationTurn(previous: ConversationTurn, next: Conversat
 
 	if (before === after) return next.excerpt.length > previous.excerpt.length ? "replace" : "keep";
 	// Pi bridge streams message_update events before message_end. Those partials
-	// share the same pane and timestamp window but have different hashes as the
-	// assistant text grows. Collapse prefix/suffix variants so Conversations show
-	// one finalized turn instead of a stack of near-identical partials.
-	if (after.startsWith(before) && before.length >= 32) return "replace";
-	if (before.startsWith(after) && after.length >= 32) return "keep";
+	// share the same pane and near-identical timestamp but have different hashes
+	// as the assistant text grows. Collapse prefix/suffix variants so
+	// Conversations show one finalized turn instead of a stack of partials. Keep
+	// the streaming window tight so two separate turns that happen to start with
+	// similar boilerplate do not merge minutes apart.
+	if (nearStreamingWindow(previous, next) && after.startsWith(before) && before.length >= 12) return "replace";
+	if (nearStreamingWindow(previous, next) && before.startsWith(after) && after.length >= 12) return "keep";
 	return "append";
 }
 

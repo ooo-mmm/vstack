@@ -409,12 +409,22 @@ const TABS: Array<{ id: Tab; label: string }> = [
 
 type DecisionEntry = ReturnType<typeof flatDecisionsLog>[number];
 
+interface ConversationFeedItem {
+	pane: string;
+	issue?: IssueRecord;
+	turn: ConversationTurn;
+	sessionLabel: string;
+	sessionMeta: string[];
+}
+
 interface PopupUiState {
 	tab: Tab;
 	scroll: number;
 	selected: number;
 	search: string;
 	showHelp: boolean;
+	conversationDetail?: ConversationFeedItem;
+	conversationDetailScroll: number;
 	decisionDetail?: DecisionEntry;
 	decisionDetailScroll: number;
 	liveDetail?: LiveEvent;
@@ -422,7 +432,7 @@ interface PopupUiState {
 }
 
 function makeInitialPopupState(): PopupUiState {
-	return { decisionDetailScroll: 0, liveDetailScroll: 0, scroll: 0, search: "", selected: 0, showHelp: false, tab: TAB_OVERVIEW };
+	return { conversationDetailScroll: 0, decisionDetailScroll: 0, liveDetailScroll: 0, scroll: 0, search: "", selected: 0, showHelp: false, tab: TAB_OVERVIEW };
 }
 
 function renderTabBar(active: Tab, width: number, theme: Theme): string {
@@ -773,52 +783,138 @@ function foldedDaemonLogEvents(lines: string[]): LiveEvent[] {
 	return foldHeartbeats(daemonLogEvents(lines));
 }
 
-function conversationSearchHaystack(pane: string, issue: IssueRecord | undefined, turns: ConversationTurn[]): string {
-	return `${pane} ${issue?.issue ?? ""} ${issue?.state ?? ""} ${issue?.harness ?? ""} ${turns.map((t) => `${t.harness ?? ""} ${t.tag ?? ""} ${t.excerpt}`).join(" ")}`.toLowerCase();
-}
-
-function renderConversationPaneHeader(pane: string, issue: IssueRecord | undefined, turns: ConversationTurn[], theme: Theme, width: number): string {
-	const title = issue?.issue ?? "Unmapped pane";
-	const meta: string[] = [];
-	if (issue?.state) meta.push(stateBadge(theme, issue.state));
-	if (issue?.harness) meta.push(harnessChip(theme, issue.harness));
-	meta.push(theme.fg("muted", `${turns.length} turn${turns.length === 1 ? "" : "s"}`));
-	meta.push(`${theme.fg("dim", "pane")} ${theme.fg("dim", pane)}`);
-	return truncateToWidth(`${theme.fg("customMessageLabel", theme.bold(title))} ${theme.fg("dim", "·")} ${meta.join(theme.fg("dim", " · "))}`, width, "");
-}
-
 function formatConversationTime(ts: string): string {
 	const match = ts.match(/\d\d:\d\d:\d\d/)?.[0];
 	const fallback = ts.slice(11, 19);
 	return match ?? (fallback || "--:--:--");
 }
 
-function renderConversationTurnRows(turn: ConversationTurn, isLast: boolean, width: number, theme: Theme, excerptChars: number): string[] {
-	const connector = isLast ? "╰─" : "├─";
-	const stem = isLast ? "  " : "│ ";
-	const meta = `${theme.fg("dim", formatConversationTime(turn.ts))} ${harnessChip(theme, turn.harness)} ${theme.fg("dim", "·")} ${tagBadge(theme, turn.tag)}`;
-	const lines = [truncateToWidth(`${theme.fg("dim", connector)} ${meta}`, width, "")];
-	const prefix = `${theme.fg("dim", stem)} `;
-	const textWidth = Math.max(1, width - visibleWidth(prefix));
-	const excerpt = turn.excerpt.slice(0, excerptChars);
-	for (const row of wrapLine(excerpt, textWidth).slice(0, 4)) {
-		lines.push(truncateToWidth(`${prefix}${theme.fg("text", row)}`, width, ""));
-	}
-	return lines;
+function issuePaneTargetLabel(issue: IssueRecord | undefined): string | undefined {
+	if (!issue) return undefined;
+	if (typeof issue.window === "string" && issue.window.trim()) return issue.window.trim();
+	if (typeof issue.pane_target === "string" && issue.pane_target.trim()) return issue.pane_target.trim();
+	return undefined;
 }
 
-function renderConversationsTab(snapshot: FlightdeckSnapshot, conversations: Map<string, ConversationTurn[]>, ui: PopupUiState, width: number, theme: Theme, viewportRows: number, cwd: string): string[] {
-	const issues = sortedIssues(snapshot.master);
-	// Build a pane-id → issue map so the rendered rows show the issue id
-	// alongside the raw pane id. Modern registry entries store the
-	// immutable `pane_id` (`%N`) at init; legacy entries are backfilled by
-	// `pane-registry reconcile`. The conversation Map is keyed by pane_id
-	// from wake events, so this join is direct.
+function issueByConversationPane(snapshot: FlightdeckSnapshot): Map<string, IssueRecord> {
 	const issueByPane = new Map<string, IssueRecord>();
-	for (const issue of issues) {
+	for (const issue of sortedIssues(snapshot.master)) {
 		if (issue.pane_id) issueByPane.set(issue.pane_id, issue);
+		if (issue.pane_target) issueByPane.set(issue.pane_target, issue);
 	}
-	const excerptChars = Math.max(120, Math.floor(settingNumber("conversationExcerptChars", 800, cwd)));
+	return issueByPane;
+}
+
+function conversationSessionLabel(pane: string, issue: IssueRecord | undefined): string {
+	if (issue?.issue) return issue.issue;
+	const suffix = pane.replace(/^%/, "#").trim();
+	return suffix ? `unmapped ${suffix}` : "unmapped session";
+}
+
+function conversationSessionMeta(issue: IssueRecord | undefined, turn: ConversationTurn): string[] {
+	const meta: string[] = [];
+	if (issue?.state) meta.push(issue.state);
+	if (turn.harness || issue?.harness) meta.push(turn.harness ?? issue?.harness ?? "");
+	if (turn.tag) meta.push(turn.tag);
+	const target = issuePaneTargetLabel(issue);
+	if (target) meta.push(target);
+	return meta.filter(Boolean);
+}
+
+function buildConversationFeed(snapshot: FlightdeckSnapshot, conversations: Map<string, ConversationTurn[]>): ConversationFeedItem[] {
+	const issueByPane = issueByConversationPane(snapshot);
+	const items: ConversationFeedItem[] = [];
+	for (const [pane, turns] of conversations) {
+		const issue = issueByPane.get(pane);
+		for (const turn of turns) {
+			items.push({
+				issue,
+				pane,
+				sessionLabel: conversationSessionLabel(pane, issue),
+				sessionMeta: conversationSessionMeta(issue, turn),
+				turn,
+			});
+		}
+	}
+	items.sort((a, b) => b.turn.ts.localeCompare(a.turn.ts) || a.sessionLabel.localeCompare(b.sessionLabel));
+	return items;
+}
+
+function filterConversationFeed(items: ConversationFeedItem[], ui: PopupUiState): ConversationFeedItem[] {
+	const query = ui.search.trim().toLowerCase();
+	if (!query) return items;
+	return items.filter((item) => `${item.pane} ${item.sessionLabel} ${item.sessionMeta.join(" ")} ${item.turn.harness ?? ""} ${item.turn.tag ?? ""} ${item.turn.excerpt}`.toLowerCase().includes(query));
+}
+
+function selectedConversationItem(snapshot: FlightdeckSnapshot, conversations: Map<string, ConversationTurn[]>, ui: PopupUiState): ConversationFeedItem | undefined {
+	const filtered = filterConversationFeed(buildConversationFeed(snapshot, conversations), ui);
+	if (filtered.length === 0) return undefined;
+	ui.selected = Math.max(0, Math.min(ui.selected, filtered.length - 1));
+	return filtered[ui.selected];
+}
+
+function renderConversationRow(item: ConversationFeedItem, theme: Theme, width: number, selected = false): string {
+	const time = pad(selectedSoft(theme, selected, formatConversationTime(item.turn.ts)), 10);
+	const session = pad(theme.fg("customMessageLabel", item.sessionLabel), 18);
+	const harness = pad(harnessChip(theme, item.turn.harness ?? item.issue?.harness), 8);
+	const tag = pad(conversationTagChip(theme, item.turn.tag, selected), 24);
+	const preview = theme.fg("text", item.turn.excerpt.replace(/\s+/g, " "));
+	return truncateToWidth(`${time} ${session} ${harness} ${tag} ${preview}`, width, "");
+}
+
+function conversationTagChip(theme: Theme, tag: string | undefined, selected = false): string {
+	if (selected && (!tag || tag === "idle" || tag === "rendering")) return theme.fg("text", tag ?? "—");
+	return tagBadge(theme, tag);
+}
+
+function renderConversationInlineDetail(item: ConversationFeedItem, theme: Theme, width: number, maxRows: number): string[] {
+	const target = issuePaneTargetLabel(item.issue);
+	const meta = [
+		stateBadge(theme, item.issue?.state),
+		harnessChip(theme, item.turn.harness ?? item.issue?.harness),
+		tagBadge(theme, item.turn.tag),
+		selectedSoft(theme, false, formatConversationTime(item.turn.ts)),
+		target ? selectedSoft(theme, false, target) : "",
+	].filter(Boolean);
+	const header = `${label(theme, "selected:")} ${theme.fg("customMessageLabel", theme.bold(item.sessionLabel))} ${theme.fg("dim", "·")} ${meta.join(theme.fg("dim", " · "))}`;
+	const budget = Math.max(2, maxRows);
+	const wrapped = wrapLine(item.turn.excerpt, width).map((row) => theme.fg("text", row));
+	const bodyBudget = Math.max(1, budget - 1);
+	const out = [truncateToWidth(header, width, "")];
+	if (wrapped.length <= bodyBudget) {
+		out.push(...wrapped);
+		return out;
+	}
+	out.push(...wrapped.slice(0, Math.max(1, bodyBudget - 1)));
+	out.push(theme.fg("dim", `↓ ${wrapped.length - out.length + 1} more wrapped line(s) · press enter for full turn`));
+	return out;
+}
+
+function renderConversationDetailView(item: ConversationFeedItem, ui: PopupUiState, width: number, theme: Theme, innerRows: number): string[] {
+	const target = issuePaneTargetLabel(item.issue);
+	const header = [
+		`${theme.fg("customMessageLabel", theme.bold(item.sessionLabel))} ${theme.fg("dim", "·")} ${stateBadge(theme, item.issue?.state)} ${theme.fg("dim", "·")} ${harnessChip(theme, item.turn.harness ?? item.issue?.harness)} ${theme.fg("dim", "·")} ${tagBadge(theme, item.turn.tag)}`,
+		`${label(theme, "time:")} ${theme.fg("text", item.turn.ts)}${target ? ` ${theme.fg("dim", "·")} ${label(theme, "tmux:")} ${theme.fg("text", target)}` : ""} ${theme.fg("dim", "·")} ${label(theme, "chars:")} ${theme.fg("text", String(item.turn.excerpt.length))}`,
+		divider(width, theme),
+		label(theme, "assistant turn"),
+	];
+	const footerRows = 2;
+	const rows = wrapLine(item.turn.excerpt, width).map((row) => theme.fg("text", row));
+	const windowRows = Math.max(1, innerRows - header.length - footerRows);
+	const maxScroll = Math.max(0, rows.length - windowRows);
+	ui.conversationDetailScroll = Math.max(0, Math.min(ui.conversationDetailScroll, maxScroll));
+	const start = ui.conversationDetailScroll;
+	const end = Math.min(rows.length, start + windowRows);
+	const lines = [...header, ...rows.slice(start, end)];
+	while (lines.length < innerRows - footerRows) lines.push("");
+	const lineInfo = rows.length > windowRows ? `${start + 1}-${end}/${rows.length}` : `${rows.length}/${rows.length}`;
+	const footer = `${ansiYellow("↑/↓")} ${theme.fg("dim", "scroll · ")}${ansiYellow("-/=")} ${theme.fg("dim", "page · ")}${ansiYellow("home/end")} ${theme.fg("dim", "ends · ")}${ansiYellow("esc/backspace")} ${theme.fg("dim", "back · ")}${theme.fg("dim", `lines ${lineInfo}`)}`;
+	lines.push(divider(width, theme));
+	lines.push(truncateToWidth(footer, width, ""));
+	return lines.slice(0, innerRows);
+}
+
+function renderConversationsTab(snapshot: FlightdeckSnapshot, conversations: Map<string, ConversationTurn[]>, ui: PopupUiState, width: number, theme: Theme, viewportRows: number, _cwd: string): string[] {
 	const lines: string[] = [];
 	lines.push(searchRow(theme, ui.search, width));
 	lines.push("");
@@ -829,33 +925,32 @@ function renderConversationsTab(snapshot: FlightdeckSnapshot, conversations: Map
 		lines.push(theme.fg("dim", "Events get drained on each master turn boundary, so this is a rolling buffer."));
 		return lines;
 	}
-	const entries = [...conversations.entries()].sort();
-	const issueFor = (pane: string): IssueRecord | undefined => issueByPane.get(pane);
-	const filtered = ui.search.trim()
-		? entries.filter(([pane, turns]) => conversationSearchHaystack(pane, issueFor(pane), turns).includes(ui.search.trim().toLowerCase()))
-		: entries;
+	const items = buildConversationFeed(snapshot, conversations);
+	const filtered = filterConversationFeed(items, ui);
 	if (filtered.length === 0) {
 		lines.push(theme.fg("dim", "No conversations match current search."));
 		return lines;
 	}
-	const body: string[] = [];
-	for (const [entryIndex, [pane, turns]] of filtered.entries()) {
-		const issue = issueFor(pane);
-		body.push(renderConversationPaneHeader(pane, issue, turns, theme, width));
-		const recent = turns.slice(-3);
-		for (const [turnIndex, turn] of recent.entries()) {
-			body.push(...renderConversationTurnRows(turn, turnIndex === recent.length - 1, width, theme, excerptChars));
-		}
-		if (entryIndex < filtered.length - 1) body.push("");
-	}
-	const rows = Math.max(1, viewportRows - lines.length - 1);
-	clampSelection(ui, body.length, rows);
-	const start = Math.max(0, Math.min(ui.scroll, Math.max(0, body.length - rows)));
-	const end = Math.min(body.length, start + rows);
+	const detailRows = Math.min(7, Math.max(4, Math.floor(viewportRows * 0.32)));
+	const rows = Math.max(3, viewportRows - lines.length - detailRows - 3);
+	clampSelection(ui, filtered.length, rows);
+	const start = Math.max(0, Math.min(ui.scroll, Math.max(0, filtered.length - rows)));
+	const end = Math.min(filtered.length, start + rows);
 	if (start > 0) lines.push(theme.fg("dim", `↑ ${start} earlier`));
-	lines.push(...body.slice(start, end));
-	const tail = Math.max(0, body.length - end);
+	for (const [vi, item] of filtered.slice(start, end).entries()) {
+		const idx = start + vi;
+		const selected = idx === ui.selected;
+		const row = renderConversationRow(item, theme, width, selected);
+		lines.push(selected ? selectedRow(theme, row, width) : row);
+	}
+	const tail = Math.max(0, filtered.length - end);
 	if (tail > 0) lines.push(theme.fg("dim", `↓ ${tail} more`));
+	const selected = filtered[ui.selected];
+	if (selected) {
+		lines.push("");
+		lines.push(divider(width, theme));
+		lines.push(...renderConversationInlineDetail(selected, theme, width, detailRows));
+	}
 	return lines;
 }
 
@@ -1291,6 +1386,48 @@ export default function flightdeck(pi: ExtensionAPI): void {
 				popupTui = tui;
 				return {
 					handleInput(data: string) {
+						if (ui.conversationDetail) {
+							if (matchesKey(data, "ctrl+c")) {
+								done(undefined);
+								return;
+							}
+							if (matchesKey(data, "escape") || matchesKey(data, "backspace")) {
+								ui.conversationDetail = undefined;
+								ui.conversationDetailScroll = 0;
+								tui.requestRender();
+								return;
+							}
+							if (matchesKey(data, "up")) {
+								ui.conversationDetailScroll = Math.max(0, ui.conversationDetailScroll - 1);
+								tui.requestRender();
+								return;
+							}
+							if (matchesKey(data, "down")) {
+								ui.conversationDetailScroll += 1;
+								tui.requestRender();
+								return;
+							}
+							if (matchesKey(data, "pageUp") || matchesKey(data, "-")) {
+								ui.conversationDetailScroll = Math.max(0, ui.conversationDetailScroll - 10);
+								tui.requestRender();
+								return;
+							}
+							if (matchesKey(data, "pageDown") || matchesKey(data, "=")) {
+								ui.conversationDetailScroll += 10;
+								tui.requestRender();
+								return;
+							}
+							if (matchesKey(data, "home")) {
+								ui.conversationDetailScroll = 0;
+								tui.requestRender();
+								return;
+							}
+							if (matchesKey(data, "end")) {
+								ui.conversationDetailScroll = Number.MAX_SAFE_INTEGER;
+								tui.requestRender();
+							}
+							return;
+						}
 						if (ui.liveDetail) {
 							if (matchesKey(data, "ctrl+c")) {
 								done(undefined);
@@ -1428,6 +1565,16 @@ export default function flightdeck(pi: ExtensionAPI): void {
 							tui.requestRender();
 							return;
 						}
+						if ((matchesKey(data, "enter") || matchesKey(data, "return")) && ui.tab === TAB_CONVERSATIONS) {
+							const snapshot = cache.lastSnapshot ?? refreshSnapshot(activePopupCwd(ctx));
+							const item = snapshot ? selectedConversationItem(snapshot, cache.conversations, ui) : undefined;
+							if (item) {
+								ui.conversationDetail = item;
+								ui.conversationDetailScroll = 0;
+								tui.requestRender();
+							}
+							return;
+						}
 						if ((matchesKey(data, "enter") || matchesKey(data, "return")) && ui.tab === TAB_LIVE) {
 							const snapshot = cache.lastSnapshot ?? refreshSnapshot(activePopupCwd(ctx));
 							const event = snapshot ? selectedLiveEvent(snapshot, ui, activePopupCwd(ctx)) : undefined;
@@ -1486,6 +1633,9 @@ export default function flightdeck(pi: ExtensionAPI): void {
 							lines.push(theme.fg("warning", "Not running inside a tmux session — flightdeck has nothing to show."));
 							lines.push(theme.fg("dim", "Run pi from inside the tmux session that hosts flightdeck."));
 							return framePopup(lines, safeWidth, theme, "Flightdeck", innerRows);
+						}
+						if (ui.conversationDetail) {
+							return framePopup(renderConversationDetailView(ui.conversationDetail, ui, innerWidth, theme, innerRows), safeWidth, theme, " Flightdeck · Conversation ", innerRows);
 						}
 						if (ui.liveDetail) {
 							return framePopup(renderLiveEventDetailView(ui.liveDetail, ui, innerWidth, theme, innerRows), safeWidth, theme, " Flightdeck · Live event ", innerRows);
@@ -1548,7 +1698,7 @@ export default function flightdeck(pi: ExtensionAPI): void {
 
 	function renderPopupFooter(theme: Theme, _width: number, ui: PopupUiState): string {
 		const tabHint = `${ansiYellow("tab")} ${theme.fg("dim", "next tab · ")}${ansiYellow("shift+tab")} ${theme.fg("dim", "prev")}`;
-		const viewHint = ui.tab === TAB_DECISIONS || ui.tab === TAB_LIVE ? `${theme.fg("dim", " · ")}${ansiYellow("enter")} ${theme.fg("dim", "details")}` : "";
+		const viewHint = ui.tab === TAB_DECISIONS || ui.tab === TAB_LIVE || ui.tab === TAB_CONVERSATIONS ? `${theme.fg("dim", " · ")}${ansiYellow("enter")} ${theme.fg("dim", "details")}` : "";
 		const navVerb = ui.tab === TAB_DAEMON ? "scroll" : "select";
 		const navHint = `${ansiYellow("↑/↓")} ${theme.fg("dim", `${navVerb} · `)}${ansiYellow("-/=")} ${theme.fg("dim", "page · ")}${ansiYellow("home/end")} ${theme.fg("dim", "ends")}${viewHint}`;
 		const searchHint = ui.search ? `${ansiYellow("ctrl+u")} ${theme.fg("dim", "clear search")}` : `${theme.fg("dim", "type to filter")}`;
