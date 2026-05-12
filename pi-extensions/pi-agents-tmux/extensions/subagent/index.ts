@@ -85,6 +85,10 @@ import {
 	resolveTraceRecord,
 } from "./renderers.js";
 import {
+	sessionFileTailMatchesLeaf,
+	stableSessionSnapshotFingerprint,
+} from "./session-persistence.js";
+import {
 	cloneMessagesForDetails,
 	prepareSingleResultForReturn,
 	runSingleAgent,
@@ -302,6 +306,7 @@ export default function (pi: ExtensionAPI) {
 	let agentCommandCompletions: Array<{ value: string; label: string; description: string; pane: boolean }> = [];
 	let dashboardState: SubagentDashboardState = { collapsed: false, mode: "normal", visible: true, items: {} };
 	let dashboardCtx: ExtensionContext | undefined;
+	const lastRuntimeSnapshotFingerprintBySession = new Map<string, string>();
 
 	const toStatsItem = (item: SubagentDashboardItem): SubagentStatsItem => ({
 		agent: item.agent,
@@ -324,13 +329,19 @@ export default function (pi: ExtensionAPI) {
 	};
 	(globalThis as unknown as Record<PropertyKey, unknown>)[STATS_BRIDGE_SYMBOL] = statsBridge;
 
-	const persistRuntimeSnapshot = async (runtimeRoot: string) => {
+	const persistRuntimeSnapshot = async (ctx: ExtensionContext, runtimeRoot: string) => {
 		if (childAgentName) return;
 		try {
 			const [panes, tasks] = await Promise.all([readPaneRegistry(runtimeRoot), readTaskRegistry(runtimeRoot)]);
+			const fingerprint = stableSessionSnapshotFingerprint({ panes, tasks });
+			const sessionKey = ctx.sessionManager.getSessionFile?.() ?? ctx.sessionManager.getSessionId?.() ?? runtimeRoot;
+			if (lastRuntimeSnapshotFingerprintBySession.get(sessionKey) === fingerprint) return;
+			if (!(await sessionFileTailMatchesLeaf(ctx))) return;
 			pi.appendEntry<PersistedSubagentRuntimeState>(SUBAGENT_STATE_TYPE, { version: 1, panes, tasks, updatedAt: new Date().toISOString() });
+			lastRuntimeSnapshotFingerprintBySession.set(sessionKey, fingerprint);
 		} catch {
-			// Session-backed persistence is best-effort; file registries remain canonical at runtime.
+			// Session-backed persistence is best-effort; file registries remain canonical at runtime. A stale
+			// duplicate Pi process must not advance the session leaf from an older in-memory branch.
 		}
 	};
 
@@ -377,7 +388,10 @@ export default function (pi: ExtensionAPI) {
 				updatedAt: now,
 				...(isTerminalTaskStatus(status) ? { completedAt: now } : {}),
 			};
-		}).then(() => persistRuntimeSnapshot(runtimeRoot)).catch(() => undefined);
+		}).then(() => {
+			if (dashboardCtx) return persistRuntimeSnapshot(dashboardCtx, runtimeRoot);
+			return undefined;
+		}).catch(() => undefined);
 	};
 
 	const syncDashboard = (ctx = dashboardCtx) => {
@@ -494,7 +508,7 @@ export default function (pi: ExtensionAPI) {
 		});
 	};
 
-	const syncDashboardFromTaskRegistry = async (runtimeRoot: string) => {
+	const syncDashboardFromTaskRegistry = async (ctx: ExtensionContext, runtimeRoot: string) => {
 		const records = await readTaskRegistry(runtimeRoot);
 		const registry = await readPaneRegistry(runtimeRoot);
 		const sorted = Object.values(records).sort((a, b) => (a.updatedAt ?? a.completedAt ?? a.createdAt).localeCompare(b.updatedAt ?? b.completedAt ?? b.createdAt));
@@ -505,7 +519,7 @@ export default function (pi: ExtensionAPI) {
 			if (refreshed.record.status === "needs_completion") dashboardState.visible = true;
 			updateDashboardFromTaskRecord(refreshed.record);
 		}
-		await persistRuntimeSnapshot(runtimeRoot);
+		await persistRuntimeSnapshot(ctx, runtimeRoot);
 	};
 
 	const refreshAgentCommandCompletions = (ctx: ExtensionContext) => {
@@ -907,7 +921,7 @@ export default function (pi: ExtensionAPI) {
 			completionPollInFlight = true;
 			pollPaneCompletions(runtimeRoot, pi, true)
 				.then(async () => {
-					await syncDashboardFromTaskRegistry(runtimeRoot);
+					await syncDashboardFromTaskRegistry(ctx, runtimeRoot);
 					await refreshLiveUsage();
 				})
 				.finally(() => {
@@ -1055,7 +1069,7 @@ export default function (pi: ExtensionAPI) {
 				const startLabel = command === "new" ? "Started new" : command === "resume" ? "Resumed archived" : hadLivePane ? "Reused live" : hadSavedSessionFlag ? "Resumed saved" : "Started new";
 				content = `${startLabel} ${agent.name} (${pane.windowName}).\nSession: ${pane.sessionFile}`;
 				messageDetails = { action: "start", agent: agent.name, sessionFile: pane.sessionFile, windowName: pane.windowName, status: startLabel };
-				await persistRuntimeSnapshot(runtimeRoot);
+				await persistRuntimeSnapshot(ctx, runtimeRoot);
 			} else if (command === "send") {
 				const agent = findAgent(parts[1]);
 				if (!agent) throw new Error(`Unknown agent: ${parts[1] ?? "(missing)"}`);
@@ -1066,7 +1080,7 @@ export default function (pi: ExtensionAPI) {
 				const sessionText = queued.sessionMode === "live" ? "reused live pane" : queued.sessionMode === "resumed" ? "resumed saved pane session" : "started new pane session";
 				content = `Queued task for ${agent.name} (${sessionText}).\nArtifacts: inbox=${compactPath(queued.taskFile)} completion=${compactPath(queued.outboxFile)} transcript=${compactPath(queued.pane.sessionFile)}`;
 				messageDetails = { action: "send", agent: agent.name, inboxFile: queued.taskFile, outboxFile: queued.outboxFile, taskId: queued.taskId, transcriptPath: queued.pane.sessionFile, status: sessionText };
-				await persistRuntimeSnapshot(runtimeRoot);
+				await persistRuntimeSnapshot(ctx, runtimeRoot);
 			} else if (command === "attach") {
 				const registry = await readPaneRegistry(runtimeRoot);
 				const entry = registry[parts[1] ?? ""];
@@ -1081,12 +1095,12 @@ export default function (pi: ExtensionAPI) {
 				removeDashboardAgent(stoppedAgent);
 				content = `Stopped ${stoppedAgent}.`;
 				messageDetails = { action: "stop", agent: stoppedAgent };
-				await persistRuntimeSnapshot(runtimeRoot);
+				await persistRuntimeSnapshot(ctx, runtimeRoot);
 			} else if (command === "collect") {
 				const collected = await pollPaneCompletions(runtimeRoot, pi, false);
 				content = `Collected ${collected} agent completion file${collected === 1 ? "" : "s"}.`;
 				messageDetails = { action: "collect", count: collected };
-				await persistRuntimeSnapshot(runtimeRoot);
+				await persistRuntimeSnapshot(ctx, runtimeRoot);
 			} else if (command === "status") {
 				const registry = await readPaneRegistry(runtimeRoot);
 				const lines = await Promise.all(
@@ -1321,7 +1335,7 @@ export default function (pi: ExtensionAPI) {
 				return { content: [{ type: "text", text: `No persistent agent task record found for ${selector}.` }], details: { agent: params.agent, taskId: params.taskId } satisfies GetSubagentResultDetails, isError: true };
 			}
 			updateDashboardFromTaskRecord({ ...record, updatedAt: new Date().toISOString() });
-			await persistRuntimeSnapshot(runtimeRoot);
+			await persistRuntimeSnapshot(ctx, runtimeRoot);
 			const diagnosticBlock = params.verbose && diagnostics.length > 0 ? `\n\n### Artifact diagnostics\n${diagnostics.map((line) => `- ${line}`).join("\n")}` : "";
 			return {
 				content: [{ type: "text", text: `${formatTaskRecordResult(record, params.verbose ?? false)}${diagnosticBlock}` }],
@@ -1421,7 +1435,7 @@ export default function (pi: ExtensionAPI) {
 						runtimeRoot,
 						transcriptPath: entry.sessionFile,
 					});
-					await persistRuntimeSnapshot(runtimeRoot);
+					await persistRuntimeSnapshot(ctx, runtimeRoot);
 					return {
 						content: [{ type: "text", text: [`Steered ${agentName} via bridge (${deliverAs}).`, ...steerDiagnostics(baseDetails)].join("\n") }],
 						details: baseDetails,
@@ -1440,7 +1454,7 @@ export default function (pi: ExtensionAPI) {
 					runtimeRoot,
 					transcriptPath: entry.sessionFile,
 				});
-				await persistRuntimeSnapshot(runtimeRoot);
+				await persistRuntimeSnapshot(ctx, runtimeRoot);
 				return {
 					content: [{ type: "text", text: [`Bridge for ${agentName} found, but pi-bridge ${command} failed (exit ${result.code}); queued inbox fallback instead.`, result.stderr || result.stdout ? `Bridge output: ${(result.stderr || result.stdout).trim()}` : "", ...steerDiagnostics(details)].filter(Boolean).join("\n") }],
 					details,
@@ -1460,7 +1474,7 @@ export default function (pi: ExtensionAPI) {
 				runtimeRoot,
 				transcriptPath: entry.sessionFile,
 			});
-			await persistRuntimeSnapshot(runtimeRoot);
+			await persistRuntimeSnapshot(ctx, runtimeRoot);
 			return {
 				content: [
 					{
@@ -1510,7 +1524,7 @@ export default function (pi: ExtensionAPI) {
 			const runtimeRoot = sessionRuntimeDir(runtimeSessionId(ctx));
 			const stopped = await stopPersistentPane(runtimeRoot, params.agent);
 			removeDashboardAgent(stopped.agent);
-			await persistRuntimeSnapshot(runtimeRoot);
+			await persistRuntimeSnapshot(ctx, runtimeRoot);
 			return {
 				content: [{ type: "text", text: `Stopped ${stopped.agent}. Pane ${stopped.paneId} was killed and removed from the active registry. Session preserved at ${stopped.sessionFile}; default start/subagent will resume it. Use forceSpawn or /agents new for a fresh session.` }],
 				details: { agent: stopped.agent, paneId: stopped.paneId, sessionFile: stopped.sessionFile },

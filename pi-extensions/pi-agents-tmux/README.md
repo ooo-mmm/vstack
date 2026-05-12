@@ -140,6 +140,8 @@ Everything after the frontmatter is the agent's system prompt.
 
 Pane tasks move through `queued → running → completed | blocked | failed`. If a child ends a turn without a valid completion record, the task is marked `needs_completion` and the child shows a warning.
 
+Pane registries and task records are stored in sidecar files and mirrored into session custom entries only when the snapshot changes and the session file's on-disk leaf still matches the active in-memory leaf. This keeps duplicate or orphaned Pi processes from advancing an older branch and making `/resume` land before the latest visible turns.
+
 ## Result retrieval and steering
 
 Dispatch and end your turn — the extension wakes the parent on completion. Use `get_subagent_result` only as a fallback if you suspect a missed wake event. Pass `wait: true` to block the current turn (use sparingly).
