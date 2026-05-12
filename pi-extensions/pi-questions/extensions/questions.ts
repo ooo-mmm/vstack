@@ -29,6 +29,7 @@ const PADDING_X = 2;
 const PADDING_Y = 0;
 const OPTION_ROWS = 10;
 const ANSI_GREEN_FG = "\x1b[32m";
+const ANSI_YELLOW_FG = "\x1b[33m";
 
 // Nerd Font glyphs (Font Awesome subset) used in place of unicode dingbats so
 // chat output renders consistently regardless of emoji-presentation fallback.
@@ -42,6 +43,7 @@ const ICONS = {
 const ANSI_FG_RESET = "\x1b[39m";
 
 function ansiGreen(text: string): string { return `${ANSI_GREEN_FG}${text}${ANSI_FG_RESET}`; }
+function ansiYellow(text: string): string { return `${ANSI_YELLOW_FG}${text}${ANSI_FG_RESET}`; }
 
 type VstackConfig = Record<string, unknown>;
 type QuestionRenderMode = "editor" | "overlay";
@@ -356,7 +358,15 @@ function panelLine(content: string, width: number): string {
 }
 
 function footerHint(theme: Theme, entries: Array<[string, string]>): string {
-	return entries.map(([key, label]) => `${theme.fg("text", key)} ${theme.fg("dim", label)}`).join("  ");
+	return entries.map(([key, label]) => `${ansiYellow(key)} ${theme.fg("dim", label)}`).join("  ");
+}
+
+function syntheticConfirmLabel(request: QuestionRequest): string {
+	const labels = new Set(request.questions.map((question) => question.header.trim().toLowerCase()));
+	for (const candidate of ["Confirm", "Submit", "Review"] as const) {
+		if (!labels.has(candidate.toLowerCase())) return candidate;
+	}
+	return "Submit answers";
 }
 
 class CompactLines {
@@ -719,6 +729,7 @@ async function openQuestionUi(ctx: ExtensionContext, pending: PendingQuestion): 
 	const scrollOffsets = request.questions.map(() => 0);
 	const useOverlay = questionRenderMode(ctx.cwd) === "overlay";
 	const hasConfirmTab = request.questions.length > 1 || request.questions.some((question) => question.multiple);
+	const confirmTabLabel = syntheticConfirmLabel(request);
 	const tabCount = request.questions.length + (hasConfirmTab ? 1 : 0);
 	let activeTab = 0;
 	let startCustomInput: (() => void) | undefined;
@@ -833,7 +844,7 @@ async function openQuestionUi(ctx: ExtensionContext, pending: PendingQuestion): 
 
 			const renderTabs = (width: number): string => {
 				const labels = request.questions.map((question) => question.header);
-				if (hasConfirmTab) labels.push("Confirm");
+				if (hasConfirmTab) labels.push(confirmTabLabel);
 				const parts = labels.map((labelText, index) => {
 					const label = ` ${labelText} `;
 					if (index === activeTab) return theme.fg("accent", theme.inverse(theme.bold(label)));

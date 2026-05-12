@@ -71,7 +71,7 @@ Set `allowCustom: true` to add a free-type row. Optional fields: `customLabel`, 
 
 | Key | Action |
 | --- | --- |
-| `←` / `→` or `Tab` / `Shift+Tab` | Switch tabs. Multi-question and multi-select prompts include a final `Confirm` tab for submission. |
+| `←` / `→` or `Tab` / `Shift+Tab` | Switch tabs. Multi-question and multi-select prompts include a final `Confirm`/`Submit` tab for submission. |
 | `↑` / `↓` | Move selection. |
 | `Enter` on single-select | Confirm the highlighted answer and advance/submit. |
 | `Enter` on multi-select | Toggle the highlighted answer. Use the `Confirm` tab to submit. |
