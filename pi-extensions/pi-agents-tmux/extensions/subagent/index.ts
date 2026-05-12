@@ -22,6 +22,7 @@ import {
 } from "./browser.js";
 import {
 	dashboardStatusFor,
+	isDashboardWorkingStatus,
 	renderDashboardWidgetLines,
 } from "./dashboard.js";
 import {
@@ -178,6 +179,19 @@ interface PersistedSubagentRuntimeState {
 
 function latestRecordTimestamp(record: PaneTaskRecord | undefined): string {
 	return record?.updatedAt ?? record?.completedAt ?? record?.createdAt ?? "";
+}
+
+function isLiveDashboardStatus(status: SubagentDashboardItem["status"] | undefined): boolean {
+	return status === "queued" || status === "running" || status === "waiting";
+}
+
+function timestampMs(value: string | undefined): number {
+	const parsed = Date.parse(value ?? "");
+	return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function inferRecordDashboardKind(record: PaneTaskRecord): DashboardKind {
+	return record.paneId || record.inboxFile || record.processingFile || record.doneFile || record.outboxFile || record.completionArchivePath ? "pane" : "oneshot";
 }
 
 function isPersistedSubagentRuntimeState(value: unknown): value is PersistedSubagentRuntimeState {
@@ -411,7 +425,11 @@ export default function (pi: ExtensionAPI) {
 			completedAt: item.completedAt ?? existing?.completedAt,
 		};
 		const maxKeep = Math.max(10, dashboardMaxItems(dashboardCtx?.cwd) * 3);
-		const sorted = Object.values(dashboardState.items).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+		const sorted = Object.values(dashboardState.items).sort((a, b) => {
+			const activeRank = Number(isDashboardWorkingStatus(b.status)) - Number(isDashboardWorkingStatus(a.status));
+			if (activeRank !== 0) return activeRank;
+			return b.updatedAt.localeCompare(a.updatedAt);
+		});
 		dashboardState.items = Object.fromEntries(sorted.slice(0, maxKeep).map((entry) => [dashboardItemKey(entry), entry]));
 		syncDashboard();
 	};
@@ -433,9 +451,19 @@ export default function (pi: ExtensionAPI) {
 	};
 
 	const updateDashboardFromTaskRecord = (record: PaneTaskRecord) => {
-		const kind: DashboardKind = record.paneId ? "pane" : "oneshot";
+		const kind = inferRecordDashboardKind(record);
 		const existingKey = dashboardKeyForTask(record.taskId) ?? (kind === "pane" ? `pane:${record.agent}` : undefined);
 		const existing = existingKey ? dashboardState.items[existingKey] : undefined;
+		if (record.status === "unknown") {
+			if (existing && isLiveDashboardStatus(existing.status) && timestampMs(record.updatedAt ?? record.completedAt ?? record.createdAt) < timestampMs(existing.updatedAt)) return;
+			if (kind === "oneshot") {
+				if (existingKey) {
+					delete dashboardState.items[existingKey];
+					syncDashboard();
+				}
+				return;
+			}
+		}
 		updateDashboard({
 			agent: record.agent,
 			artifacts: Boolean(record.completionArchivePath || record.outboxFile || record.transcriptPath || record.processingFile || record.doneFile),

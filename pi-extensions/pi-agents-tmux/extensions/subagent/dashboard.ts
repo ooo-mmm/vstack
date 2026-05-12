@@ -38,6 +38,32 @@ export function dashboardStatusFor(rawStatus: PaneTaskStatus | "running" | "wait
 	return rawStatus;
 }
 
+export function isDashboardWorkingStatus(status: SubagentDashboardItem["status"]): boolean {
+	return status === "running" || status === "queued" || status === "waiting";
+}
+
+export function isDashboardAttentionStatus(status: SubagentDashboardItem["status"]): boolean {
+	return status === "failed" || status === "blocked" || status === "needs_completion" || status === "unknown";
+}
+
+function dashboardStatusRank(status: SubagentDashboardItem["status"]): number {
+	if (isDashboardWorkingStatus(status)) return 0;
+	if (isDashboardAttentionStatus(status)) return 1;
+	if (status === "completed") return 2;
+	return 3;
+}
+
+export function sortDashboardItems(items: SubagentDashboardItem[]): SubagentDashboardItem[] {
+	return [...items].sort((a, b) => {
+		const rank = dashboardStatusRank(a.status) - dashboardStatusRank(b.status);
+		if (rank !== 0) return rank;
+		const aKey = a.startedAt ?? a.taskId;
+		const bKey = b.startedAt ?? b.taskId;
+		if (aKey !== bKey) return aKey < bKey ? -1 : 1;
+		return a.agent.localeCompare(b.agent) || a.taskId.localeCompare(b.taskId);
+	});
+}
+
 export function dashboardStatusIcon(status: SubagentDashboardItem["status"], theme: Theme): string {
 	if (status === "completed") return theme.fg("success", ICONS.check);
 	if (status === "failed") return theme.fg("error", ICONS.times);
@@ -46,6 +72,7 @@ export function dashboardStatusIcon(status: SubagentDashboardItem["status"], the
 	if (status === "running") return theme.fg("warning", ICONS.cog);
 	if (status === "waiting") return theme.fg("warning", ICONS.clock);
 	if (status === "queued") return theme.fg("warning", ICONS.clock);
+	if (status === "unknown") return theme.fg("warning", ICONS.warning);
 	return theme.fg("accent", ICONS.circleFilled);
 }
 
@@ -57,6 +84,7 @@ export function dashboardStatusText(item: SubagentDashboardItem, theme: Theme): 
 	if (item.status === "running") return theme.fg("warning", "working");
 	if (item.status === "waiting") return theme.fg("warning", "waiting");
 	if (item.status === "queued") return theme.fg("warning", "queued");
+	if (item.status === "unknown") return theme.fg("warning", "stale");
 	return theme.fg("accent", item.status);
 }
 
@@ -124,7 +152,13 @@ function dashboardLabelsForItems(items: SubagentDashboardItem[]): Map<string, st
 	for (const item of items) total.set(item.agent, (total.get(item.agent) ?? 0) + 1);
 	const occurrence = new Map<string, number>();
 	const labels = new Map<string, string>();
-	for (const item of items) {
+	const stable = [...items].sort((a, b) => {
+		const aKey = a.startedAt ?? a.taskId;
+		const bKey = b.startedAt ?? b.taskId;
+		if (aKey !== bKey) return aKey < bKey ? -1 : 1;
+		return a.agent.localeCompare(b.agent) || a.taskId.localeCompare(b.taskId);
+	});
+	for (const item of stable) {
 		const next = (occurrence.get(item.agent) ?? 0) + 1;
 		occurrence.set(item.agent, next);
 		const label = (total.get(item.agent) ?? 1) > 1 && next > 1 ? `${item.agent} ${next}` : item.agent;
@@ -134,31 +168,22 @@ function dashboardLabelsForItems(items: SubagentDashboardItem[]): Map<string, st
 }
 
 export function renderDashboardWidgetLines(state: SubagentDashboardState, theme: Theme, cwd: string, width: number): string[] {
-	// Sort by start time first so the row order is stable.
-	const items = Object.values(state.items).sort((a, b) => {
-		const aKey = a.startedAt ?? a.taskId;
-		const bKey = b.startedAt ?? b.taskId;
-		if (aKey === bKey) return 0;
-		return aKey < bKey ? -1 : 1;
-	});
+	const items = sortDashboardItems(Object.values(state.items));
 	const displayLabels = dashboardLabelsForItems(items);
 	if (!dashboardEnabled(cwd) || !state.visible || items.length === 0) return [];
-	const running = items.filter((item) => item.status === "running" || item.status === "queued").length;
-	const waiting = items.filter((item) => item.status === "waiting").length;
+	const working = items.filter((item) => isDashboardWorkingStatus(item.status)).length;
 	const done = items.filter((item) => item.status === "completed").length;
-	const failed = items.filter((item) => item.status === "failed" || item.status === "blocked").length;
+	const attention = items.filter((item) => isDashboardAttentionStatus(item.status)).length;
 	const shortcut = dashboardShortcut(cwd);
 	const popup = popupShortcut(cwd);
 	const toggleHint = shortcut === "none" ? "" : theme.fg("dim", ` · ${formatShortcutHint(shortcut)} toggle`);
 	const popupHint = popup === "none" ? "" : theme.fg("dim", ` · ${formatShortcutHint(popup)} popup`);
 	const hint = `${toggleHint}${popupHint}`;
 	const headerParts = [
-		done ? theme.fg("success", `${done} completed`) : "",
-		running ? theme.fg("warning", `${running} working`) : "",
-		waiting ? theme.fg("warning", `${waiting} waiting`) : "",
-		failed ? theme.fg("error", `${failed} attention`) : "",
+		theme.fg("success", `${done} completed`),
+		theme.fg("warning", `${working} working`),
+		attention ? theme.fg("error", `${attention} attention`) : "",
 	].filter(Boolean);
-	if (headerParts.length === 0) headerParts.push(`${items.length} ready`);
 	const title = `${theme.fg("customMessageLabel", theme.bold("Agents"))} ${theme.fg("muted", headerParts.join(" · "))}${hint}`;
 	const lines = [title];
 	const aggregateDashboardUsage = (entries: SubagentDashboardItem[]): UsageStats | undefined => {
@@ -178,7 +203,7 @@ export function renderDashboardWidgetLines(state: SubagentDashboardState, theme:
 		return any ? total : undefined;
 	};
 	const dotSep = theme.fg("dim", " · ");
-	if (running === 0 && state.mode === "compact") {
+	if (working === 0 && state.mode === "compact") {
 		const aggregated = aggregateDashboardUsage(items);
 		const usageParts = aggregated ? formatUsageStatsForDashboard(aggregated) : [];
 		const body = usageParts.length > 0

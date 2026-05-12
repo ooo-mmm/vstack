@@ -25,6 +25,7 @@ import {
 	dashboardKindLabel,
 	dashboardStatusIcon,
 	dashboardStatusText,
+	sortDashboardItems,
 } from "./dashboard.js";
 import {
 	activePill,
@@ -640,13 +641,7 @@ function renderAgentInspector(agent: AgentConfig | undefined, statuses: Map<stri
 }
 
 export function activeDashboardItems(items: SubagentDashboardItem[]): SubagentDashboardItem[] {
-	return items
-		.sort((a, b) => {
-			const aKey = a.startedAt ?? a.taskId;
-			const bKey = b.startedAt ?? b.taskId;
-			if (aKey === bKey) return 0;
-			return aKey < bKey ? -1 : 1;
-		});
+	return sortDashboardItems(items);
 }
 
 function readTranscriptTail(transcriptPath: string | undefined, maxLines: number): string[] {

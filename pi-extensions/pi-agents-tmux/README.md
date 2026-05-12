@@ -104,6 +104,8 @@ Alt+A cycles the widget hidden → compact → expanded. Alt+Shift+A or F3 opens
 
 Each row shows agent name, kind (`pane` or `bg`), turn count, input/output tokens, and cost. Compact mode aggregates totals on a single line; expanded adds a `Total` row at the bottom.
 
+Rows are bucketed for stability: queued/running/waiting agents stay above attention states, and all of those stay above completed agents. Within each bucket, rows keep start-time order so token/usage updates do not reshuffle the list. The header always shows completed and working counts, even when either count is zero. Missing pane artifacts render as `stale` attention rows; stale bg-only records are dropped because bg agents do not use pane handoff files.
+
 When the dashboard is on, inline tool output stays quiet — pane calls render as launch breadcrumbs, bg/one-shot calls show a result preview.
 
 ## Persistent pane agents
