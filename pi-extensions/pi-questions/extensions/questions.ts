@@ -1081,6 +1081,7 @@ export default function questions(pi: ExtensionAPI): void {
 			"Use question when you need explicit user clarification before proceeding; keep options concise and mutually exclusive unless multiple=true.",
 			"When using question, provide a clear header, question text, and descriptive option labels.",
 			"Set question allowCustom=true only when an option list may not cover the user's answer; custom text is returned in that tab's answers array.",
+			"Do not add a final Confirm, Submit, Review, or Done tab; pi-questions adds its own submit tab when needed.",
 		],
 		parameters: QUESTION_TOOL_PARAMETERS as never,
 		async execute(toolCallId, params, _signal, _onUpdate, ctx): Promise<AgentToolResult<QuestionResult>> {

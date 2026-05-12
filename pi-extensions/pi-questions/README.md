@@ -67,6 +67,8 @@ Cancelled:
 
 Set `allowCustom: true` to add a free-type row. Optional fields: `customLabel`, `customPlaceholder`.
 
+Do not include a final `Confirm`, `Submit`, `Review`, or `Done` question tab in the payload; the UI adds its own submit tab when needed.
+
 ## Keys
 
 | Key | Action |
