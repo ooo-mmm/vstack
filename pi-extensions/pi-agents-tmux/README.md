@@ -159,6 +159,7 @@ All settings live in the extension manager under **Agents (tmux)**.
 
 | Setting | What it does |
 | --- | --- |
+| Enable agents | Master toggle for the subagent tools, dashboard, and pane helpers. |
 | Max parallel tasks | Cap on tasks in one parallel agent call. |
 | Max concurrency | Cap on one-shot processes running simultaneously. |
 | Subagent model source | Use the agent's `model:` or inherit the parent session model. |

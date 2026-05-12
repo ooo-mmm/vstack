@@ -23,6 +23,12 @@ vstack add --pi-extension pi-hooks
 
 Or as part of `vstack add --all`. Refresh with `vstack refresh`.
 
+Via [npm](https://www.npmjs.com/package/@vanillagreen/pi-hooks):
+
+```bash
+pi install npm:@vanillagreen/pi-hooks
+```
+
 ## Settings
 
 All settings live in the extension manager under **Hooks**.

@@ -74,6 +74,7 @@ All settings live in the extension manager under **Background Tasks**.
 
 | Setting | What it does |
 | --- | --- |
+| Enable background tasks | Master toggle for `bg_task`, auto-backgrounding, and the widget. |
 | Default timeout | Spawn timeout. `0` disables. |
 | Auto-background blocking bash monitors | Auto-divert long-running bash commands into `bg_task`. |
 | Extra auto-background patterns | Newline-separated regexes for project-specific monitors. |

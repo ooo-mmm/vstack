@@ -96,6 +96,7 @@ All settings live in the extension manager under **Session Bridge**.
 
 | Setting | What it does |
 | --- | --- |
+| Enable session bridge | Master toggle for bridge socket registration, CLI access, and status reporting. |
 | Bridge directory | Override the sockets/registry directory. `PI_BRIDGE_DIR` env var still wins. |
 | Event history limit | Events retained for history clients. |
 | Max request line bytes | Maximum JSONL request size accepted. |

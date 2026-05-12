@@ -80,6 +80,7 @@ All settings live in the extension manager under **Task Panel**.
 
 | Setting | What it does |
 | --- | --- |
+| Enable task panel | Master toggle for `tasks_write`, panel rendering, shortcuts, and reminders. |
 | Default panel state | `hidden`, `compact`, or `expanded` when tasks first appear. |
 | Compact task count | Max tasks shown in compact mode. |
 | Show active notes | Show notes for the active task in expanded mode. |

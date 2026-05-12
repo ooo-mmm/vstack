@@ -62,6 +62,7 @@ All settings live in the extension manager under **QOL**. Names below match the 
 
 | Setting | What it does |
 | --- | --- |
+| Enable QOL editor helpers | Master toggle for QOL statusline, commands, notifications, search, compaction, and editor helpers. |
 | Replace built-in footer | Hide Pi's default footer while the QOL statusline is active. |
 | Use π prompt editor | Use the compact prompt editor. |
 | Show session name title | Show the session name above the prompt and in the tmux pane title. |
