@@ -63,8 +63,8 @@ pane-respond <pane> --harness pi --question que_... --reject
 - For normal option picks, `--answer` values must exactly match labels from `question.questions[i].options[].label`.
 - Use `--answer-multi` only when that tab has `multiple=true`.
 - Use `--answer-text` only when that tab has `allowCustom=true`; this is the bridge equivalent of tabbing to the custom/free-type row and typing in the inline editor.
-- Use `--answers-json` for multi-tab requests. The JSON must contain one inner answer array per tab, e.g. `[["Label A"],["custom text"]]`.
-- If bridge metadata is missing and fallback tmux driving is unavoidable, use `--keys-allow-tmux` deliberately and mirror the UI mechanics: `Tab`/`Left`/`Right` switch tabs, `Up`/`Down` or `j`/`k` move rows, `Space` toggles multi-select/custom, `Enter` advances/submits, `Escape` cancels or leaves text input.
+- Use `--answers-json` for multi-tab requests. The JSON must contain one inner answer array per request tab, e.g. `[["Label A"],["custom text"]]`. Pi's synthetic `Confirm`/`Submit` UI tab is not part of `question.questions[]`; never include an extra answer array for it.
+- If bridge metadata is missing and fallback tmux driving is unavoidable, use `--keys-allow-tmux` deliberately and mirror the UI mechanics: `Tab`/`Left`/`Right` switch through request tabs plus the synthetic `Confirm`/`Submit` tab, `Up`/`Down` move rows, single-select `Enter` confirms and advances, multi-select `Enter` or `Space` toggles the highlighted row, the synthetic `Confirm`/`Submit` tab's `Enter` submits, and `Escape` cancels or leaves text input.
 
 ## Pi slash-command grammar
 
