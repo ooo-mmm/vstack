@@ -176,14 +176,18 @@ function classifyDaemonLogLine(line: string): "info" | "warn" | "error" | "wake"
 	return "info";
 }
 
-function colorizeDaemonLogLine(line: string, theme: Theme): string {
+function selectedSoft(theme: Theme, selected: boolean, text: string): string {
+	return theme.fg(selected ? "text" : "dim", text);
+}
+
+function colorizeDaemonLogLine(line: string, theme: Theme, selected = false): string {
 	const kind = classifyDaemonLogLine(line);
 	switch (kind) {
 		case "wake": return theme.fg("success", line);
 		case "warn": return theme.fg("warning", line);
 		case "error": return theme.fg("error", line);
 		case "classify": return theme.fg("accent", line);
-		case "heartbeat": return theme.fg("dim", line);
+		case "heartbeat": return selectedSoft(theme, selected, line);
 		default: return theme.fg("text", line);
 	}
 }
@@ -464,7 +468,7 @@ function renderOverviewTab(snapshot: FlightdeckSnapshot, ui: PopupUiState, width
 		const idx = ui.scroll + vi;
 		const selected = idx === ui.selected;
 		const statsText = formatUsageCompact(statsByIssue.get(issue.issue)?.usage);
-		const row = formatOverviewRow(issue, theme, width, statsText, hasStats);
+		const row = formatOverviewRow(issue, theme, width, statsText, hasStats, selected);
 		lines.push(selected ? selectedRow(theme, row, width) : row);
 	}
 	if (tail > 0) lines.push(theme.fg("dim", `↓ ${tail} more`));
@@ -484,17 +488,18 @@ function formatOverviewHeader(theme: Theme, width: number, hasStats: boolean): s
 	return truncateToWidth(line, width, "");
 }
 
-function formatOverviewRow(issue: IssueRecord, theme: Theme, width: number, stats: string | undefined, hasStats: boolean): string {
+function formatOverviewRow(issue: IssueRecord, theme: Theme, width: number, stats: string | undefined, hasStats: boolean, selected = false): string {
 	const id = pad(theme.fg("text", issue.issue), 18);
+	const soft = (text: string): string => selectedSoft(theme, selected, text);
 	const stateAndPrompt = issue.substate
-		? `${stateBadge(theme, issue.state)} ${theme.fg("dim", "·")} ${tagBadge(theme, issue.substate)}`
+		? `${stateBadge(theme, issue.state)} ${soft("·")} ${tagBadge(theme, issue.substate)}`
 		: stateBadge(theme, issue.state);
 	const state = pad(stateAndPrompt, 32);
 	const harness = pad(harnessChip(theme, issue.harness), 10);
-	const pr = pad(issue.pr_number ? theme.fg("accent", `#${issue.pr_number}`) : theme.fg("dim", "—"), 8);
-	const statsCell = hasStats ? ` ${pad(stats ? theme.fg("dim", stats) : theme.fg("dim", "—"), 30)}` : "";
+	const pr = pad(issue.pr_number ? theme.fg("accent", `#${issue.pr_number}`) : soft("—"), 8);
+	const statsCell = hasStats ? ` ${pad(stats ? soft(stats) : soft("—"), 30)}` : "";
 	const age = formatAge(ageSecondsSince(issue.last_polled_at));
-	return truncateToWidth(`${id} ${state} ${harness} ${pr}${statsCell} ${theme.fg("dim", age)}`, width, "");
+	return truncateToWidth(`${id} ${state} ${harness} ${pr}${statsCell} ${soft(age)}`, width, "");
 }
 
 function renderIssueDetailBlock(issue: IssueRecord, theme: Theme, width: number, stats?: AgentsBridgeItem): string[] {
@@ -593,20 +598,20 @@ function liveEventKindText(ev: LiveEvent): string {
 	}
 }
 
-function liveEventKindChip(ev: LiveEvent, theme: Theme): string {
+function liveEventKindChip(ev: LiveEvent, theme: Theme, selected = false): string {
 	const text = liveEventKindText(ev);
 	switch (ev.kind) {
 		case "decision": return theme.fg("accent", text);
 		case "event-wake": return theme.fg("success", text);
 		case "event-pending": return theme.fg("warning", text);
-		case "heartbeat-fold": return theme.fg("dim", text);
+		case "heartbeat-fold": return selectedSoft(theme, selected, text);
 		case "daemon": {
 			const kind = classifyDaemonLogLine(ev.line);
 			if (kind === "warn") return theme.fg("warning", kind);
 			if (kind === "error") return theme.fg("error", kind);
 			if (kind === "wake") return theme.fg("success", kind);
 			if (kind === "classify") return theme.fg("accent", kind);
-			return theme.fg("dim", kind);
+			return selectedSoft(theme, selected, kind);
 		}
 	}
 }
@@ -619,10 +624,10 @@ function liveEventSummary(ev: LiveEvent): string {
 		.replace(/^\S+\s+/, "");
 }
 
-function renderLiveEventRow(ev: LiveEvent, theme: Theme, width: number): string {
-	const time = pad(theme.fg("dim", ev.ts || "--:--:--"), 10);
-	const kind = pad(liveEventKindChip(ev, theme), 12);
-	const summary = theme.fg(ev.kind === "heartbeat-fold" ? "dim" : "text", liveEventSummary(ev));
+function renderLiveEventRow(ev: LiveEvent, theme: Theme, width: number, selected = false): string {
+	const time = pad(selectedSoft(theme, selected, ev.ts || "--:--:--"), 10);
+	const kind = pad(liveEventKindChip(ev, theme, selected), 12);
+	const summary = ev.kind === "heartbeat-fold" ? selectedSoft(theme, selected, liveEventSummary(ev)) : theme.fg("text", liveEventSummary(ev));
 	return truncateToWidth(`${time} ${kind} ${summary}`, width, "");
 }
 
@@ -683,7 +688,7 @@ function renderLiveFeedTab(snapshot: FlightdeckSnapshot, ui: PopupUiState, width
 	for (const [vi, ev] of filtered.slice(start, end).entries()) {
 		const idx = start + vi;
 		const selected = idx === ui.selected;
-		const rowText = renderLiveEventRow(ev, theme, width);
+		const rowText = renderLiveEventRow(ev, theme, width, selected);
 		lines.push(selected ? selectedRow(theme, rowText, width) : rowText);
 	}
 	const tail = Math.max(0, filtered.length - end);
@@ -697,13 +702,13 @@ function renderLiveFeedTab(snapshot: FlightdeckSnapshot, ui: PopupUiState, width
 	return lines;
 }
 
-function colorizeLiveEvent(ev: LiveEvent, theme: Theme): string {
+function colorizeLiveEvent(ev: LiveEvent, theme: Theme, selected = false): string {
 	switch (ev.kind) {
-		case "daemon": return colorizeDaemonLogLine(ev.line, theme);
+		case "daemon": return colorizeDaemonLogLine(ev.line, theme, selected);
 		case "decision": return theme.fg("accent", ev.line);
 		case "event-wake": return theme.fg("text", ev.line);
 		case "event-pending": return theme.fg("warning", ev.line);
-		case "heartbeat-fold": return theme.fg("dim", ev.line);
+		case "heartbeat-fold": return selectedSoft(theme, selected, ev.line);
 	}
 }
 
@@ -904,12 +909,13 @@ function renderDecisionsTab(snapshot: FlightdeckSnapshot, ui: PopupUiState, widt
 	if (start > 0) lines.push(theme.fg("dim", `↑ ${start} earlier`));
 	for (const [vi, d] of filtered.slice(start, end).entries()) {
 		const idx = start + vi;
-		const time = pad(theme.fg("dim", d.ts.slice(11, 19)), 10);
+		const selected = idx === ui.selected;
+		const time = pad(selectedSoft(theme, selected, d.ts.slice(11, 19)), 10);
 		const issue = pad(theme.fg("text", d.issue), 16);
 		const tag = pad(tagBadge(theme, d.prompt_tag), 26);
 		const answer = theme.fg("text", d.answer);
 		const row = truncateToWidth(`${time} ${issue} ${tag} ${answer}`, width, "");
-		lines.push(idx === ui.selected ? selectedRow(theme, row, width) : row);
+		lines.push(selected ? selectedRow(theme, row, width) : row);
 	}
 	const tail = Math.max(0, filtered.length - end);
 	if (tail > 0) lines.push(theme.fg("dim", `↓ ${tail} more`));
@@ -1089,8 +1095,9 @@ function renderDaemonTab(snapshot: FlightdeckSnapshot, ui: PopupUiState, width: 
 	if (start > 0) lines.push(theme.fg("dim", `↑ ${start} earlier`));
 	for (const [vi, ev] of filtered.slice(start, end).entries()) {
 		const idx = start + vi;
-		const row = truncateToWidth(colorizeLiveEvent(ev, theme), width, "");
-		lines.push(idx === ui.selected ? selectedRow(theme, row, width) : row);
+		const selected = idx === ui.selected;
+		const row = truncateToWidth(colorizeLiveEvent(ev, theme, selected), width, "");
+		lines.push(selected ? selectedRow(theme, row, width) : row);
 	}
 	const tail = Math.max(0, filtered.length - end);
 	if (tail > 0) lines.push(theme.fg("dim", `↓ ${tail} more`));

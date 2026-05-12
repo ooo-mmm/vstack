@@ -41,7 +41,7 @@ Restart Pi after installation.
 | `/flightdeck watch [args]` | Legacy bridge workaround that dispatches the `flightdeck watch` workflow. The daemon now sends `/skill:flightdeck watch --from-daemon` through pi-session-bridge directly. |
 | `/flightdeck:toggle` | Cycle the persistent dashboard widget (also Alt+M). |
 
-Inside the popup, use Tab / Shift+Tab to switch tabs, arrows to move or scroll, `-/=` to page, and type to filter. Live feed is a compact event stream with a wrapped selected-event preview; Enter opens the full raw event with scroll. In Decisions, Enter opens a detail popup for the selected decision; the detail view wraps the full answer and scrolls with arrows/page keys. Esc or Backspace returns to the main Flightdeck popup. In Daemon, heartbeat runs are folded into one summary row so real daemon events stay visible while the log remains scrollable.
+Inside the popup, use Tab / Shift+Tab to switch tabs, arrows to move or scroll, `-/=` to page, and type to filter. Selected rows brighten muted metadata for contrast. Live feed is a compact event stream with a wrapped selected-event preview; Enter opens the full raw event with scroll. In Decisions, Enter opens a detail popup for the selected decision; the detail view wraps the full answer and scrolls with arrows/page keys. Esc or Backspace returns to the main Flightdeck popup. In Daemon, heartbeat runs are folded into one summary row so real daemon events stay visible while the log remains scrollable.
 
 ## Settings
 
