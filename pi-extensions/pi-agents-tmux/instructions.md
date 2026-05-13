@@ -1,6 +1,6 @@
 ## pi-agents-tmux — `subagent`, `steer_subagent`, `get_subagent_result`, `stop_subagent`
 
-`subagent` delegates work to a project-defined agent (loaded from `.pi/agents`, with `.claude/agents` as a compatibility source). Agents with `pane: true` run in visible persistent tmux panes and survive across turns; others run as bg one-shot agents. Child tools default to the parent's active tools minus the agent's `deny-tools:`.
+`subagent` delegates work to a project-defined agent (loaded from `.pi/agents`, with `.claude/agents` as a compatibility source). Agents with `pane: true` run in visible persistent tmux panes and survive across turns; others run as resumable bg agents. Child tools default to the parent's active tools minus the agent's `deny-tools:`.
 
 Use when: isolated context for a focused task; specialist review (security, performance, design); reconnaissance/planning/read-only investigation that can run in parallel; multiple independent investigations via `tasks: [...]` (parallel) or `chain: [...]` (sequential, with `{previous}` placeholder).
 

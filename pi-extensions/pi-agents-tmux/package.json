@@ -61,7 +61,7 @@
         {
           "key": "maxConcurrency",
           "label": "Max concurrency",
-          "description": "Maximum number of one-shot agent processes to run at the same time.",
+          "description": "Maximum number of bg agent processes to run at the same time.",
           "type": "number",
           "default": 4,
           "category": "Execution",

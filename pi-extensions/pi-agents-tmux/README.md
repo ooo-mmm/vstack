@@ -2,7 +2,7 @@
 
 https://github.com/user-attachments/assets/36192e57-a6e4-47f9-b47c-dd26920906ae
 
-Delegate work to specialized agents from a running Pi session. Agents run either as visible persistent tmux panes or as background one-shot sessions.
+Delegate work to specialized agents from a running Pi session. Agents run either as visible persistent tmux panes or resumable background (bg) sessions.
 
 ## Highlights
 
@@ -93,7 +93,7 @@ Arguments support autocomplete, including known agent names.
 - `↑/↓`, `-/=`, `Home/End` navigate. `←/→` switches list/detail focus and cycles right-pane subtabs.
 - `Enter` inserts `Use agent <name> to: ` into the editor.
 - `Alt+M` edits the selected agent's frontmatter.
-- For pane agents: `Ctrl+P` starts/reuses, `Ctrl+O` attaches, `Ctrl+X` stops.
+- For pane agents: `Alt+P`/`Ctrl+P` starts or reuses, `Alt+O`/`Ctrl+O` attaches, `Alt+X`/`Ctrl+X` stops.
 - `Esc` clears search or closes.
 
 Status legend: ` ` live pane, ` ` startable, ` ` stale, `·` background. Dashboard rows: ` ` queued, ` ` working, ` ` completed, ` ` needs completion, ` ` failed/blocked.
@@ -106,9 +106,9 @@ Each row shows agent name, kind (`pane` or `bg`), turn count, input/output token
 
 Rows are bucketed for stability: queued/running/waiting agents stay above attention states, and all of those stay above completed agents. Within each bucket, rows keep start-time order so token/usage updates do not reshuffle the list. The header always shows completed and working counts, even when either count is zero. Missing pane artifacts render as `stale` attention rows; stale bg-only records are dropped because bg agents do not use pane handoff files.
 
-The popup has two top-level tabs: **Agents** (unified project/user/active list, sorted by current status, with Live/Chat/Inspector subtabs on the right) and **History** (completed task traces with Summary/Completion/Task subtabs; transcript paths appear in Summary). Running agents use an animated spinner in both mini-dashboard and popup views. Repeated launches of the same agent render as stable session rows (`agent`, `agent 2`, ...); resumed pane work in the same transcript stays on one row.
+The popup has two top-level tabs: **Agents** (unified project/user/active list, sorted by current status, with Live/Chat/Inspector subtabs on the right) and **History** (completed task traces with Summary/Completion/Task subtabs; transcript paths appear in Summary). Chat is scoped to the selected dashboard row, usually `@orch` ↔ the selected agent. Running agents use an animated spinner in both mini-dashboard and popup views. Repeated launches of the same agent render as stable session rows (`agent`, `agent 2`, ...); resumed pane work in the same transcript stays on one row.
 
-When the dashboard is on, inline tool output stays quiet — pane calls render as launch breadcrumbs, bg/one-shot calls show a result preview.
+When the dashboard is on, inline tool output stays quiet — pane calls render as launch breadcrumbs, bg calls show a result preview.
 
 ## Persistent pane agents
 
@@ -133,7 +133,7 @@ Frontmatter fields:
 | `description` | yes | Short description shown in `/agents` and completions. |
 | `deny-tools` | no | Comma-separated Pi tools to deny. Future parent tools are inherited unless explicitly denied. |
 | `model` | no | Pi model id; shorthands: `sonnet`, `opus*`, `haiku`. Other ids pass through. |
-| `pane` | no | `true` for a visible persistent pane; omit for bg one-shot. |
+| `pane` | no | `true` for a visible persistent pane; omit for bg. |
 | `color` | no | Pane badge color: `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`. Aliases: `orange`, `purple`/`violet`, `teal`. |
 
 Everything after the frontmatter is the agent's system prompt.
@@ -168,7 +168,7 @@ All settings live in the extension manager under **Agents (tmux)**.
 | --- | --- |
 | Enable agents | Master toggle for the subagent tools, dashboard, and pane helpers. |
 | Max parallel tasks | Cap on tasks in one parallel agent call. |
-| Max concurrency | Cap on one-shot processes running simultaneously. |
+| Max concurrency | Cap on bg agent processes running simultaneously. |
 | Subagent model source | Use the agent's `model:` or inherit the parent session model. |
 | Subagent thinking source | Use the model `:effort` suffix or inherit the parent thinking level. |
 

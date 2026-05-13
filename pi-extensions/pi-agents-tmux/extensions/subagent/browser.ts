@@ -536,8 +536,8 @@ function renderAgentBrowserTabs(active: AgentBrowserTabId, hasActive: boolean, w
 	return truncateToWidth(tabs.map(partFor).join(" "), width, "");
 }
 
-function agentStatus(agent: AgentConfig, status: AgentPaneStatus | undefined): "live" | "dead" | "pane" | "one-shot" {
-	if (!agent.pane) return "one-shot";
+function agentStatus(agent: AgentConfig, status: AgentPaneStatus | undefined): "live" | "dead" | "pane" | "bg" {
+	if (!agent.pane) return "bg";
 	if (status?.live) return "live";
 	if (status?.entry) return "dead";
 	return "pane";
@@ -817,29 +817,12 @@ export function dashboardDisplayLabels(items: SubagentDashboardItem[]): Map<stri
 }
 
 function renderActiveAgentList(items: SubagentDashboardItem[], ui: AgentBrowserUiState, width: number, theme: Theme, listRows: number): string[] {
-	const totalRows = items.length + 1;
 	const lines = [`${agentPaneTitle(theme, "Active", ui.pane === "list")} ${theme.fg("dim", `(${items.length})`)}`, ""];
 	if (ui.activeScroll > 0) lines.push(theme.fg("dim", `\u2191 ${ui.activeScroll} earlier`));
-	const chatVisible = ui.activeScroll === 0 && listRows > 0;
-	if (chatVisible) {
-		const selected = ui.activeSelected === 0;
-		const icon = theme.fg("accent", "\uf075");
-		const label = theme.fg(selected ? "accent" : "text", theme.bold("Chat"));
-		const hint = theme.fg(selected ? "text" : "dim", "all agents");
-		const row = `${icon} ${label} ${theme.fg(selected ? "text" : "dim", "\u00b7")} ${hint}`;
-		const prefix = selected ? theme.fg("accent", "> ") : "  ";
-		lines.push(truncateToWidth(`${prefix}${row}`, width, ""));
-	}
-	const agentsHeader = ui.activeScroll === 0 && items.length > 0 && listRows > 1;
-	if (agentsHeader) lines.push(theme.fg("muted", "Agents"));
-	const usedRows = (chatVisible ? 1 : 0) + (agentsHeader ? 1 : 0);
-	const remainingRows = Math.max(0, listRows - usedRows);
-	const itemStart = Math.max(0, ui.activeScroll);
-	const startItemIndex = Math.max(0, itemStart - 1);
-	const visible = items.slice(startItemIndex, startItemIndex + remainingRows);
+	const visible = items.slice(ui.activeScroll, ui.activeScroll + listRows);
 	const labels = dashboardDisplayLabels(items);
 	for (const [index, item] of visible.entries()) {
-		const absoluteIndex = startItemIndex + index + 1;
+		const absoluteIndex = ui.activeScroll + index;
 		const selected = absoluteIndex === ui.activeSelected;
 		const icon = dashboardStatusIcon(item.status, theme);
 		const displayName = labels.get(item.taskId) ?? item.agent;
@@ -848,9 +831,8 @@ function renderActiveAgentList(items: SubagentDashboardItem[], ui: AgentBrowserU
 		const prefix = selected ? theme.fg("accent", "> ") : "  ";
 		lines.push(truncateToWidth(`${prefix}${row}`, width, ""));
 	}
-	const after = items.length - (startItemIndex + visible.length);
+	const after = items.length - (ui.activeScroll + visible.length);
 	if (after > 0) lines.push(theme.fg("dim", `\u2193 ${after} more`));
-	void totalRows;
 	return lines;
 }
 
@@ -1272,9 +1254,11 @@ function wrapWithHangingIndent(text: string, indent: string, width: number): str
 
 function renderChatRoomDetail(runtimeRoot: string, items: SubagentDashboardItem[], ui: AgentBrowserUiState, width: number, rows: number, theme: Theme): string[] {
 	const safeWidth = Math.max(8, width);
-	const agentNames = items.map((item) => item.agent);
-	const titleLine = `${agentPaneTitle(theme, "Chat", ui.pane === "inspector")} ${theme.fg("dim", `(${agentNames.length} agent${agentNames.length === 1 ? "" : "s"})`)}`;
-	const messages = loadChatMessages(runtimeRoot, agentNames);
+	const agentNames = [...new Set(items.map((item) => item.agent))];
+	const taskIds = new Set(items.map((item) => item.taskId).filter(Boolean));
+	const scopeLabel = items.length === 1 ? `@${items[0]!.agent}` : `${agentNames.length} agent${agentNames.length === 1 ? "" : "s"}`;
+	const titleLine = `${agentPaneTitle(theme, "Chat", ui.pane === "inspector")} ${theme.fg("dim", `(${scopeLabel})`)}`;
+	const messages = loadChatMessages(runtimeRoot, agentNames).filter((message) => taskIds.size === 0 || !message.taskId || taskIds.has(message.taskId));
 	appendBgChatMessages(messages, items);
 	messages.sort((a, b) => a.timestamp - b.timestamp);
 	const body: string[] = [];
@@ -1328,12 +1312,9 @@ function renderActiveTabBody(items: SubagentDashboardItem[], runtimeRoot: string
 	const rightWidth = Math.max(1, width - leftWidth - 3);
 	const bodyRows = layout.bodyRows;
 	const left = renderActiveAgentList(items, ui, leftWidth, theme, layout.listRows);
-	const chatSelected = ui.activeSelected === 0;
-	const detailItem = items[ui.activeSelected - 1];
+	const detailItem = items[ui.activeSelected];
 	const labels = dashboardDisplayLabels(items);
-	const right = chatSelected
-		? renderChatRoomDetail(runtimeRoot, items, ui, rightWidth, bodyRows, theme)
-		: renderActiveAgentDetail(detailItem, detailItem ? labels.get(detailItem.taskId) : undefined, ui, rightWidth, bodyRows, theme);
+	const right = renderActiveAgentDetail(detailItem, detailItem ? labels.get(detailItem.taskId) : undefined, ui, rightWidth, bodyRows, theme);
 	const lines: string[] = [];
 	const headerLine = `${theme.fg("muted", "View")}: ${theme.fg("text", "active")}  ${theme.fg("muted", "Items")}: ${items.length}`;
 	lines.push(...wrapTextWithAnsi(headerLine, width));
@@ -1385,6 +1366,7 @@ function renderUnifiedAgentDetail(
 	rows: number,
 	theme: Theme,
 ): string[] {
+	void activeItems;
 	if (!activeItem) {
 		ui.agentSubtab = 0;
 		return renderAgentInspector(agent, statuses, ui, width, rows, theme);
@@ -1398,7 +1380,7 @@ function renderUnifiedAgentDetail(
 	const base = ui.agentSubtab === 0
 		? renderActiveAgentDetail(activeItem, displayLabel, ui, width, rows, theme)
 		: ui.agentSubtab === 1
-			? renderChatRoomDetail(runtimeRoot, activeItems, ui, width, rows, theme)
+			? renderChatRoomDetail(runtimeRoot, [activeItem], ui, width, rows, theme)
 			: renderAgentInspector(agent, statuses, ui, width, rows, theme);
 	const tabLine = renderTraceTabBar(tabs, ui.agentSubtab, Math.max(8, width), theme);
 	return [base[0] ?? "", "", tabLine, "", ...base.slice(2)].slice(0, rows);
@@ -1624,7 +1606,7 @@ function createAgentsBrowserComponent(
 			const delta = matchesKey(data, "-") ? -page : page;
 			if (ui.tab === "active") {
 				const items = getActiveItems();
-				const totalRows = items.length + 1;
+				const totalRows = items.length;
 				if (ui.pane === "inspector") {
 					ui.inspectorScroll = Math.max(0, ui.inspectorScroll + delta);
 				} else {
@@ -1657,7 +1639,7 @@ function createAgentsBrowserComponent(
 		if (ui.tab === "active") {
 			const items = getActiveItems();
 			const layout = getLayout();
-			const totalRows = items.length + 1;
+			const totalRows = items.length;
 			const clampActive = () => {
 				ui.activeSelected = Math.max(0, Math.min(ui.activeSelected, Math.max(0, totalRows - 1)));
 				if (ui.activeSelected < ui.activeScroll) ui.activeScroll = ui.activeSelected;
@@ -1779,7 +1761,7 @@ function createAgentsBrowserComponent(
 			return agentFrame(lines, safeWidth, theme, layout.innerRows, "Agents");
 		}
 		clamp();
-		const footer = `${ansiYellow("tab")} ${theme.fg("dim", "view · ")}${ansiYellow("-/=")} ${theme.fg("dim", "page · ")}${ansiYellow("←/→")} ${theme.fg("dim", "pane · ")}${ansiYellow("alt+m")} ${theme.fg("dim", "edit frontmatter · ")}${ansiYellow("alt+p/o/x")} ${theme.fg("dim", "pane ops")}`;
+		const footer = `${ansiYellow("tab")} ${theme.fg("dim", "view · ")}${ansiYellow("-/=")} ${theme.fg("dim", "page · ")}${ansiYellow("←/→")} ${theme.fg("dim", "pane · ")}${ansiYellow("alt+m")} ${theme.fg("dim", "edit · ")}${ansiYellow("alt+p")} ${theme.fg("dim", "start pane · ")}${ansiYellow("alt+o")} ${theme.fg("dim", "attach · ")}${ansiYellow("alt+x")} ${theme.fg("dim", "stop")}`;
 		const lines = [
 			tabLine,
 			"",

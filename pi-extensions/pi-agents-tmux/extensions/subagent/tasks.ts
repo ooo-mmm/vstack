@@ -11,8 +11,10 @@ import {
 	registryPath,
 	taskArtifactPaths,
 	taskRegistryPath,
+	transcriptDir,
 } from "./paths.js";
 import {
+	type DashboardKind,
 	MALFORMED_COMPLETION_GRACE_MS,
 	PACKAGE_ID,
 	type PaneCompletion,
@@ -23,6 +25,7 @@ import {
 	type PaneTaskRecord,
 	type PaneTaskRegistry,
 	type PaneTaskStatus,
+	type UsageStats,
 } from "./types.js";
 
 export function normalizedPath(value: string): string {
@@ -133,6 +136,43 @@ export function isTerminalTaskStatus(status: PaneTaskStatus | undefined): boolea
 	return status === "completed" || status === "blocked" || status === "failed";
 }
 
+export function inferTaskRecordKind(runtimeRoot: string, record: PaneTaskRecord): DashboardKind {
+	if (record.transcriptPath && pathWithin(transcriptDir(runtimeRoot), record.transcriptPath)) return "oneshot";
+	if (record.kind === "pane" || record.kind === "oneshot") return record.kind;
+	if (record.paneId || record.inboxFile || record.processingFile || record.doneFile || record.completionSourcePath || record.completionArchivePath) return "pane";
+	if (record.outboxFile) return "pane";
+	return "oneshot";
+}
+
+function sanitizedBgTaskRecord(record: PaneTaskRecord): PaneTaskRecord {
+	const {
+		paneId: _paneId,
+		inboxFile: _inboxFile,
+		processingFile: _processingFile,
+		doneFile: _doneFile,
+		outboxFile: _outboxFile,
+		completionSourcePath: _completionSourcePath,
+		completionArchivePath: _completionArchivePath,
+		...rest
+	} = record;
+	return { ...rest, kind: "oneshot" };
+}
+
+export function normalizeUsageStats(value: unknown): UsageStats | undefined {
+	if (!value || typeof value !== "object") return undefined;
+	const raw = value as Partial<Record<keyof UsageStats, unknown>>;
+	const usage: UsageStats = {
+		input: Number(raw.input) || 0,
+		output: Number(raw.output) || 0,
+		cacheRead: Number(raw.cacheRead) || 0,
+		cacheWrite: Number(raw.cacheWrite) || 0,
+		cost: Number(raw.cost) || 0,
+		contextTokens: Number(raw.contextTokens) || 0,
+		turns: Number(raw.turns) || 0,
+	};
+	return usage.input || usage.output || usage.cacheRead || usage.cacheWrite || usage.cost || usage.contextTokens || usage.turns ? usage : undefined;
+}
+
 export function appendUniqueDiagnostic(existing: string[] | undefined, diagnostic: string): string[] {
 	const compact = diagnostic.replace(/\s+/g, " ").trim();
 	if (!compact) return existing ?? [];
@@ -200,6 +240,7 @@ export async function markTaskNeedsCompletion(
 			agent: existing?.agent ?? agentName,
 			task: existing?.task ?? "",
 			status: "needs_completion",
+			kind: "pane",
 			inboxFile: existing?.inboxFile,
 			processingFile: options.processingFile ?? existing?.processingFile,
 			doneFile: options.doneFile ?? existing?.doneFile,
@@ -215,6 +256,17 @@ export async function markTaskNeedsCompletion(
 }
 
 export async function refreshTaskDiagnostics(runtimeRoot: string, record: PaneTaskRecord): Promise<{ record: PaneTaskRecord; diagnostics: string[] }> {
+	if (inferTaskRecordKind(runtimeRoot, record) !== "pane") {
+		const sanitized = sanitizedBgTaskRecord(record);
+		const changed = JSON.stringify(sanitized) !== JSON.stringify(record);
+		if (changed) {
+			await updateTaskRegistry(runtimeRoot, (records) => {
+				records[record.taskId] = sanitized;
+			});
+		}
+		return { record: sanitized, diagnostics: record.diagnostics ?? [] };
+	}
+
 	const paths = taskArtifactPaths(runtimeRoot, record);
 	const [inboxExists, processingExists, doneExists, outboxExists, archiveExists, transcriptExists] = await Promise.all([
 		fileExists(paths.inboxFile),
@@ -454,6 +506,7 @@ async function pollPaneCompletionsUnlocked(runtimeRoot: string, pi: ExtensionAPI
 						task: existing?.task ?? "",
 						createdAt: existing?.createdAt ?? detail.completedAt,
 						status: detail.status,
+						kind: "pane",
 						paneId: detail.paneId,
 						completionSourcePath: detail.sourcePath,
 						completionArchivePath: detail.archivePath,

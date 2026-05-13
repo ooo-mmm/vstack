@@ -115,9 +115,11 @@ import {
 	completionParseErrorMessage,
 	createTaskId,
 	emitSubagentEvent,
+	inferTaskRecordKind,
 	isTerminalTaskStatus,
 	latestTaskRecord,
 	markTaskNeedsCompletion,
+	normalizeUsageStats,
 	paneSessionBelongsToRuntime,
 	pollPaneCompletions,
 	readPaneCompletionFile,
@@ -195,10 +197,6 @@ function timestampMs(value: string | undefined): number {
 	return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function inferRecordDashboardKind(record: PaneTaskRecord): DashboardKind {
-	return record.paneId || record.inboxFile || record.processingFile || record.doneFile || record.outboxFile || record.completionArchivePath ? "pane" : "oneshot";
-}
-
 function isPersistedSubagentRuntimeState(value: unknown): value is PersistedSubagentRuntimeState {
 	if (!value || typeof value !== "object" || Array.isArray(value)) return false;
 	const candidate = value as Partial<PersistedSubagentRuntimeState>;
@@ -234,6 +232,7 @@ async function createFollowUpTask(runtimeRoot: string, agentName: string, entry:
 		agent: agentName,
 		task: message,
 		status: "running",
+		kind: "pane",
 		paneId: entry.paneId,
 		outboxFile,
 		transcriptPath: entry.sessionFile,
@@ -252,7 +251,7 @@ async function queueSteeringFallback(runtimeRoot: string, agentName: string, mes
 	if (followUpTask) {
 		await updateTaskRegistry(runtimeRoot, (records) => {
 			const existing = records[followUpTask.taskId];
-			if (existing) records[followUpTask.taskId] = { ...existing, status: "queued", inboxFile: filePath, updatedAt: new Date().toISOString() };
+			if (existing) records[followUpTask.taskId] = { ...existing, kind: "pane", status: "queued", inboxFile: filePath, updatedAt: new Date().toISOString() };
 		});
 		followUpTask.taskFile = filePath;
 	}
@@ -378,14 +377,26 @@ export default function (pi: ExtensionAPI) {
 		void updateTaskRegistry(runtimeRoot, (records) => {
 			const existing = records[taskId];
 			const now = new Date().toISOString();
+			const kind: DashboardKind = event.mode === "oneshot" ? "oneshot" : event.mode === "pane" ? "pane" : existing?.kind ?? (typeof event.paneId === "string" ? "pane" : "oneshot");
+			const usage = normalizeUsageStats(event.usage) ?? existing?.usage;
+			const model = typeof event.model === "string" ? event.model : existing?.model;
 			records[taskId] = {
 				...existing,
 				taskId,
 				agent,
 				task: typeof event.task === "string" ? event.task : existing?.task ?? "",
 				status,
-				paneId: typeof event.paneId === "string" ? event.paneId : existing?.paneId,
+				kind,
+				paneId: kind === "pane" ? (typeof event.paneId === "string" ? event.paneId : existing?.paneId) : undefined,
+				inboxFile: kind === "pane" ? existing?.inboxFile : undefined,
+				processingFile: kind === "pane" ? existing?.processingFile : undefined,
+				doneFile: kind === "pane" ? existing?.doneFile : undefined,
+				outboxFile: kind === "pane" ? existing?.outboxFile : undefined,
+				completionSourcePath: kind === "pane" ? existing?.completionSourcePath : undefined,
+				completionArchivePath: kind === "pane" ? existing?.completionArchivePath : undefined,
 				transcriptPath: typeof event.transcriptPath === "string" ? event.transcriptPath : existing?.transcriptPath,
+				usage,
+				model,
 				summary: typeof event.summary === "string" ? event.summary : existing?.summary,
 				createdAt: existing?.createdAt ?? (typeof event.timestamp === "string" ? event.timestamp : now),
 				updatedAt: now,
@@ -477,6 +488,8 @@ export default function (pi: ExtensionAPI) {
 			...item,
 			startedAt: item.startedAt ?? existing?.startedAt,
 			completedAt: item.completedAt ?? existing?.completedAt,
+			usage: item.usage ?? existing?.usage,
+			model: item.model ?? existing?.model,
 		};
 		const maxKeep = Math.max(10, dashboardMaxItems(dashboardCtx?.cwd) * 3);
 		const sorted = Object.values(dashboardState.items).sort((a, b) => {
@@ -500,6 +513,16 @@ export default function (pi: ExtensionAPI) {
 		updateDashboard({ ...existing, ...patch, updatedAt: new Date().toISOString() });
 	};
 
+	const patchDashboardUsage = (runtimeRoot: string, taskId: string | undefined, parsed: { usage: UsageStats; model?: string } | undefined) => {
+		if (!taskId || !parsed) return;
+		patchDashboard(taskId, { usage: parsed.usage, model: parsed.model });
+		void updateTaskRegistry(runtimeRoot, (records) => {
+			const existing = records[taskId];
+			if (!existing) return;
+			records[taskId] = { ...existing, usage: parsed.usage, model: parsed.model ?? existing.model };
+		}).catch(() => undefined);
+	};
+
 	const removeDashboardAgent = (agentName: string | undefined) => {
 		if (!agentName) return;
 		for (const [key, item] of Object.entries(dashboardState.items)) {
@@ -508,8 +531,8 @@ export default function (pi: ExtensionAPI) {
 		syncDashboard();
 	};
 
-	const updateDashboardFromTaskRecord = (record: PaneTaskRecord) => {
-		const kind = inferRecordDashboardKind(record);
+	const updateDashboardFromTaskRecord = (record: PaneTaskRecord, runtimeRoot: string) => {
+		const kind = inferTaskRecordKind(runtimeRoot, record);
 		const candidateKey = dashboardItemKey({ agent: record.agent, kind, taskId: record.taskId, transcriptPath: record.transcriptPath, paneId: record.paneId });
 		const existingKey = dashboardKeyForTask(record.taskId) ?? (dashboardState.items[candidateKey] ? candidateKey : undefined);
 		const existing = existingKey ? dashboardState.items[existingKey] : undefined;
@@ -525,12 +548,12 @@ export default function (pi: ExtensionAPI) {
 		}
 		updateDashboard({
 			agent: record.agent,
-			artifacts: Boolean(record.completionArchivePath || record.outboxFile || record.transcriptPath || record.processingFile || record.doneFile),
+			artifacts: kind === "pane" ? Boolean(record.completionArchivePath || record.outboxFile || record.transcriptPath || record.processingFile || record.doneFile) : Boolean(record.transcriptPath),
 			bridge: existing?.bridge,
 			completedAt: record.completedAt,
 			kind,
 			message: record.summary || record.diagnostics?.at(-1) || record.task,
-			model: existing?.model,
+			model: record.model ?? existing?.model,
 			paneId: record.paneId,
 			startedAt: record.createdAt,
 			status: dashboardStatusFor(record.status, kind),
@@ -538,7 +561,7 @@ export default function (pi: ExtensionAPI) {
 			taskId: record.taskId,
 			transcriptPath: record.transcriptPath ?? existing?.transcriptPath,
 			updatedAt: record.updatedAt ?? record.completedAt ?? record.createdAt,
-			usage: existing?.usage,
+			usage: record.usage ?? existing?.usage,
 		});
 	};
 
@@ -549,10 +572,10 @@ export default function (pi: ExtensionAPI) {
 			const sorted = Object.values(records).sort((a, b) => (a.createdAt ?? a.completedAt ?? a.updatedAt).localeCompare(b.createdAt ?? b.completedAt ?? b.updatedAt));
 			for (const record of sorted) {
 				if (!record.taskId || !record.agent) continue;
-				if (record.paneId && isTerminalTaskStatus(record.status) && !registry[record.agent]) continue;
+				if (inferTaskRecordKind(runtimeRoot, record) === "pane" && record.paneId && isTerminalTaskStatus(record.status) && !registry[record.agent]) continue;
 				const refreshed = await refreshTaskDiagnostics(runtimeRoot, record);
 				if (refreshed.record.status === "needs_completion") dashboardState.visible = true;
-				updateDashboardFromTaskRecord(refreshed.record);
+				updateDashboardFromTaskRecord(refreshed.record, runtimeRoot);
 			}
 		});
 		await persistRuntimeSnapshot(ctx, runtimeRoot);
@@ -695,6 +718,7 @@ export default function (pi: ExtensionAPI) {
 		const event = payload as Record<string, unknown>;
 		const taskId = typeof event.taskId === "string" ? event.taskId : undefined;
 		const agent = typeof event.agent === "string" ? event.agent : undefined;
+		const runtimeRoot = typeof event.runtimeRoot === "string" ? event.runtimeRoot : undefined;
 		if (!taskId || !agent) return;
 		dashboardState.visible = true;
 		const existingKey = dashboardKeyForTask(taskId);
@@ -703,9 +727,9 @@ export default function (pi: ExtensionAPI) {
 		if (!existingKey && currentPane?.kind === "pane" && currentPane.taskId !== taskId) return;
 		const existing = existingKey ? dashboardState.items[existingKey] : currentPane?.taskId === taskId ? currentPane : undefined;
 		const transcriptPath = typeof event.transcriptPath === "string" ? event.transcriptPath : existing?.transcriptPath;
-		const eventUsage = (event.usage as UsageStats | undefined) ?? undefined;
+		const eventUsage = normalizeUsageStats(event.usage);
 		const eventModel = typeof event.model === "string" ? event.model : undefined;
-		const kind = existing?.kind ?? (event.mode === "oneshot" ? "oneshot" : "pane");
+		const kind = event.mode === "oneshot" ? "oneshot" : event.mode === "pane" ? "pane" : existing?.kind ?? "pane";
 		const payloadStatus = ((): PaneTaskStatus => {
 			const raw = event.status;
 			return raw === "queued" || raw === "running" || raw === "completed" || raw === "blocked" || raw === "failed" || raw === "needs_completion" ? raw : "unknown";
@@ -720,7 +744,7 @@ export default function (pi: ExtensionAPI) {
 			completedAt: typeof event.timestamp === "string" ? event.timestamp : new Date().toISOString(),
 			kind,
 			message: typeof event.summary === "string" ? event.summary : existing?.message,
-			paneId: existing?.paneId ?? (typeof event.paneId === "string" ? event.paneId : undefined),
+			paneId: kind === "pane" ? existing?.paneId ?? (typeof event.paneId === "string" ? event.paneId : undefined) : undefined,
 			startedAt: existing?.startedAt,
 			status: effectiveStatus,
 			task: existing?.task ?? (typeof event.task === "string" ? event.task : undefined),
@@ -730,12 +754,9 @@ export default function (pi: ExtensionAPI) {
 			usage: eventUsage ?? existing?.usage,
 			model: eventModel ?? existing?.model,
 		});
-		if (transcriptPath) {
+		if (transcriptPath && runtimeRoot) {
 			parseTranscriptUsage(transcriptPath)
-				.then((parsed) => {
-					if (!parsed) return;
-					patchDashboard(taskId, { usage: parsed.usage, model: parsed.model });
-				})
+				.then((parsed) => patchDashboardUsage(runtimeRoot, taskId, parsed))
 				.catch(() => undefined);
 		}
 	};
@@ -886,6 +907,7 @@ export default function (pi: ExtensionAPI) {
 							agent: existing?.agent ?? childAgentName,
 							task: existing?.task ?? "",
 							status: "running",
+							kind: "pane",
 							inboxFile: existing?.inboxFile ?? source,
 							processingFile: processing,
 							outboxFile: existing?.outboxFile ?? completionPath(runtimeRoot, childAgentName, taskId),
@@ -925,13 +947,11 @@ export default function (pi: ExtensionAPI) {
 				for (const record of sortedRecords) {
 					if (!record.taskId || !record.agent) continue;
 					const refreshed = await refreshTaskDiagnostics(runtimeRoot, record);
-					updateDashboardFromTaskRecord(refreshed.record);
+					updateDashboardFromTaskRecord(refreshed.record, runtimeRoot);
 					if (refreshed.record.transcriptPath && (refreshed.record.status === "completed" || refreshed.record.status === "failed" || refreshed.record.status === "blocked")) {
 						const capturedTaskId = refreshed.record.taskId;
 						parseTranscriptUsage(refreshed.record.transcriptPath)
-							.then((parsed) => {
-								if (parsed) patchDashboard(capturedTaskId, { usage: parsed.usage, model: parsed.model });
-							})
+							.then((parsed) => patchDashboardUsage(runtimeRoot, capturedTaskId, parsed))
 							.catch(() => undefined);
 					}
 				}
@@ -943,15 +963,13 @@ export default function (pi: ExtensionAPI) {
 		if (!ctx.hasUI) return;
 		const refreshLiveUsage = async () => {
 			const snapshot = Object.values(dashboardState.items).filter((item) => {
-				if (item.kind !== "pane") return false;
 				if (item.status === "failed" || item.status === "blocked") return false;
 				if (!item.transcriptPath) return false;
 				return true;
 			});
 			for (const item of snapshot) {
 				const parsed = await parseTranscriptUsage(item.transcriptPath).catch(() => undefined);
-				if (!parsed) continue;
-				patchDashboard(item.taskId, { usage: parsed.usage, model: parsed.model });
+				patchDashboardUsage(runtimeRoot, item.taskId, parsed);
 			}
 		};
 		const poll = () => {
@@ -1023,6 +1041,7 @@ export default function (pi: ExtensionAPI) {
 					if (!existing) return;
 					records[taskId] = {
 						...existing,
+						kind: "pane",
 						doneFile,
 						processingFile: existing.processingFile ?? activeTaskFile,
 						outboxFile: existing.outboxFile ?? outboxFile,
@@ -1035,6 +1054,7 @@ export default function (pi: ExtensionAPI) {
 					if (!existing) return;
 					records[taskId] = {
 						...existing,
+						kind: "pane",
 						processingFile: existing.processingFile ?? activeTaskFile,
 						outboxFile: existing.outboxFile ?? outboxFile,
 						transcriptPath: existing.transcriptPath ?? ctx.sessionManager.getSessionFile() ?? undefined,
@@ -1372,7 +1392,7 @@ export default function (pi: ExtensionAPI) {
 				const selector = params.taskId ? `taskId ${params.taskId}` : `agent ${params.agent}`;
 				return { content: [{ type: "text", text: `No persistent agent task record found for ${selector}.` }], details: { agent: params.agent, taskId: params.taskId } satisfies GetSubagentResultDetails, isError: true };
 			}
-			updateDashboardFromTaskRecord({ ...record, updatedAt: new Date().toISOString() });
+			updateDashboardFromTaskRecord({ ...record, updatedAt: new Date().toISOString() }, runtimeRoot);
 			await persistRuntimeSnapshot(ctx, runtimeRoot);
 			const diagnosticBlock = params.verbose && diagnostics.length > 0 ? `\n\n### Artifact diagnostics\n${diagnostics.map((line) => `- ${line}`).join("\n")}` : "";
 			return {
@@ -1412,13 +1432,14 @@ export default function (pi: ExtensionAPI) {
 			}
 			if (!agentName) return { content: [{ type: "text", text: "Provide either agent or taskId." }], details: {}, isError: true };
 			if (params.taskId && record) {
-				const steerKind: DashboardKind = record.paneId ? "pane" : "oneshot";
+				const steerKind = inferTaskRecordKind(runtimeRoot, record);
 				updateDashboard({
 					agent: record.agent,
-					artifacts: Boolean(record.completionArchivePath || record.outboxFile || record.transcriptPath),
+					artifacts: steerKind === "pane" ? Boolean(record.completionArchivePath || record.outboxFile || record.transcriptPath) : Boolean(record.transcriptPath),
 					completedAt: record.completedAt,
 					kind: steerKind,
 					message: record.summary || record.task,
+					model: record.model,
 					paneId: record.paneId,
 					startedAt: record.createdAt,
 					status: dashboardStatusFor(record.status, steerKind),
@@ -1426,6 +1447,7 @@ export default function (pi: ExtensionAPI) {
 					taskId: record.taskId,
 					transcriptPath: record.transcriptPath,
 					updatedAt: new Date().toISOString(),
+					usage: record.usage,
 				});
 			}
 
@@ -1740,11 +1762,13 @@ export default function (pi: ExtensionAPI) {
 							agent: result.agent,
 							kind: "oneshot",
 							message: oneLinePreview(getFinalOutput(result.messages), 120) || result.task,
+							model: result.model,
 							status: result.exitCode === 0 ? "completed" : "failed",
 							task: result.task,
 							taskId: result.taskId ?? `${result.agent}-step-${i + 1}`,
 							transcriptPath: result.transcriptPath,
 							updatedAt: new Date().toISOString(),
+							usage: result.usage,
 						});
 					}
 
@@ -1836,11 +1860,13 @@ export default function (pi: ExtensionAPI) {
 							agent: item.agent,
 							kind: "oneshot",
 							message: oneLinePreview(getFinalOutput(item.messages), 120) || item.task,
+							model: item.model,
 							status: item.exitCode === -1 ? "running" : item.exitCode === 0 ? "completed" : "failed",
 							task: item.task,
 							taskId: item.taskId ?? `${item.agent}-${index}`,
 							transcriptPath: item.transcriptPath,
 							updatedAt: new Date().toISOString(),
+							usage: item.usage,
 						});
 					};
 					const taskAgent = agents.find((agent) => agent.name === t.agent);
@@ -1958,11 +1984,13 @@ export default function (pi: ExtensionAPI) {
 						agent: result.agent,
 						kind: "oneshot",
 						message: oneLinePreview(getFinalOutput(result.messages), 120) || result.task,
+						model: result.model,
 						status: result.exitCode === 0 ? "completed" : "failed",
 						task: result.task,
 						taskId: result.taskId ?? result.agent,
 						transcriptPath: result.transcriptPath,
 						updatedAt: new Date().toISOString(),
+						usage: result.usage,
 					});
 				}
 				const isError = result.exitCode !== 0 || result.stopReason === "error" || result.stopReason === "aborted";

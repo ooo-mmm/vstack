@@ -200,7 +200,7 @@ export function formatTaskRecordResult(record: PaneTaskRecord, verbose = false):
 }
 
 export function recordTraceRef(record: PaneTaskRecord): string {
-	return dashboardTraceRef({ agent: record.agent, kind: record.paneId ? "pane" : "oneshot", taskId: record.taskId, transcriptPath: record.transcriptPath });
+	return dashboardTraceRef({ agent: record.agent, kind: record.kind ?? (record.paneId ? "pane" : "oneshot"), taskId: record.taskId, transcriptPath: record.transcriptPath });
 }
 
 export function recordTimestamp(record: PaneTaskRecord): number {

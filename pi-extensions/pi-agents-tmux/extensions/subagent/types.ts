@@ -267,6 +267,7 @@ export interface PaneTaskRecord {
 	agent: string;
 	task: string;
 	status: PaneTaskStatus;
+	kind?: DashboardKind;
 	paneId?: string;
 	inboxFile?: string;
 	processingFile?: string;
@@ -275,6 +276,8 @@ export interface PaneTaskRecord {
 	completionSourcePath?: string;
 	completionArchivePath?: string;
 	transcriptPath?: string;
+	usage?: UsageStats;
+	model?: string;
 	summary?: string;
 	filesChanged?: string[];
 	validation?: string[];

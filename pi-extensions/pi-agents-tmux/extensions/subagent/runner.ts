@@ -312,6 +312,7 @@ export async function runSingleAgent(
 			task,
 			runtimeRoot,
 			transcriptPath,
+			model: selectedModel,
 		});
 		appendTranscript({ type: "start", agent: agent.name, taskId: oneShotTaskId, task, cwd: cwd ?? defaultCwd });
 
@@ -422,6 +423,8 @@ export async function runSingleAgent(
 				status: "aborted",
 				runtimeRoot,
 				transcriptPath,
+				model: currentResult.model,
+				usage: currentResult.usage,
 			});
 			throw new Error("Agent was aborted");
 		}
@@ -434,6 +437,7 @@ export async function runSingleAgent(
 			status: failed ? "failed" : "completed",
 			runtimeRoot,
 			transcriptPath,
+			model: currentResult.model,
 			usage: currentResult.usage,
 			error: failed ? currentResult.errorMessage || currentResult.stderr || undefined : undefined,
 		});

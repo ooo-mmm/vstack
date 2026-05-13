@@ -582,6 +582,7 @@ export async function queuePersistentPaneTask(
 		agent: agent.name,
 		task,
 		status: "queued",
+		kind: "pane",
 		paneId: pane.paneId,
 		inboxFile: taskFile,
 		outboxFile,
