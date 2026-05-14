@@ -56,7 +56,7 @@ Claude Code · Cursor · OpenCode · Codex · Pi
 
 ### Customizing With `vstack.toml`
 
-`vstack add` writes a `vstack.toml` at your project root. Edit it to customize per-agent behavior; run `vstack refresh` to apply.
+`vstack add` writes a `vstack.toml` at your project root. Edit it to customize per-agent behavior, then run `vstack refresh` to apply. Generated agent files are overwritten on refresh — `vstack.toml` is the stable home for overrides.
 
 ```toml
 # Skills assigned to each agent.
@@ -67,7 +67,7 @@ rust = ["rust-arch", "rust-cargo", "github", "worktree"]
 [agent-skills-optional]
 rust = [{ skill = "rust-async", when = "Async, tokio, channels" }]
 
-# Instructions near the top of the generated agent file.
+# Instructions added near the top of the generated agent file.
 [agent-launch-instructions]
 rust = "Read docs/architecture.md before coding."
 
@@ -79,8 +79,7 @@ rust = "Always run clippy before committing."
 [skill-instructions]
 trading-design = "Dark theme, green/red accents."
 
-# Generated frontmatter. vstack populates active defaults; edit and refresh.
-# Harness-specific values only affect that harness.
+# Per-harness frontmatter overrides. Each table only affects its own harness.
 [agent-frontmatter.claude]
 rust = { color = "orange", model = "opus[1m]", effort = "xhigh", deny-tools = ["Agent", "AskUserQuestion"], background = false }
 
@@ -91,14 +90,18 @@ rust = { color = "#f97316", model = "openai/gpt-5.5", model-reasoning-effort = "
 rust = { model = "gpt-5.5", model-reasoning-effort = "xhigh", sandbox-mode = "danger-full-access" }
 
 [agent-frontmatter.pi]
-rust = { color = "orange", model = "openai-codex/gpt-5.5:xhigh", deny-tools = ["subagent", "get_subagent_result", "steer_subagent", "stop_subagent", "question"], pane = true }
+rust = { color = "orange", model = "openai-codex/gpt-5.5:xhigh", deny-tools = ["subagent", "question"], pane = true }
 ```
 
-Prefer `deny-tools` for maintenance: Claude Code writes it as native `disallowedTools`, OpenCode writes it as `permission: <tool>: deny`, and Pi agents use it through the `pi-agents-tmux` extension while inheriting active tools by default. Claude Code also supports `effort`, `background`, `isolation`, and `memory` in generated subagent frontmatter; vstack seeds Claude `background` from Pi `pane` on first install (`pane = true` → `background = false`, `pane = false` → `background = true`) and omits `isolation` and `memory` unless configured. Subsequent edits to `background` in `[agent-frontmatter.claude]` are preserved on refresh. Each canonical agent declares its own `effort:` and harnesses write it verbatim — no cross-harness translation. OpenCode defaults every generated agent to `mode: subagent`; set `[agent-frontmatter.opencode].<agent>.mode = "primary"` only when you want an OpenCode primary agent. OpenCode writes `color` as hex and maps reasoning effort to `options.reasoningEffort` plus `reasoningSummary: auto` and `textVerbosity: medium`. Cursor/Codex do not have the same per-agent tool-deny frontmatter. For Pi agents installed through vstack, frontmatter edits belong in harness-specific `[agent-frontmatter.<harness>]` tables in `vstack.toml`, not in `.pi/agents/<name>.md`; generated agent files are overwritten by `vstack refresh`. The Pi `/agents` popup writes model/deny-tools/color changes to the Pi-specific table.
+Key rules:
 
-Migration notes for v3: legacy shared `[agent-frontmatter]` entries are no longer read or regenerated. Move them into the harness-specific table you want, such as `[agent-frontmatter.claude]` or `[agent-frontmatter.pi]`. Legacy `tools` allowlists are also ignored by generated agents; use `deny-tools` instead so each harness can inherit its normal tools and block only the risky ones.
+- **Prefer `deny-tools` over allowlists.** Each harness inherits its normal tool set and blocks only what you list. Claude Code writes it as native `disallowedTools`; OpenCode emits `permission: <tool>: deny`; Pi enforces it via `pi-agents-tmux`. Cursor and Codex don't use per-agent deny lists — Codex subagents use `sandbox-mode`/approval instead.
+- **`effort` is written verbatim** by each harness. Valid: `low`, `medium`, `high`, `xhigh` (Claude also accepts `max`). Pi appends it to its model id as `:<effort>`.
+- **OpenCode agents default to `mode: subagent`.** Set `mode = "primary"` only when you want an OpenCode primary agent. OpenCode `color` must be hex.
+- **Claude `background` seeds from Pi `pane`** on first install (`pane = true` → `background = false`), then your edits are preserved on refresh.
+- **Custom safety hooks (`[[custom-hooks]]`)** follow the same pattern. Direct edits to generated agent or skill files are also picked up where possible.
 
-Custom safety hooks (`[[custom-hooks]]`) follow the same pattern. Direct edits to generated agent or skill files are also picked up automatically where possible, but `vstack.toml` is the stable home for generated frontmatter overrides and reusable project guidance.
+> **v3 migration:** legacy shared `[agent-frontmatter]` and `tools` allowlists are no longer read. Move overrides into `[agent-frontmatter.<harness>]` and switch allowlists to `deny-tools`.
 
 ## Supported Tools
 
