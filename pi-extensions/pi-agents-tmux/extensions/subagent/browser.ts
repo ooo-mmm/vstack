@@ -905,7 +905,10 @@ export function dashboardDisplayLabels(items: SubagentDashboardItem[]): Map<stri
 	for (const item of sorted) {
 		const next = (occurrence.get(item.agent) ?? 0) + 1;
 		occurrence.set(item.agent, next);
-		const label = (total.get(item.agent) ?? 1) > 1 && next > 1 ? `${item.agent} ${next}` : item.agent;
+		// Use the same `<agent> #N` form the popup's nested task-children
+		// and Detail header use, so the same task reads identically across
+		// the mini widget, the popup active-list, and the Inspector.
+		const label = (total.get(item.agent) ?? 1) > 1 ? `${item.agent} #${next}` : item.agent;
 		labels.set(item.taskId, label);
 	}
 	return labels;

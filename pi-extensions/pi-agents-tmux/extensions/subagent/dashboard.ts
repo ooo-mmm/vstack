@@ -241,7 +241,9 @@ function dashboardLabelsForItems(items: SubagentDashboardItem[]): Map<string, st
 	for (const item of stable) {
 		const next = (occurrence.get(item.agent) ?? 0) + 1;
 		occurrence.set(item.agent, next);
-		const label = (total.get(item.agent) ?? 1) > 1 && next > 1 ? `${item.agent} ${next}` : item.agent;
+		// Match the popup's `<agent> #N` task-numbering convention so a
+		// row reads the same in the mini widget and the full /agents popup.
+		const label = (total.get(item.agent) ?? 1) > 1 ? `${item.agent} #${next}` : item.agent;
 		labels.set(item.taskId, label);
 	}
 	return labels;
