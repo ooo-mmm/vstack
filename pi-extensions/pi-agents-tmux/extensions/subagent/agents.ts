@@ -21,6 +21,7 @@ export interface AgentConfig {
 	color?: string;
 	denyTools?: string[];
 	model?: string;
+	effort?: string;
 	pane: boolean;
 	systemPrompt: string;
 	source: "user" | "project";
@@ -108,6 +109,10 @@ function loadAgentsFromDir(dir: string, source: "user" | "project"): AgentConfig
 			color: asString(frontmatter.color),
 			denyTools: parseToolList(frontmatter["deny-tools"] ?? frontmatter.denyTools ?? frontmatter.disallowedTools),
 			model: normalizeModel(frontmatter.model),
+			// Reasoning effort lives under different keys depending on harness
+			// (Claude `effort`, OpenCode/Codex `model-reasoning-effort`). Both
+			// resolve to the same display token (low|medium|high|xhigh|max).
+			effort: asString(frontmatter["model-reasoning-effort"] ?? frontmatter.modelReasoningEffort ?? frontmatter.effort),
 			pane: asBoolean(frontmatter.pane ?? frontmatter.persistentPane),
 			systemPrompt: body,
 			source,

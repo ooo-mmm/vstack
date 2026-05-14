@@ -1661,7 +1661,7 @@ function createAgentsBrowserComponent(
 		const entry = historyCache.get(record.taskId);
 		if (entry?.items || entry?.loading) return;
 		historyCache.set(record.taskId, { loading: true });
-		void traceViewerItems(record, historyTaskNumbers.get(record.taskId)).then((items) => {
+		void traceViewerItems(record, historyTaskNumbers.get(record.taskId), discovery).then((items) => {
 			historyCache.set(record.taskId, { items });
 			requestRender();
 		}).catch((error) => {
@@ -2219,7 +2219,7 @@ export async function showAgentEditConfirmation(ctx: ExtensionContext, message: 
 	}), { overlay: true, overlayOptions: { anchor: "center", width: AGENT_EDIT_CONFIRM_WIDTH, maxHeight: "40%" } });
 }
 
-export async function traceViewerItems(record: PaneTaskRecord, taskNumber?: number): Promise<TraceViewerItem[]> {
+export async function traceViewerItems(record: PaneTaskRecord, taskNumber?: number, discovery?: { agents: AgentConfig[] }): Promise<TraceViewerItem[]> {
 	const ref = recordTraceRef(record);
 	const usage = record.usage ? formatUsageStats(record.usage, record.model) : "";
 	const completionPath = record.completionArchivePath ?? record.completionSourcePath;
@@ -2228,17 +2228,30 @@ export async function traceViewerItems(record: PaneTaskRecord, taskNumber?: numb
 		: record.status === "completed" || record.status === "failed" || record.status === "blocked"
 			? COMPLETION_SUMMARY_UNAVAILABLE
 			: "No summary yet.";
+	// Reasoning-effort lookup: the record itself does not persist `effort`,
+	// but the agent's frontmatter does. Pull from discovery when available
+	// (popup path) so the Model line reads `gpt-5.5 xhigh` instead of just
+	// `gpt-5.5`. Effort lives under `model-reasoning-effort` (OpenCode /
+	// Codex / Pi) or `effort` (Claude); both resolve to the same display
+	// token.
+	const agentConfig = discovery?.agents.find((a) => a.name === record.agent);
+	const effort = agentConfig?.effort?.trim() || undefined;
+	const modelLine = record.model
+		? `Model    ${record.model}${effort ? ` ${effort}` : ""}`
+		: "";
+	// `" "` (single space) is a sentinel for an intentional blank line; it
+	// survives the `.filter(Boolean)` pass below that drops conditionally
+	// empty entries (e.g. record.completedAt missing -> no `Done` line).
+	const BLANK = " ";
 	const metadata = [
 		"Overview",
 		"",
-		"Metadata",
-		"--------",
 		`Ref      ${ref}`,
 		`Agent    ${record.agent}`,
 		taskNumber ? `Task #   ${taskNumber}` : "",
 		`Status   ${record.status}`,
 		`Task ID  ${record.taskId}`,
-		record.model ? `Model    ${record.model}` : "",
+		modelLine,
 		usage ? `Usage    ${usage}` : "",
 		record.transcriptPath ? `Transcript  ${record.transcriptPath}` : "",
 		completionPath ? `Completion  ${completionPath}` : "",
@@ -2246,15 +2259,15 @@ export async function traceViewerItems(record: PaneTaskRecord, taskNumber?: numb
 		record.completionSourcePath ? `Source   ${record.completionSourcePath}` : "",
 		`Created  ${record.createdAt}`,
 		record.completedAt ? `Done     ${record.completedAt}` : "",
-		"",
+		BLANK,
 		"Summary",
 		"-------",
 		summaryText,
-		"",
+		BLANK,
 		"Files changed",
 		"-------------",
 		record.filesChanged?.length ? record.filesChanged.map((file) => `- ${file}`).join("\n") : "None reported",
-		"",
+		BLANK,
 		"Validation",
 		"----------",
 		record.validation?.length ? record.validation.map((item) => `- ${item}`).join("\n") : "None reported",
