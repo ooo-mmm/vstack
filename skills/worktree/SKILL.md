@@ -34,6 +34,8 @@ Resolves project root via `git rev-parse`, detects default branch automatically,
 
 `remove` deletes the worktree before deleting the local branch. Branch deletion uses safe `git branch -d`; if that fails after worktree removal, the script exits non-zero with a diagnostic naming the remaining branch and manual `git branch -D` recovery command.
 
+When a configured symlink path is already tracked in the worktree branch, the script marks that path assume-unchanged before replacing it so `git status` stays clean.
+
 ### `create` flags
 
 | Flag | Effect |

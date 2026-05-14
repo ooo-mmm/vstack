@@ -67,6 +67,19 @@ assert_symlink_target() {
   fi
 }
 
+assert_git_status_clean_for_path() {
+  local repo="$1" path="$2" name="$3"
+  local status
+  status=$(git -C "$repo" status --short -- "$path")
+  if [[ -z "$status" ]]; then
+    PASS=$((PASS + 1))
+    printf '  ok    %s\n' "$name"
+  else
+    FAIL=$((FAIL + 1))
+    printf '  FAIL  %s\n        git status: %s\n' "$name" "$status"
+  fi
+}
+
 assert_branch_exists() {
   local repo="$1" branch="$2" name="$3"
   if git -C "$repo" show-ref --verify --quiet "refs/heads/$branch"; then
@@ -134,17 +147,20 @@ assert_contains "$(cat "$UNMERGED_ROOT/unmerged.err")" "branch -D \"issue-unmerg
 LINK_ROOT="$TMP_ROOT/links"
 make_repo "$LINK_ROOT/main"
 printf 'agents\n' > "$LINK_ROOT/main/AGENTS.md"
-git -C "$LINK_ROOT/main" add AGENTS.md
-git -C "$LINK_ROOT/main" commit -q -m agents
 mkdir -p "$LINK_ROOT/main/.claude/agents"
+printf '{"hooks":{}}\n' > "$LINK_ROOT/main/.claude/settings.json"
+git -C "$LINK_ROOT/main" add AGENTS.md .claude/settings.json
+git -C "$LINK_ROOT/main" commit -q -m agents
 cat > "$LINK_ROOT/main/.env.local" <<'ENV'
-WORKTREE_SYMLINKS=".env.local .claude/agents"
+WORKTREE_SYMLINKS=".env.local .claude/settings.json .claude/agents"
 WORKTREE_RELATIVE_SYMLINKS=".claude/CLAUDE.md=../AGENTS.md"
 ENV
 git -C "$LINK_ROOT/main" worktree add -q -b issue-links "$LINK_ROOT/trees/issue-links" main
 links_out=$(cd "$LINK_ROOT/main" && "$WORKTREE_SCRIPT" fix-links "$LINK_ROOT/trees/issue-links")
 assert_eq "$links_out" "Restored symlinks in $LINK_ROOT/trees/issue-links" "fix-links reports restored symlinks"
 assert_symlink_target "$LINK_ROOT/trees/issue-links/.env.local" "$LINK_ROOT/main/.env.local" ".env.local symlink points to main checkout"
+assert_symlink_target "$LINK_ROOT/trees/issue-links/.claude/settings.json" "$LINK_ROOT/main/.claude/settings.json" "configured file symlink points to main checkout"
+assert_git_status_clean_for_path "$LINK_ROOT/trees/issue-links" ".claude/settings.json" "configured tracked file symlink is hidden from git status"
 assert_symlink_target "$LINK_ROOT/trees/issue-links/.claude/agents" "$LINK_ROOT/main/.claude/agents" "configured dir symlink points to main checkout"
 assert_symlink_target "$LINK_ROOT/trees/issue-links/.claude/CLAUDE.md" "../AGENTS.md" "relative symlink keeps worktree-local AGENTS target"
 

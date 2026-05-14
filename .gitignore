@@ -9,12 +9,20 @@ tmp/
 docs/work-in-progress/
 
 # Harness install/runtime mirrors; canonical source lives elsewhere.
-.agents/
-.claude/
-.cursor/
-.codex/
-.opencode/
-.pi/
+# Match files, directories, and symlinks so worktree links stay invisible.
+/.agents
+/.agents/**
+/.claude
+/.claude/**
+/.cursor
+/.cursor/**
+/.codex
+/.codex/**
+/.opencode
+/.opencode/**
+/.pi
+/.pi/**
+/opencode.json
 
 # npm artifacts (pi-extensions are published to npm)
 node_modules/

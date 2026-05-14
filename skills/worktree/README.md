@@ -42,6 +42,7 @@ Set in `.env` or `.env.local` — all optional. When both files exist, `.env.loc
 | `BOT_REMOTE_NAME` / `BOT_REMOTE_URL` | Remote for bot pushes |
 
 Include `.env.local` in `WORKTREE_SYMLINKS` when worktree sessions should share the main checkout's local environment/config.
+If a configured symlink path is already tracked in the worktree branch, the script marks that path assume-unchanged before replacing it so `git status` stays clean.
 
 Example for sharing local env plus generated Claude assets while keeping `.claude/CLAUDE.md`
 pointed at each worktree's own `AGENTS.md`:

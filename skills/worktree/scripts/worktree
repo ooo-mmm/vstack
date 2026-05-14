@@ -142,7 +142,12 @@ symlink_into_worktree() {
   exclude_from_worktree_index "$2" "$1"
 
   if [[ -f "$src" ]]; then
-    # File symlink
+    # File symlink — if the path is tracked in the worktree (common before a
+    # project stops committing harness config files), mark it assume-unchanged
+    # so replacing it with a symlink does not leave a noisy typechange.
+    if git -C "$2" ls-files --error-unmatch "$1" >/dev/null 2>&1; then
+      git -C "$2" update-index --assume-unchanged "$1" 2>/dev/null || true
+    fi
     mkdir -p "$(dirname "$dst")"
     ln -sf "$src" "$dst"
   elif [[ -d "$src" ]]; then
