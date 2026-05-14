@@ -2,6 +2,29 @@
 
 Implementation surface for contributors and AI callers. End-user setup, commands, customization, and settings live in [`README.md`](./README.md).
 
+## Nomenclature
+
+Three layers, used consistently across tool output, mini dashboard widget, full `/agents` popup, and the persisted record:
+
+- **Agent** — the static profile (name, model, kind, deny-tools, description). One per `.pi/agents/<name>.md` (or compatibility source). Reusable across many invocations.
+- **Session** — the underlying Pi runtime carrying an agent. Has a `sessionId` and a session file (JSONL transcript) that survives across turns. Pane agents have ONE persistent session per pane; bg agents default to ONE-SHOT (fresh session per task) but can reuse a session via `sessionKey`.
+- **Task** — a single `subagent` tool invocation. Has a `taskId`, the input prompt, status (`queued` → `working` → `completed | failed | needs_completion`), summary, transcript path, and usage. The unit of work the user observes.
+
+Relationships:
+
+- 1 agent → N sessions (over a project's lifetime). 1 session → M tasks. For pane agents `M >> 1`; for bg one-shot agents `M = 1` per session; for bg agents reusing a `sessionKey` lane `M >= 1`.
+- A **prompt** is the input text of a task. A task is not just a prompt — it's the whole invocation record including lifecycle and result. The History tab's `Task` subtab specifically shows the input prompt of a completed task.
+- `taskId` is globally unique. `sessionId` is per-runtime. `agent.name` is the static identifier.
+
+Where the UI surfaces each layer:
+
+- **Mini dashboard widget** — one row per dispatched task (current state + usage rollup). Resumed pane work can share a row when transcript identity matches; task children expose individual `taskId`s.
+- **`/agents` popup → Agents tab** — agent profiles + currently active tasks. Selecting an agent defaults to its latest task; expanding shows task children for multi-task agents (repeated bg launches or pane reuse).
+- **`/agents` popup → History tab** — completed tasks only, latest first, labelled `agent #N · time · short taskId`. Detail subtabs are `Summary` (status/usage/paths), `Completion` (final response), and `Task` (the prompt that was submitted).
+- **Tool output rendering** — per-task status rows (`● Agent <name> <status> · bg|pane · ctrl+o expand`) with a `Task: <prompt>` body line when echoing the prompt and a JSON/markdown-aware preview when showing the result.
+
+When reading code, prefer the layer names above over ambiguous terms like "run" or "invocation". `PaneTaskRecord` is per-task; `PaneSession*` types refer to the session runtime; `discoveredAgent` / `agentConfig` refer to the static profile.
+
 ## Subagent tool surface
 
 The `subagent` Pi tool accepts single, parallel, and chain forms.
