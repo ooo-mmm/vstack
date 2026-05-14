@@ -1,0 +1,676 @@
+# Flightdeck rich activity events plan
+
+Date: 2026-05-14
+
+## Status update (2026-05-14, post-reframe + #27 baseline)
+
+This plan was drafted against `origin/main` after the session-management reframe (PRs #20–#33), pi-background-tasks output-wake hardening (PR #34, commit `7da6ee2`), and pi-agents-tmux subagent stabilization (PR #35, commit `cd804a7`). Concrete impacts:
+
+- `pi-extensions/pi-background-tasks/extensions/wake-events.ts` already defines `eventAt`, `sequence`, `notifyMode` (`always | transition | first-match-only`), `dedupeKey`, `pendingWakes`, `voidedWakes`/`voidedWakeSequences`. The activity event `id`/dedup rule in this plan must compose with that schema, not parallel it — see [Activity event schema](#activity-event-schema).
+- `pi-extensions/pi-agents-tmux/extensions/subagent/` has been split: `index.ts` is now wiring, with `runner.ts`, `dispatch.ts`, `sessions.ts`, and `wait.ts` owning the execution surface. Activity producers attach to `runner.ts`/`dispatch.ts`. The `wait_for_subagent_idle` tool (`waitFor: "idle" | "completion"`) is the canonical pane-idle observation point.
+- `skills/flightdeck/lib/flightdeck-core/src/state/master-state.ts::archiveState` already exists (PR #23). Activity archival in Phase 1 must hook into the same `flightdeck-state archive` flow.
+- `skills/orchestration/scripts/flightdeck-mode` exposes the tri-state `FLIGHTDECK_MANAGED` signal (PR #21). Phase 5 GitHub/Linear wrapper instrumentation should gate on `FLIGHTDECK_MANAGED=1` or `FLIGHTDECK_SESSION_ID`.
+- `pi-extensions/pi-flightdeck/extensions/state-archive.ts`, `state-normalizers.ts`, `render-terminated.ts`, `session-ui.ts`, and `dashboard-visibility.ts` (PRs #25, #31) are the right seams for the Phase 6 Activity tab.
+- `pane-registry log-decision` was *not* touched by PR #33 — it still appends only to `.issues[ISSUE].decisions_log`. The Phase 2 generic-decision fix here is still required; PR #33's `set-state`/`set-substate`/`set` dual-update is the pattern to copy.
+
+## Goal
+
+Make Flightdeck's Live feed useful as a user-facing activity stream, not a raw daemon-log tail. It should answer: what changed, which managed session changed, whether user attention is needed, and where to inspect the full details.
+
+Target examples:
+
+- session/entry started, attached, resumed, completed, cancelled, dead
+- agent pane spawned, task queued, task started, task completed, task failed/blocked/needs completion
+- background task started, output matched, task finished, task failed/timed out/stopped
+- structured question asked, answered, rejected
+- Flightdeck decision recorded
+- PR opened/updated/commented, CI/checks started/passed/failed, PR merged/auto-merge queued/merge blocked
+- Linear issue created/updated/linked/finished/cancelled
+- daemon/subscriber warnings and errors
+
+This plan keeps Decisions as a focused decision/audit view while making Live feed (likely renamed Activity) the chronological, filtered stream that can include decision events.
+
+## Current-state audit
+
+### pi-flightdeck surfaces
+
+Relevant files:
+
+- `pi-extensions/pi-flightdeck/extensions/flightdeck.ts`
+- `pi-extensions/pi-flightdeck/extensions/state.ts`
+- `pi-extensions/pi-flightdeck/extensions/agents-bridge.ts`
+- `pi-extensions/pi-flightdeck/README.md`
+
+Current popup tabs:
+
+- Overview renders normalized tracked sessions from `readTrackedEntries(snapshot.master)`.
+- Live feed currently aggregates four ad-hoc sources:
+  - daemon log tail: `snapshot.daemon.logTail`
+  - per-entry decision logs: `flatDecisionsLog(snapshot.master, max)`
+  - durable pending wake events: `snapshot.pendingEvents`
+  - recent adapter wake stream: `snapshot.wakeEvents`
+- Live feed now labels rows with tracked session names/ids and defaults to an important-only filter, with `ctrl+n` toggling noisy rows.
+- Conversations is built in-memory from `wakeEvents` rows with `last_assistant_text`; Pi streaming partials are folded.
+- Decisions reads only `decisions_log` from tracked entries and provides detail popups.
+- Daemon tab is intentionally closer to raw log output, with heartbeat folding.
+
+Limitations:
+
+- Live feed is still string-parsing daemon logs and wake-event JSON rather than rendering a stable activity schema.
+- Event identity/dedup is best-effort per source. There is no durable activity id.
+- Rich lifecycle events are not persisted in one place.
+- Decisions are duplicated into Live feed but not modeled as a formal subtype of activity.
+- Conversations are not archived beyond the in-memory popup cache.
+- Full-stream inspection exists only as detail popups; there is no export/open-in-editor path.
+
+### Flightdeck master state and registry
+
+Relevant files:
+
+- `skills/flightdeck/lib/flightdeck-core/src/state/types.ts`
+- `skills/flightdeck/lib/flightdeck-core/src/state/master-state.ts`
+- `skills/flightdeck/lib/flightdeck-core/src/bin/flightdeck-state.ts`
+- `skills/flightdeck/scripts/flightdeck-state.bash`
+- `skills/flightdeck/lib/flightdeck-core/src/bin/pane-registry.ts`
+- `skills/flightdeck/scripts/pane-registry.bash`
+
+Current model:
+
+- Schema `1.1` is the active compatibility bridge.
+- `.entries` is the neutral tracked-session model; `.issues` remains the legacy issue projection.
+- `flightdeck-state tracked-entries` and `pane-registry list --format json` are the normalized read seam.
+- `pane-registry init-entry` creates a tracked entry with `kind`, `title`, pane metadata, adapter metadata, and `decisions_log: []`.
+- `pane-registry log-decision` appends to legacy `.issues[ISSUE].decisions_log` only. The write projection keeps issue entries mostly compatible, but generic entries need a first-class way to append decisions/events to `.entries[ENTRY_ID]`.
+
+Limitations:
+
+- There is no top-level or per-session `activity_log`.
+- `decisions_log` is the only durable audit stream, and it only captures prompt/answer decisions.
+- State changes (`set-state`, `set-substate`, `teardown-entry`, `reconcile` drift) do not emit structured activity records.
+- Writing large event history into the master JSON would bloat the file and complicate locking; JSONL sidecar is better.
+
+### Flightdeck daemon and subscribers
+
+Relevant files:
+
+- `skills/flightdeck/lib/flightdeck-core/src/daemon/events.ts`
+- `skills/flightdeck/lib/flightdeck-core/src/daemon/loop.ts`
+- `skills/flightdeck/lib/flightdeck-core/src/daemon/wake.ts`
+- `skills/flightdeck/lib/flightdeck-core/src/daemon/subscribers/spawn.ts`
+- `skills/flightdeck/scripts/lib/subscribers.bash`
+- `skills/flightdeck/lib/flightdeck-core/src/events/bg-task-exit.ts`
+- `skills/flightdeck/scripts/lib/daemon-bg-task-events.sh`
+
+Current model:
+
+- Subscribers write raw JSONL into `fd-wake-events-<session>.log` for adapter-originated events.
+- Daemon drains that log, classifies canonical wake tags, appends durable wake rows to `fd-daemon-events-<session>.jsonl`, and wakes the master.
+- Canonical tags include questions, subagent completion failures, `pi-bg-task-exit`, domain mismatch, issue prompt tags, and terminal signals.
+- `appendEvent` dedupes by `pane_id|hash|tag` and writes wake-specific records with optional `details`.
+- `flightdeck-daemon` log is line-oriented text with tags such as `[start]`, `[heartbeat]`, `[classify]`, `[wake]`, `[subscriber-dead]`.
+
+Limitations:
+
+- Wake events are not the same thing as user-visible activity. Some activity should not wake the master; some wake records are implementation details.
+- The daemon log is useful for debugging but too raw for Live feed.
+- Pi subscriber currently reads many `pi-session-bridge` events but only forwards a small set:
+  - questions opened
+  - subagent completions only when failed/blocked/needs completion
+  - background-task exit
+  - assistant message completion text
+- Background-task starts and successful subagent completions are not surfaced to Flightdeck unless inferred from raw transcript/logs.
+
+### pi-session-bridge
+
+Relevant file:
+
+- `pi-extensions/pi-session-bridge/extensions/session-bridge.ts`
+
+Current model:
+
+- Publishes structured stream events for Pi sessions:
+  - `bridge_start`, `bridge_stop`, `input`
+  - `agent_start`, `agent_end`, `turn_start`, `turn_end`
+  - `message_start`, `message_update`, `message_end`
+  - `tool_execution_start`, `tool_execution_end`, `tool_execution_error`
+  - model/thinking changes, session tree
+  - question-service events
+- Provides `questions`, `answer`, `reject`, `history`, and `stream` commands.
+
+Opportunity:
+
+- This is the best transport for observing inner Pi sessions. Do not parse terminal text when a bridge event exists.
+- Add or document a small `vstack_activity` bridge event channel so other Pi extensions can publish curated activity without creating user-visible chat messages.
+
+### pi-background-tasks
+
+Relevant files (post-PR #24 + PR #34):
+
+- `pi-extensions/pi-background-tasks/extensions/types.ts`
+- `pi-extensions/pi-background-tasks/extensions/wake-events.ts` — wake metadata: `eventAt`, per-task monotonic `sequence`, `notifyMode` (`always | transition | first-match-only`), `dedupeKey`, `pendingWakes`, `voidedWakes` / `voidedWakeSequences`. `clearTaskTimers` records `cleared-on-task-exit` diagnostics for dropped output wakes.
+- `pi-extensions/pi-background-tasks/extensions/lifecycle.ts` — finalize + replay-missed-exits on `session_start`; durable `exitNotified` flag.
+- `pi-extensions/pi-background-tasks/extensions/persistence.ts` — atomic snapshot persistence + sidecar.
+- `pi-extensions/pi-background-tasks/extensions/orphan-watcher.ts` — PID-reuse-safe orphan detection via pid + startToken; comm is diagnostic only.
+- `pi-extensions/pi-background-tasks/extensions/registrations.ts`
+
+Current model:
+
+- Tasks persist snapshots with status, command, cwd, PID, log file, notify config, output bytes, exit code, and wake diagnostics.
+- `sendTaskWake` emits a `vstack-background-tasks:event` custom message for output/exit wakeups.
+- Flightdeck consumes only the exit branch via the Pi subscriber and routes it as `pi-bg-task-exit`.
+- Every wake (exit + output) already carries `eventAt`, `sequence`, `taskStatusAtEmit`, and `deliveredAt` on emit. The activity stream should reuse these fields directly instead of inventing parallel ones.
+
+Limitations:
+
+- Spawn/start events are visible to the local UI/tool result but not as bridge-visible curated activity for Flightdeck.
+- Output-match events are wake-capable, but Flightdeck currently ignores them unless they become user-visible in assistant output.
+- Exit events wake the master; richer activity should record all terminal states but only wake when configured or failed.
+- Orphan-running task transitions (`pid-gone` / `pid-reused`) are local diagnostics and not surfaced as Flightdeck activity yet.
+
+### pi-agents-tmux
+
+Relevant files (post-PR #35 split):
+
+- `pi-extensions/pi-agents-tmux/extensions/subagent/index.ts` — wiring/tool registration.
+- `pi-extensions/pi-agents-tmux/extensions/subagent/runner.ts` — launch/spawn/process supervision; context-overflow retry. (vstack#38 adds a sibling "compact-then-empty `agent_end`" detector here.)
+- `pi-extensions/pi-agents-tmux/extensions/subagent/dispatch.ts` — single/parallel/chain orchestration, inventory guard, auto-batching.
+- `pi-extensions/pi-agents-tmux/extensions/subagent/sessions.ts` — one-shot lane minting + budget guard for reused `sessionKey` lanes.
+- `pi-extensions/pi-agents-tmux/extensions/subagent/wait.ts` — `wait_for_subagent_idle` + `waitFor: "idle" | "completion"`.
+- `pi-extensions/pi-agents-tmux/extensions/subagent/pane.ts`, `tasks.ts`, `types.ts` — pane lifecycle and task records.
+
+Current model:
+
+- Emits local Pi events: `subagents:queued`, `subagents:started`, `subagents:completed`, `subagents:failed`, `subagents:needs_completion`, `subagents:steered`.
+- Persists task records in `tasks.json` with agent, task id, status, pane id, transcript path, summary, files changed, validation, diagnostics, and usage.
+- Exposes `globalThis[Symbol.for("vstack.pi.agents")]` for per-pane stats; `pi-flightdeck` already reads this for cost/turn/token summaries.
+- Child pane completion uses `complete_subagent`, then parent emits/polls completion state. Pi subscriber currently emits Flightdeck wake only for bad completions.
+- `wait_for_subagent_idle` reports `idle-after-busy` only after observing the pane leave idle first; `never-busy` is returned distinctly. Activity producers should use this as the pane-idle event source, not transcript inference.
+
+Limitations:
+
+- Local `pi.events` are not visible to Flightdeck when the agent work happens inside a tracked inner Pi process unless session-bridge relays them or the extension publishes curated activity.
+- Successful subagent completions are useful activity but should not wake the master unless policy says so.
+- Context-overflow retry attempts (PR #35) are not currently surfaced as activity — a retry-once is invisible unless the second attempt also fails.
+- Inventory-guard rejections (unknown agent name) currently surface as tool errors but not as Flightdeck activity, even though they are useful audit signal.
+
+### Workflows and issue-domain actions
+
+Relevant files:
+
+- `skills/flightdeck/workflows/session-watch.md`
+- `skills/flightdeck/workflows/watch.md`
+- `skills/flightdeck/workflows/session-handle-prompt.md`
+- `skills/flightdeck/workflows/handle-prompt.md`
+- `skills/flightdeck/workflows/merge-plan.md`
+- `skills/flightdeck/workflows/close-issue.md`
+- `skills/flightdeck/workflows/terminate.md`
+
+Current model:
+
+- Generic watch loop routes prompt-like events and ack/yield.
+- Issue watch layer owns PR/Linear/worktree behavior.
+- `session-handle-prompt.md` handles structured questions, generic multi-choice, terminal signals, and bg-task exit.
+- `handle-prompt.md` handles issue-only decisions such as CI/bot review, rebase, force push, audit relations, merge prompts, fix suggestions, and descoping.
+- `merge-plan.md` computes conflict graph and merge ordering.
+- `close-issue.md` marks issue merged/aborted and tears down pane.
+- `terminate.md` writes summary and archives state.
+
+Limitations:
+
+- Many high-value events happen in markdown workflow steps and never become structured state except indirectly through `decisions_log`, `state`, `merge_queue`, or summary file.
+- PR/CI/Linear events require explicit instrumentation at workflow/helper boundaries or wrappers, not UI-side inference.
+
+## Target architecture
+
+### Separate activity from wake routing
+
+Do not overload `fd-daemon-events-<session>.jsonl`. Wake events answer: "should the master run?" Activity events answer: "what happened?"
+
+Add a new Flightdeck activity stream:
+
+- Project/master sidecar: `<FLIGHTDECK_STATE_DIR>/flightdeck-activity-<TMUX_SESSION>.jsonl`
+- Archive sidecar on terminate: `<FLIGHTDECK_STATE_DIR>/flightdeck-activity-<TMUX_SESSION>-<terminated_at>.jsonl.archive`. Archive must be produced by the same `flightdeck-state archive` flow already used for terminated session state (PR #23) so a `*.json.archive` and its matching `*.jsonl.archive` always land together.
+- Master state fields:
+  - `activity_path`
+  - `activity_archive_path` after termination
+  - optional `activity_schema_version`
+
+Reasons:
+
+- Keeps master JSON compact.
+- Preserves full stream for post-completion dashboard and editor export.
+- Lets daemon, workflow helpers, and Pi extensions append without read-modify-writing the master JSON.
+- Allows tail reads in `pi-flightdeck` without parsing raw daemon logs.
+
+### Activity event schema
+
+Use additive JSONL. One line per event.
+
+```ts
+interface FlightdeckActivityEventV1 {
+  schema_version: 1;
+  id: string;                 // stable sha256/idempotency key
+  ts: string;                 // ISO8601
+  session_id?: string;         // tmux session name or stable session key when known
+  source: "flightdeck" | "daemon" | "subscriber" | "pi-session" | "pi-agents" | "pi-bg-task" | "workflow" | "github" | "linear";
+  entry_id?: string;
+  entry_title?: string;
+  entry_kind?: string;
+  pane_id?: string;
+  harness?: string;
+
+  type:
+    | "session.started" | "session.completed" | "session.cancelled"
+    | "entry.registered" | "entry.attached" | "entry.resumed" | "entry.state_changed" | "entry.completed" | "entry.dead"
+    | "daemon.started" | "daemon.stopped" | "daemon.warning" | "daemon.error" | "subscriber.started" | "subscriber.dead"
+    | "question.opened" | "question.answered" | "question.rejected"
+    | "decision.recorded"
+    | "agent.spawned" | "agent.task_queued" | "agent.task_started" | "agent.task_completed" | "agent.task_failed" | "agent.task_blocked" | "agent.needs_completion" | "agent.steered" | "agent.empty_after_compact"
+    | "bg_task.started" | "bg_task.output_matched" | "bg_task.completed" | "bg_task.failed" | "bg_task.timed_out" | "bg_task.stopped"
+    | "pr.opened" | "pr.updated" | "pr.comments_left" | "pr.checks_started" | "pr.checks_passed" | "pr.checks_failed" | "pr.merge_queued" | "pr.merged" | "pr.merge_blocked"
+    | "linear.issue_created" | "linear.issue_updated" | "linear.issue_finished" | "linear.issue_cancelled" | "linear.relation_created"
+    | string;
+
+  severity: "debug" | "info" | "success" | "warning" | "error";
+  importance: "critical" | "important" | "normal" | "noisy";
+  summary: string;            // one-line user-facing text
+  body?: string;               // wrapped detail text / raw payload summary
+  links?: Array<{ label: string; url?: string; path?: string }>;
+  refs?: {
+    task_id?: string;
+    agent?: string;
+    bg_task_id?: string;
+    question_id?: string;
+    pr_number?: number;
+    issue_id?: string;
+    linear_id?: string;
+    commit?: string;
+    check_name?: string;
+  };
+  details?: Record<string, unknown>; // bounded, scrubbed, not huge raw logs
+  noisy?: boolean;             // derived convenience for UI
+}
+```
+
+Dedup/id rule:
+
+- Producers should pass a natural idempotency key.
+- Helper computes `id = sha256([session, entry_id, type, natural_key].join("\0"))` when caller omits `id`.
+- Append helper should keep a tiny recent-id cache per process where practical; UI also dedupes by `id`.
+- When a producer already has a stable per-event identifier (notably `pi-background-tasks` wake-event `sequence` and `dedupeKey`, or `pi-agents-tmux` `taskId`), the natural key should include it so activity dedup matches the producer's own dedup. Activity `id` and producer `sequence` are *complementary*: the producer dedupes its own emit; activity `id` dedupes across consumers and idempotent re-reads.
+
+Retention:
+
+- Default full activity JSONL cap: 5000 events or 10 MB per session.
+- `pi-flightdeck` tail default: 300 events.
+- Details cap per event: 16 KiB unless explicitly linked to artifact file.
+
+## Implementation plan
+
+### Phase 1 — Core activity writer/readers
+
+1. Add shared activity helpers in `skills/flightdeck/lib/flightdeck-core/src/activity/`:
+   - `types.ts`
+   - `paths.ts`
+   - `append.ts`
+   - `read.ts`
+   - `format.ts`
+2. Add bash mirror helpers under `skills/flightdeck/scripts/lib/activity.bash`.
+3. Add `flightdeck-state activity` subcommands in bash and TS:
+   - `activity path [--session <name>]`
+   - `activity append <json-event>`
+   - `activity tail [--limit N] [--json]`
+   - `activity export [--format jsonl|markdown] [--filter <expr>]`
+4. `flightdeck-state init` writes `activity_path` if absent.
+5. `terminate.md` / terminate helpers archive the activity file alongside the master state archive.
+6. Tests:
+   - JSON schema normalization
+   - id generation/dedup
+   - lock-held append under concurrent writers
+   - bash/TS parity for `activity path|append|tail|export`
+
+Validation:
+
+```bash
+cd skills/flightdeck/lib/flightdeck-core
+bun test
+bun run typecheck
+```
+
+### Phase 2 — Instrument existing Flightdeck state transitions
+
+Emit activity from existing mutation points first. This gives immediate value without waiting for every external integration.
+
+Add events in `pane-registry` bash and TS:
+
+- `init-entry` -> `entry.registered`
+- `set-state` -> `entry.state_changed`
+- `set-substate` -> `entry.state_changed` with substate
+- `log-decision` -> `decision.recorded`
+- `teardown-entry/window` -> `entry.completed` / `entry.dead` / `entry.cancelled` depending state/result
+- `reconcile` drift/drop/backfill -> `daemon.warning` or `entry.dead`
+
+Fix generic decision logging while here:
+
+- Add `pane-registry log-decision-entry <ENTRY_ID> <tag> <answer>` or make existing `log-decision` resolve normalized entries.
+- Append to `.entries[ENTRY_ID].decisions_log` and project to `.issues[ISSUE].decisions_log` for issue entries.
+- Mirror every decision as `decision.recorded` in activity.
+
+Tests:
+
+- issue entry still gets legacy `.issues[ISSUE].decisions_log`
+- generic entry gets `.entries[ENTRY].decisions_log`
+- activity records emitted exactly once
+- old callers remain compatible
+
+### Phase 3 — Instrument daemon and subscriber lifecycle
+
+Add activity append path to `flightdeck-daemon start` options/env and pass it to subscriber loops.
+
+Emit curated daemon activity:
+
+- daemon start/stop/max-lifetime successor
+- subscriber spawn/reattach/dead/restart
+- master gone/session gone
+- wake delivery failure
+- domain mismatch
+- warnings/errors
+
+Do not emit heartbeat to activity by default. If retained, mark `importance="noisy"` and hide by default.
+
+Subscriber activity mapping:
+
+- question opened -> `question.opened`
+- assistant completion text -> do not emit by default; Conversations already handles this
+- subagent completion:
+  - completed -> `agent.task_completed`, no wake
+  - failed/blocked/needs_completion -> `agent.task_failed|blocked|needs_completion`, wake as today
+- background task exit -> terminal bg-task event by status, wake as today when configured
+- output match -> `bg_task.output_matched` if `notifyOnOutput` event arrives; wake/steer semantics remain owned by pi-background-tasks
+
+Tests:
+
+- activity append does not change wake behavior
+- bad subagent completion still wakes
+- successful subagent completion appears in activity but does not wake
+- bg-task failed event is red/error and wakes when notify policy says so
+
+### Phase 4 — Pi extension bridge for richer local events
+
+Goal: avoid parsing chat/tool text when Pi extensions already know the structured event.
+
+Add a small cross-extension activity broker for each Pi runtime:
+
+- Symbol: `Symbol.for("vstack.pi.activity")`
+- Methods:
+  - `publish(event)`
+  - `subscribe(listener)`
+  - `recent(limit)`
+- `pi-session-bridge` publishes broker events on `stream` as `event="vstack_activity"`.
+
+Wire producers:
+
+- `pi-background-tasks` publishes:
+  - `bg_task.started`
+  - `bg_task.output_matched`
+  - `bg_task.completed|failed|timed_out|stopped`
+- `pi-agents-tmux` publishes:
+  - `agent.spawned`
+  - `agent.task_queued`
+  - `agent.task_started`
+  - `agent.task_completed|failed|blocked|needs_completion`
+  - `agent.steered`
+  - `agent.empty_after_compact` (vstack#38 — synthetic, emitted when the subagent's bridge stream shows `session_compact` followed by `agent_end{content:[]}`; surfaced as `severity: warning`, `importance: important`)
+- `pi-questions` / question-service path publishes:
+  - `question.opened`
+  - `question.answered`
+  - `question.rejected`
+
+Flightdeck Pi subscriber then consumes `vstack_activity` from `pi-bridge stream`, maps it to Flightdeck activity schema, and appends to the session activity JSONL. Existing custom-message paths stay as compatibility fallback until one release after broker adoption.
+
+Reachability check before coding:
+
+- Confirm `pi.events` cannot already subscribe to arbitrary extension events through `pi-session-bridge` without new broker.
+- Confirm `display:false` custom messages are either available or not needed.
+- Confirm broker events do not create user-visible chat noise.
+
+### Phase 5 — Instrument issue-domain workflow events
+
+Add explicit activity emission in Flightdeck workflows and helper scripts where user-visible outcomes happen.
+
+Gate every wrapper emission on `FLIGHTDECK_MANAGED=1` (PR #21) or an explicit `FLIGHTDECK_ACTIVITY_FILE` env. Standalone use of the `github`/`linear` skills outside Flightdeck must remain silent.
+
+Workflow instrumentation points:
+
+- `start.md`
+  - `session.started`
+  - `entry.registered` / launch decisions
+  - research issue creation / bundle decomposition choices
+- `session-watch.md`
+  - cycle start/end optional noisy events
+  - prompt routed
+  - domain mismatch
+- `handle-prompt.md`
+  - force-push approved/blocked
+  - rebase guidance sent
+  - bot-review/CI continuation decisions
+  - audit relation choices
+  - descope/scope-creep events
+- `merge-plan.md`
+  - conflict graph computed
+  - merge queue reordered
+  - PR merge directed
+  - auto-merge queued
+  - merge blocked
+- `close-issue.md`
+  - terminal verification signals
+  - PR merged/aborted
+  - pane teardown result
+- `terminate.md`
+  - session completed
+  - summary written
+  - follow-up issue recommendations
+
+For GitHub/Linear events, prefer wrappers over freeform markdown:
+
+- Add or update helper commands in the `github` and `linear` skill wrappers only where Flightdeck invokes them.
+- Emit activity when a wrapper performs a write or observes a terminal external state:
+  - PR opened, comments left, checks failed/passed, PR merged
+  - Linear issue created, updated, relation created, finished, cancelled
+- Gate emission on `FLIGHTDECK_ACTIVITY_FILE` or `FLIGHTDECK_SESSION_ID` so normal standalone use of those skills does not write Flightdeck activity.
+
+### Phase 6 — pi-flightdeck Activity UI
+
+Evolve Live feed into Activity. Insert the new reader through the existing seams: `state-archive.ts` (archive discovery), `state-normalizers.ts` (shape normalization), and a new `activity.ts` next to `render-terminated.ts`/`session-ui.ts`. Do not grow `flightdeck.ts` past its 1841-line baseline — wire from there but render in a focused module.
+
+Data source order:
+
+1. New `flightdeck-activity-<session>.jsonl` sidecar.
+2. Activity archive (`flightdeck-activity-<session>-*.jsonl.archive`) for completed sessions, picked up by the same newest-first iteration `buildSnapshotFromInputs` uses for `*.json.archive` (PR #23 + #33).
+3. Legacy fallback synthesis from daemon log + decisions + pending/wake events for older sessions.
+
+Default table columns:
+
+| Time | Session | Type | Status | Summary |
+| --- | --- | --- | --- | --- |
+
+Rendering rules:
+
+- Session label first; no raw pane ids in normal rows.
+- Type chips: `agent`, `bg`, `question`, `decision`, `pr`, `linear`, `daemon`, `session`.
+- Severity colors:
+  - success green
+  - warning yellow
+  - error red with a clear ASCII token like `ERR`
+  - info muted/normal
+- Important-only default:
+  - show critical/important/normal
+  - hide noisy/debug unless toggled
+- `enter` opens full detail popup with links/refs/details.
+- Search matches session, type, summary, refs, body.
+- Add filter controls:
+  - `ctrl+n` noise/all toggle remains
+  - `f` opens filter menu for type/severity
+  - `s` cycles session filter or opens session picker
+  - `d` toggles decisions-only overlay or jumps to Decisions tab
+
+Decisions interplay:
+
+- Keep Decisions tab as a dedicated view for `decision.recorded` events plus legacy `decisions_log` fallback.
+- Use the same row/detail component as Activity.
+- Activity includes decision rows by default because decisions are important chronological context.
+- Decisions tab answers "why did Flightdeck choose this?" Activity answers "what happened when?"
+
+Editor/export:
+
+- Add `e` in Activity and Decisions detail/list views:
+  - writes current filtered stream to `tmp/flightdeck-activity-view-<SESSION>-<ts>.md`
+  - if `$VISUAL`/`$EDITOR` is set and running inside tmux, open in a new tmux window named `fd-activity` or print the command/path if automatic open is unsafe
+  - also support CLI: `flightdeck-state activity export --format markdown --filter ...`
+- Export includes full JSON refs/details collapsed under each event.
+
+### Phase 7 — Documentation and migration
+
+Docs to update with implementation:
+
+- `skills/flightdeck/SKILL.md`
+- `skills/flightdeck/README.md`
+- `skills/flightdeck/DEVELOPMENT.md`
+- `skills/orchestration/DEVELOPMENT.md` (if Phase 5 GitHub/Linear wrappers add activity emission)
+- `pi-extensions/pi-flightdeck/README.md`
+- `pi-extensions/pi-background-tasks/README.md` + `pi-extensions/pi-background-tasks/DEVELOPMENT.md` if broker events added
+- `pi-extensions/pi-agents-tmux/README.md` + `pi-extensions/pi-agents-tmux/DEVELOPMENT.md` if broker events added
+- `pi-extensions/pi-session-bridge/README.md` if `vstack_activity` stream event added
+- Existing plan `docs/plans/flightdeck-session-management-reframe.md` if schema/state references need cross-linking
+
+Migration:
+
+- New UI must synthesize legacy activity for old sessions.
+- Keep `decisions_log` as durable audit source; activity mirrors it, not replaces it, for at least one production cycle.
+- Keep wake-event routing unchanged until tests prove activity append cannot interfere.
+
+## UX proposal
+
+Rename tab from `Live feed` to `Activity` once the structured event source lands. Until then, keep `Live feed` label to avoid overpromising.
+
+Default Activity view:
+
+```text
+filter: important · all sessions · 18 noisy hidden
+
+Time      Session           Type        Status   Summary
+14:14:08  CC-503            session     ok       session started (pi)
+14:14:08  CC-503            daemon      ok       subscriber started
+15:10:45  CC-503            question    wait     pi-question opened: Restore market data regression history?
+22:12:58  CC-503            decision    ok       selected: Tighten read_symbol_limit_from_env visibility
+23:17:31  CC-503            decision    ok       selected: Create related follow-up issue
+23:25:04  CC-503            bg          ERR      ci-wait failed exit=1
+23:28:19  CC-503            pr          ok       PR #812 checks passed
+23:31:02  CC-503            pr          ok       PR #812 merged abc1234
+```
+
+Footer:
+
+```text
+tab next · ↑/↓ select · enter details · f filters · s sessions · ctrl+n all/noisy · e editor · esc close
+```
+
+Detail view should show:
+
+- session/title/kind
+- event type/severity/time
+- summary/body
+- refs and links
+- raw JSON details behind a collapsed/expanded section if TUI supports it; otherwise at bottom
+
+## Event importance defaults
+
+| Type | Severity | Importance | Wake? |
+| --- | --- | --- | --- |
+| `daemon.started` | info | noisy | no |
+| `daemon.warning` | warning | important | maybe no |
+| `daemon.error` | error | important | maybe yes if daemon cannot continue |
+| `subscriber.started` | info | noisy | no |
+| `subscriber.dead` | warning | important | yes if no fallback |
+| `question.opened` | warning | important | yes |
+| `question.answered` | success | normal | no |
+| `decision.recorded` | info/success | important | no |
+| `agent.task_completed` | success | normal | no |
+| `agent.task_failed` | error | important | yes |
+| `agent.needs_completion` | warning | important | yes |
+| `agent.empty_after_compact` | warning | important | yes |
+| `bg_task.started` | info | normal | no |
+| `bg_task.completed` | success | normal | no unless notifyOnExit |
+| `bg_task.failed` | error | important | yes if notifyOnExit |
+| `pr.checks_failed` | error | important | yes if blocking |
+| `pr.merged` | success | important | no |
+| `linear.issue_created` | success | normal | no |
+| `session.completed` | success | critical | no |
+
+## Validation plan
+
+Core:
+
+```bash
+cd skills/flightdeck/lib/flightdeck-core
+bun test
+bun run typecheck
+```
+
+Pi extension package checks after UI/broker changes:
+
+```bash
+cd pi-extensions/pi-flightdeck
+npx tsc --noEmit --target ES2022 --module NodeNext --moduleResolution NodeNext --types node --skipLibCheck extensions/*.ts
+npm pack --dry-run
+
+cd ../pi-background-tasks
+npx tsc --noEmit --target ES2022 --module NodeNext --moduleResolution NodeNext --types node --skipLibCheck extensions/*.ts
+npm pack --dry-run
+
+cd ../pi-agents-tmux
+npx tsc --noEmit --target ES2022 --module NodeNext --moduleResolution NodeNext --types node --skipLibCheck extensions/subagent/*.ts
+npm pack --dry-run
+
+cd ../pi-session-bridge
+npx tsc --noEmit --target ES2022 --module NodeNext --moduleResolution NodeNext --types node --skipLibCheck extensions/*.ts
+npm pack --dry-run
+```
+
+End-to-end smoke:
+
+1. Start Flightdeck with two tracked Pi sessions.
+2. Spawn one successful and one failing background task inside a tracked session.
+3. Ask and answer a Pi structured question.
+4. Run a pane subagent that completes successfully and one that reports blocked/failed.
+5. Trigger a mocked PR/check event through helper fixtures.
+6. Verify Activity:
+   - shows session labels for every row
+   - hides noisy daemon/subscriber rows by default
+   - shows red `ERR`/error styling for failures
+   - detail popup wraps and scrolls
+   - editor export contains the same filtered rows with full refs/details
+7. Verify Decisions tab still shows existing decision history and does not lose legacy sessions.
+8. Terminate Flightdeck and reopen popup; activity archive still renders.
+
+## Risks and guardrails
+
+- Activity must not create extra wakes by itself. Wake routing remains explicit.
+- Activity must not become raw transcript storage. Store summaries and bounded details; link to logs/transcripts for large payloads.
+- Multi-process append must use the same flock discipline as state updates.
+- TS port parity matters. Every bash helper change needs TS mirror + parity tests.
+- Do not flip `flightdeck-daemon start` to TS as part of this work.
+- Do not delete `.bash` siblings.
+- Do not inspect or edit harness mirror directories (`.agents/`, `.claude/`, `.opencode/`, `.pi/`).
+
+## Proposed delivery order
+
+1. Core activity sidecar + `flightdeck-state activity` CLI.
+2. Registry/state transition instrumentation + decision-log generic fix.
+3. pi-flightdeck Activity tab reading new sidecar with legacy fallback.
+4. Daemon/subscriber curated events.
+5. Pi activity broker through session-bridge, then background-task/agent/question producers.
+6. Issue-domain workflow instrumentation for PR/CI/Linear lifecycle.
+7. Editor/export shortcut and docs polish.
+
+This order makes the UI useful early, keeps wake behavior stable, and gives every later producer one canonical append path.
