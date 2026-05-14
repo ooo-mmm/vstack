@@ -27,11 +27,23 @@ Engineering, not patching. Where existing bash/TS interfaces no longer fit the n
 - **bg-task wake metadata** (PR #34). `pi-extensions/pi-background-tasks` writes wake records with `eventAt`, monotonic `sequence`, `notifyMode`, `dedupeKey`, `voidedWakes` / `voidedWakeSequences`, and a `cleared-on-task-exit` diagnostic. The dashboard's event feed consumes these without re-deduping.
 - **pi-agents-tmux split** (PR #35). `subagent/` is now `index.ts` (wiring), `runner.ts`, `dispatch.ts`, `sessions.ts`, `wait.ts`. Per-pane agent stats are exposed at `globalThis[Symbol.for("vstack.pi.agents")]` only when running inside Pi.
 - **Per-skill DEVELOPMENT.md docs** exist for orchestration, flightdeck, pi-agents-tmux, pi-background-tasks. New dashboard developer notes belong in `skills/flightdeck/DEVELOPMENT.md`.
+- **Adhoc/generic session lifecycle gaps closed** (PR #41, commit `a7f29e7`). `pane-respond` accepts `%pane_id` stable ids and surfaces specific failures (`registry_read | not_registered | missing_pane_target`); `pane-registry teardown-entry` accepts generic terminal states (`complete | cancelled` in addition to legacy `merged | aborted | dead`); `pane-registry remove` drops both `.issues[]` and `.entries[]`; Pi subscriber drains open `pi-questions` on attach + on `bridge_hello` re-drain to close the snapshot→subscribe race. The dashboard reads pane state via the same registry/state seam, so these behaviors are visible immediately; the Phase 2+ write paths use the now-symmetric teardown/remove vocabulary.
+- **WORKTREE_MKDIRS env var** (PR #42, commit `1e98287`). `skills/worktree/scripts/worktree create` auto-creates project-relative dirs listed in `WORKTREE_MKDIRS` (default value in `.env.local.example`: `"tmp"`). Dashboard work uses `<worktree>/tmp/` for scratch (engineer task briefs, intermediate result JSONs, parity-test fixtures). Not at worktree root; not `/tmp/`.
+- **Worktree info/exclude fix** (PR #43, commit `56b4990`). The harness-mirror symlinks (`.agents`, `.pi`, `.opencode`, `.codex`, `.cursor`, `.claude/agents`) the worktree skill lays down are now properly hidden via `<repo>/.git/info/exclude` (the common git-dir, not the per-worktree dir git ignores). `git status` is clean in a fresh worktree; `worktree remove` succeeds without `--force`. Earlier dashboard plan drafts that recommended `--force` cleanup are out of date.
+- **Cross-shell launch + daemon lifecycle hardening** (PR #44, closes #39 + #40). Several pieces relevant to the dashboard's daemon absorption:
+  - `flightdeck-session start --prompt` writes the prompt to a tempfile under `$XDG_RUNTIME_DIR/flightdeck/` and launches as `bash -c 'p=$(<tmp); rm tmp; exec env <kv> pi "$p"'`. No more `bash %q` `$'...'` quoting in user shells. The Rust dashboard's `launch` subcommand mirrors this approach when spawning the dashboard tmux window.
+  - `tmux display-message -p '#{pane_id}'` is replaced everywhere with `${TMUX_PANE:-$(tmux display-message ...)}`. The Rust dashboard MUST read `$TMUX_PANE` from its own environment when self-registering as a tracked entry.
+  - `flightdeck-daemon start` now validates `--master` via `pane_alive` and refuses a stale id with **exit code `4`** (distinct from generic usage/lock errors). The Rust daemon absorbs this contract.
+  - On cleanup the bash/TS daemon writes a structured `daemon-exited` row to `EVENTS_FILE` (the file `flightdeck-daemon events` drains) with `reason` classification (`master-gone | signal-term | signal-int | other`). The Rust dashboard's Activity tab consumes this row as a canonical daemon-lifecycle event; the Rust daemon (Phase 5) MUST emit the same shape under `SESSION_LOCK`.
+  - `--in-tmux-window` daemons are named `[fd] daemon-<session>` so operators don't accidentally close them. Rust daemon keeps the convention.
+  - `pane-registry list --format inner-panes-live` filters to panes whose `pane_id` is currently in `tmux list-panes -a`. The Rust daemon's respawn-on-restart path uses this listing.
+  - `workflows/session-watch.md` now documents the master respawn contract: on `flightdeck-daemon status` returning `no daemon` with live tracked entries, master MUST respawn with the `inner-panes-live` listing and handle exit codes (4 = retry with `$TMUX_PANE`; 1 = check status for raced-respawn; other = `daemon-respawn-failed`, no yield). The Rust dashboard's daemon-supervisor mode respects this contract.
 
 The activity plan will add a `flightdeck-activity-<session>.jsonl` sidecar plus archive on terminate. The dashboard's Activity tab is the read site — scaffolded here, fully populated by the activity plan.
 
 ## Non-negotiable constraints
 
+- **First action: create the worktree via the worktree skill, not raw `git worktree add`.** Run `skills/worktree/scripts/worktree create flightdeck-dashboard-rust` from the project root. This wires `.env.local`, harness mirror symlinks, bot identity, `WORKTREE_MKDIRS` (defaults to `tmp/`), and adds the proper `info/exclude` entries so `git status` and `worktree remove` work cleanly. Raw `git worktree add` skips all of it and will silently break agent tooling.
 - Work in a vstack worktree. Do not touch `/mnt/Tertiary/dev/vstack/main` except to read.
 - **Harness agnostic.** Flightdeck supports Claude Code, OpenCode, Pi, Codex. The dashboard works for all four. Pi-specific paths (`pi-bridge`, `pi.events`, `globalThis[Symbol.for("vstack.pi.agents")]`) are optional enrichment, never required.
 - **Long-term goal: replace `pi-extensions/pi-flightdeck` entirely.** Until parity ships, the Pi extension stays installed. Once parity ships, it shrinks to a thin "focus dashboard window" shortcut or is removed.
@@ -470,17 +482,20 @@ Autonomy rules:
 
 Goals:
 
-- Create worktree + branch.
+- Create worktree + branch via the worktree skill (mandatory — not raw `git worktree add`).
 - Confirm Rust toolchain (`rustc ≥ 1.75`, `cargo`, `cargo install cargo-insta`).
-- Inspect current daemon CLI (start/stop/status/events/health) so the Rust daemon mirrors the same surface.
+- Inspect current daemon CLI (start/stop/status/events/health) so the Rust daemon mirrors the same surface — note the `daemon-exited` event shape in `EVENTS_FILE` (PR #44) and the `--master` exit-code `4` contract.
 - Verify on-disk state shape against `lib/flightdeck-core/src/state/tracked-entry.ts`.
+- Verify `<worktree>/tmp/` exists (auto-created by `WORKTREE_MKDIRS="tmp"`) and use it for any agent task briefs / result JSONs in subsequent phases.
 
 Commands:
 
 ```bash
 cd /mnt/Tertiary/dev/vstack/main
-.agents/skills/worktree/scripts/worktree create flightdeck-dashboard-rust --from main
+skills/worktree/scripts/worktree create flightdeck-dashboard-rust --from main
 cd /mnt/Tertiary/dev/vstack/trees/flightdeck-dashboard-rust
+ls -la tmp/                                  # confirm WORKTREE_MKDIRS materialized scratch dir
+git status --short                           # should be empty (info/exclude fix from PR #43)
 rustc --version
 cargo --version
 cargo install cargo-insta
@@ -630,6 +645,14 @@ Repeat Phase 9 under at least one of: Claude Code master, OpenCode master, Codex
 ### Phase 11 — Reviews and hardening
 
 `reviewer-arch` / `reviewer-test` / `reviewer-structure` / `reviewer-error` / `reviewer-doc` against the first live-working dashboard. Iterate until all return `clean`.
+
+**Review cadence** (proven in PRs #41 and #44; use the same pattern here):
+
+1. **Round 1 — architecture + error review in parallel.** Dispatch `reviewer-arch` and `reviewer-error` simultaneously (and `reviewer-test` / `reviewer-structure` if the surface warrants). Each returns a structured `<output_format>` JSON with `verdict`, `findings: [{commit, severity, summary, suggested_fix}]`, `notes`.
+2. **Apply round-1 feedback as 1–3 grouped commits.** One commit per logical fix-cluster; reference the reviewer and finding in the commit body. Run `cargo test && cargo insta test && cargo fmt --check && cargo clippy --all-targets --all-features -- -D warnings` before each commit.
+3. **Round 2 (if any review returned `changes-requested`).** Re-dispatch only the reviewers that flagged issues, against the round-1 fix commits. Continue until all return `approve` (typically 1–2 rounds; halt if a third round opens new blockers — escalate to master agent).
+4. **`reviewer-doc` runs LAST.** Doc review checks SKILL.md drift, README user-facing hygiene (no engineering jargon), AGENTS.md rules still apply, pattern docs reflect new behavior. Apply its feedback as a single docs commit before opening the PR. Same `<output_format>` JSON shape.
+5. **PR body summarizes the review chain.** Round counts, blocker/major/minor counts, files changed. The PR description is the audit trail.
 
 Specific Rust review focuses (`reviewer-error`):
 
