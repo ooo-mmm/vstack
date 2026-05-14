@@ -62,7 +62,7 @@ Use `Alt+.` or `/bg:next` to force the next bash command into the background eve
 
 ## Settings
 
-All settings live in the extension manager under **Background Tasks**.
+Open `/extensions:settings`; settings appear under the **Background Tasks** tab.
 
 ### Execution
 

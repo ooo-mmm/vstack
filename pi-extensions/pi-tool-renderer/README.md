@@ -53,7 +53,7 @@ If the combined output would exceed Pi's normal tool-result budget, child output
 
 ## Settings
 
-All settings live in the extension manager under **Tool Renderer**.
+Open `/extensions:settings`; settings appear under the **Tool Renderer** tab.
 
 ### General
 

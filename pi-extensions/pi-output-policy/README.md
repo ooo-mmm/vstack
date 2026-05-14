@@ -31,7 +31,7 @@ Restart Pi after installation.
 
 ## Settings
 
-All settings live in the extension manager under **Output Policy**.
+Open `/extensions:settings`; settings appear under the **Output Policy** tab.
 
 ### Truncation
 

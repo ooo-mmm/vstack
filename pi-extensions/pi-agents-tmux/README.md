@@ -96,7 +96,7 @@ See [`DEVELOPMENT.md`](./DEVELOPMENT.md) for the underlying tool surface (`subag
 
 ## Settings
 
-All settings live in the extension manager under **Agents (tmux)**.
+Open `/extensions:settings`; settings appear under the **Agents (tmux)** tab.
 
 ### Execution
 

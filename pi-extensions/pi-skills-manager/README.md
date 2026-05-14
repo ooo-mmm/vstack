@@ -52,7 +52,7 @@ Create: name (normalized to a lowercase slug), trigger-focused description, visi
 
 ## Settings
 
-All settings live in the extension manager under **Skills Manager**.
+Open `/extensions:settings`; settings appear under the **Skills Manager** tab.
 
 | Setting | What it does |
 | --- | --- |

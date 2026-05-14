@@ -31,7 +31,7 @@ pi install npm:@vanillagreen/pi-hooks
 
 ## Settings
 
-All settings live in the extension manager under **Hooks**.
+Open `/extensions:settings`; settings appear under the **Hooks** tab.
 
 | Setting | What it does |
 | --- | --- |

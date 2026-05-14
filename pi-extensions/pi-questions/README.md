@@ -83,7 +83,7 @@ Do not include a final `Confirm`, `Submit`, `Review`, or `Done` question tab in 
 
 ## Settings
 
-All settings live in the extension manager under **Questions**.
+Open `/extensions:settings`; settings appear under the **Questions** tab.
 
 | Setting | What it does |
 | --- | --- |

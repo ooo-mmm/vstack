@@ -75,7 +75,7 @@ The manager popup opens with `Alt+Shift+T` (or `F4`).
 
 ## Settings
 
-All settings live in the extension manager under **Task Panel**.
+Open `/extensions:settings`; settings appear under the **Task Panel** tab.
 
 ### Panel
 

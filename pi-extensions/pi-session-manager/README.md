@@ -58,7 +58,7 @@ Session titles match Pi `/resume`: explicit session name, otherwise first user m
 
 ## Settings
 
-All settings live in the extension manager under **Session Manager**.
+Open `/extensions:settings`; settings appear under the **Session Manager** tab.
 
 | Setting | What it does |
 | --- | --- |

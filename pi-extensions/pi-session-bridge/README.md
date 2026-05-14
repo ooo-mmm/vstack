@@ -92,7 +92,7 @@ Clients receive events by default. Send `{"type":"subscribe","enabled":false}` t
 
 ## Settings
 
-All settings live in the extension manager under **Session Bridge**.
+Open `/extensions:settings`; settings appear under the **Session Bridge** tab.
 
 | Setting | What it does |
 | --- | --- |

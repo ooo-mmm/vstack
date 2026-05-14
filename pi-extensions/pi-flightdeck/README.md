@@ -58,7 +58,7 @@ The popup shows its own keyboard hints in the footer. Peer panes get an observer
 
 ## Settings
 
-All settings live in the extension manager under **Flightdeck Dashboard**.
+Open `/extensions:settings`; settings appear under the **Flightdeck Dashboard** tab.
 
 ### Dashboard
 

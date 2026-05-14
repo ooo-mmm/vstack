@@ -50,7 +50,7 @@ Restart Pi after installation.
 
 ## Settings
 
-All settings live in the extension manager under **Prompt Stash**.
+Open `/extensions:settings`; settings appear under the **Prompt Stash** tab.
 
 | Setting | What it does |
 | --- | --- |

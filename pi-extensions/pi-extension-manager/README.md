@@ -47,7 +47,7 @@ Status icons: `●` active, `○` inactive, `×` broken. Packages with newer ver
 
 ## Settings
 
-All settings live in the extension manager under **Extension Manager**.
+Open `/extensions:settings`; settings appear under the **Extension Manager** tab.
 
 | Setting | What it does |
 | --- | --- |

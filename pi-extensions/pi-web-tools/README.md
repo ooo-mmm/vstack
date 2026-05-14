@@ -80,7 +80,7 @@ Override per-mode defaults with the **Exa research mode overrides** setting (JSO
 
 ## Settings
 
-All settings live in the extension manager under **Web Tools**.
+Open `/extensions:settings`; settings appear under the **Web Tools** tab.
 
 ### General
 

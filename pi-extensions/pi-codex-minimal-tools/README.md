@@ -47,7 +47,7 @@ Restart Pi after installation.
 
 ## Settings
 
-All settings live in the extension manager under **Codex Minimal Tools**.
+Open `/extensions:settings`; settings appear under the **Codex Minimal Tools** tab.
 
 ### General
 

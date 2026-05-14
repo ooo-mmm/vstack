@@ -56,7 +56,7 @@ Arguments support autocomplete.
 
 ## Settings
 
-All settings live in the extension manager under **QOL**. Names below match the labels shown there.
+Open `/extensions:settings`; settings appear under the **QOL** tab. Names below match the labels shown there.
 
 ### Statusline
 
