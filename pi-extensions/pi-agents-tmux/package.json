@@ -137,6 +137,15 @@
           "apply": "live"
         },
         {
+          "key": "animateSpinners",
+          "label": "Animate spinners",
+          "description": "Animate running-agent spinner frames. Disable to show a static gear icon instead. Can reduce terminal flickering.",
+          "type": "boolean",
+          "default": true,
+          "category": "Rendering",
+          "apply": "live"
+        },
+        {
           "key": "dashboardShortcut",
           "label": "Dashboard display shortcut",
           "description": "Keyboard shortcut that cycles the agent dashboard through hidden → compact → normal → expanded → hidden. Use none to disable.",

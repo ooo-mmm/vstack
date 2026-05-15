@@ -176,6 +176,24 @@ test("dashboard mini widget shows session-mode chips", () => {
 	assert.match(paneResumed, /completed · pane · resumed/);
 });
 
+test("dashboard spinner setting replaces running animation with static gear", () => {
+	const cwd = tempRuntime();
+	mkdirSync(join(cwd, ".pi"), { recursive: true });
+	writeFileSync(join(cwd, ".pi", "settings.json"), JSON.stringify({
+		vstack: { extensionManager: { config: { "@vanillagreen/pi-agents-tmux": { animateSpinners: false } } } },
+	}));
+
+	const rendered = renderDashboardWidgetLines({ collapsed: false, mode: "normal", visible: true, items: { a: dashboardItem({ status: "running" }) } }, theme as any, cwd, 220).join("\n");
+
+	assert.match(rendered, /\uf013/);
+	assert.doesNotMatch(rendered, /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/);
+
+	const running = record("planner", "planner-1700000000-aaaaaaaa", "2026-05-14T05:00:00.000Z", { kind: "pane", status: "running" });
+	const tree = renderMonitorTree(monitorTreeRows(buildMonitorSessionGroups([running])), [running], new Set(), uiState({ tab: "monitor", pane: "list" }), 120, theme as any, 10, false).join("\n");
+	assert.match(tree, /\uf013/);
+	assert.doesNotMatch(tree, /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/);
+});
+
 test("trace summary includes session line only when sessionMode is persisted", async () => {
 	const withSession = await traceViewerItems(record("reviewer-arch", "reviewer-arch-session", "2026-05-14T05:00:00.000Z", { sessionMode: "resumed", sessionKey: "feature-x" }));
 	assert.match(withSession[0]!.text, /^Session\s+resumed · lane: feature-x$/m);

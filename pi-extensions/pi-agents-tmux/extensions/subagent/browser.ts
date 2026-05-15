@@ -53,7 +53,7 @@ import { readPaneRegistry, readTaskRegistry } from "./tasks.js";
 import { paneCompletionTone, readTextFileIfExists } from "./renderers.js";
 import { recordTraceRef } from "./renderers.js";
 import { taskRegistryPath } from "./paths.js";
-import { effortFromModelId, modelWithoutEffortSuffix, normalizeReasoningEffort } from "./settings.js";
+import { animateSpinnersEnabled, effortFromModelId, modelWithoutEffortSuffix, normalizeReasoningEffort } from "./settings.js";
 import {
 	AGENTS_BROWSER_TAB,
 	AGENTS_BROWSER_HEIGHT_RATIO,
@@ -740,11 +740,11 @@ export function formatRelativeTime(iso: string | undefined): string {
 	return new Date(ts).toISOString().slice(0, 10);
 }
 
-function monitorStatusIcon(status: PaneTaskStatus, theme: Theme): string {
+function monitorStatusIcon(status: PaneTaskStatus, theme: Theme, animateSpinners = true): string {
 	if (status === "completed") return theme.fg("success", ICONS.check);
 	if (status === "failed") return theme.fg("error", ICONS.times);
 	if (status === "blocked") return theme.fg("warning", ICONS.times);
-	if (status === "running") return dashboardStatusIcon("running", theme);
+	if (status === "running") return dashboardStatusIcon("running", theme, { animateSpinners });
 	if (status === "queued") return theme.fg("warning", ICONS.clock);
 	return theme.fg("muted", "·");
 }
@@ -980,7 +980,7 @@ function monitorSessionRowLabel(group: MonitorSessionGroup, theme: Theme): strin
 	return `${theme.fg("muted", monitorSessionKindLabel(group))}${theme.fg("dim", " · ")}${ansiMagenta(group.agent)}${modeSuffix}${meta}`;
 }
 
-export function renderMonitorTree(rows: MonitorTreeRow[], records: PaneTaskRecord[], collapsedSessionIds: Set<string>, ui: AgentBrowserUiState, width: number, theme: Theme, listRows: number): string[] {
+export function renderMonitorTree(rows: MonitorTreeRow[], records: PaneTaskRecord[], collapsedSessionIds: Set<string>, ui: AgentBrowserUiState, width: number, theme: Theme, listRows: number, animateSpinners = true): string[] {
 	const groups = buildMonitorSessionGroups(records).length;
 	const lines = [`${agentPaneTitle(theme, "Monitor", ui.pane === "list")} ${theme.fg("dim", `(${groups})`)}`, ""];
 	if (records.length === 0 || rows.length === 0 || selectableMonitorRows(rows).length === 0) {
@@ -1001,7 +1001,7 @@ export function renderMonitorTree(rows: MonitorTreeRow[], records: PaneTaskRecor
 			rendered = `  ${theme.fg("muted", expander)} ${monitorSessionRowLabel(row.group, theme)}`;
 		} else {
 			const label = monitorTaskRowLabel(row.record, taskNumbers);
-			rendered = `    ${monitorStatusIcon(row.record.status, theme)} ${theme.fg("text", `Task ${label}`)}${theme.fg("dim", " · ")}${monitorStatusText(row.record.status, theme)}`;
+			rendered = `    ${monitorStatusIcon(row.record.status, theme, animateSpinners)} ${theme.fg("text", `Task ${label}`)}${theme.fg("dim", " · ")}${monitorStatusText(row.record.status, theme)}`;
 		}
 		const line = truncateToWidth(rendered, width, "…");
 		lines.push(row.key === selectedKey ? theme.bg("selectedBg", agentPad(line, width)) : line);
@@ -1253,7 +1253,7 @@ function renderScrollableTraceText(rawLines: string[], type: TraceViewerItem["ty
 	return scrollHint ? [...slice, ansiYellow(scrollHint)] : [...slice, ""];
 }
 
-export function renderMonitorSessionDetail(group: MonitorSessionGroup | undefined, taskNumbers: Map<string, number>, ui: AgentBrowserUiState, width: number, rows: number, theme: Theme): string[] {
+export function renderMonitorSessionDetail(group: MonitorSessionGroup | undefined, taskNumbers: Map<string, number>, ui: AgentBrowserUiState, width: number, rows: number, theme: Theme, animateSpinners = true): string[] {
 	if (!group) return [`${agentPaneTitle(theme, "Detail", ui.pane === "inspector")} ${theme.fg("dim", "Select a session or task.")}`];
 	const safeWidth = Math.max(8, width);
 	const mode = monitorSessionModeLabel(group);
@@ -1275,7 +1275,7 @@ export function renderMonitorSessionDetail(group: MonitorSessionGroup | undefine
 		"",
 		"Task list",
 		"---------",
-		...group.records.map((record) => `${monitorStatusIcon(record.status, theme)} Task ${monitorTaskRowLabel(record, taskNumbers)} · ${record.status}`),
+		...group.records.map((record) => `${monitorStatusIcon(record.status, theme, animateSpinners)} Task ${monitorTaskRowLabel(record, taskNumbers)} · ${record.status}`),
 		"",
 		"Select a task row in the Monitor tree to open task detail.",
 	].filter(Boolean);
@@ -1294,18 +1294,19 @@ function renderMonitorTabBody(
 	width: number,
 	theme: Theme,
 	layout: AgentBrowserLayout,
+	animateSpinners = true,
 ): string[] {
 	const maxLeftWidth = Math.max(10, width - 13);
 	const desiredLeftWidth = Math.min(AGENTS_LEFT_MAX_WIDTH, Math.floor(width * 0.36), maxLeftWidth);
 	const leftWidth = Math.max(10, Math.min(maxLeftWidth, Math.max(Math.min(AGENTS_LEFT_MIN_WIDTH, maxLeftWidth), desiredLeftWidth)));
 	const rightWidth = Math.max(1, width - leftWidth - 3);
 	const bodyRows = layout.bodyRows;
-	const left = renderMonitorTree(rows, records, collapsedSessionIds, ui, leftWidth, theme, layout.listRows);
+	const left = renderMonitorTree(rows, records, collapsedSessionIds, ui, leftWidth, theme, layout.listRows, animateSpinners);
 	const selection = selectedMonitorRow(rows, ui);
 	const taskNumbers = taskNumberById(records);
 	const right = selection?.kind === "task"
 		? renderMonitorDetail(selection.record, cache, ui, taskNumbers.get(selection.record.taskId), discovery, rightWidth, bodyRows, theme)
-		: renderMonitorSessionDetail(selection?.kind === "session" ? selection.group : undefined, taskNumbers, ui, rightWidth, bodyRows, theme);
+		: renderMonitorSessionDetail(selection?.kind === "session" ? selection.group : undefined, taskNumbers, ui, rightWidth, bodyRows, theme, animateSpinners);
 	const lines: string[] = [agentDivider(width, theme)];
 	for (let i = 0; i < bodyRows; i += 1) {
 		lines.push(`${agentPad(left[i] ?? "", leftWidth)} ${theme.fg("dim", "│")} ${truncateToWidth(right[i] ?? "", rightWidth, "")}`);
@@ -1370,13 +1371,15 @@ function createAgentsBrowserComponent(
 	getLayout: () => AgentBrowserLayout,
 	done: (action: AgentBrowserAction) => void,
 	getActiveItems: () => SubagentDashboardItem[],
+	cwd: string,
 ) {
 	let closed = false;
 	let resizeTimer: ReturnType<typeof setTimeout> | undefined;
-	const animationTimer = setInterval(() => {
-		if (!closed && getActiveItems().some((item) => isDashboardWorkingStatus(item.status))) requestRender();
-	}, 120);
-	animationTimer.unref?.();
+	const spinnersAnimated = () => animateSpinnersEnabled(cwd);
+	const animationTimer = spinnersAnimated() ? setInterval(() => {
+		if (!closed && spinnersAnimated() && getActiveItems().some((item) => isDashboardWorkingStatus(item.status))) requestRender();
+	}, 120) : undefined;
+	animationTimer?.unref?.();
 	const scheduleResizeRender = () => {
 		if (closed) return;
 		requestRender();
@@ -1391,7 +1394,7 @@ function createAgentsBrowserComponent(
 		closed = true;
 		if (resizeTimer) clearTimeout(resizeTimer);
 		resizeTimer = undefined;
-		clearInterval(animationTimer);
+		if (animationTimer) clearInterval(animationTimer);
 		process.off("SIGWINCH", scheduleResizeRender);
 	};
 	const finish = (action: AgentBrowserAction) => {
@@ -1485,7 +1488,7 @@ function createAgentsBrowserComponent(
 	};
 	function handleInput(data: string): void {
 		if (isAgentBrowserCancelInput(data)) {
-			if (ui.tab !== "active" && ui.search) { ui.search = ""; ui.selected = 0; ui.scroll = 0; requestRender(); return; }
+			if (ui.search) { ui.search = ""; ui.selected = 0; ui.scroll = 0; requestRender(); return; }
 			finish({ type: "close" });
 			return;
 		}
@@ -1662,7 +1665,7 @@ function createAgentsBrowserComponent(
 			const rows = currentMonitorRows();
 			const selected = selectedMonitorRow(rows, ui);
 			const footer = monitorFooterHint(ui, theme, ui.pane === "inspector" && selected?.kind === "task");
-			const lines = [tabLine, "", ...renderMonitorTabBody(monitorRecords, rows, monitorCollapsedSessions, monitorCache, discovery, ui, bodyWidth, theme, layout), agentDivider(bodyWidth, theme), ...wrapTextWithAnsi(footer, bodyWidth)];
+			const lines = [tabLine, "", ...renderMonitorTabBody(monitorRecords, rows, monitorCollapsedSessions, monitorCache, discovery, ui, bodyWidth, theme, layout, spinnersAnimated()), agentDivider(bodyWidth, theme), ...wrapTextWithAnsi(footer, bodyWidth)];
 			return agentFrame(lines, safeWidth, theme, layout.innerRows, "Monitor");
 		}
 		clamp();
@@ -1730,6 +1733,7 @@ export async function openAgentsBrowser(
 				() => agentBrowserLayout(tui.terminal.rows),
 				done,
 				getActiveItems,
+				ctx.cwd,
 			),
 			{ overlay: true, overlayOptions: { anchor: "center", maxHeight: AGENTS_BROWSER_MAX_HEIGHT, width: AGENTS_BROWSER_WIDTH } },
 		);

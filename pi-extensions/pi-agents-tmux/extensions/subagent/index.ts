@@ -109,6 +109,7 @@ import {
 	detailsWithTruncation,
 } from "./runner.js";
 import {
+	animateSpinnersEnabled,
 	dashboardDefaultCollapsed,
 	dashboardEnabled,
 	dashboardMaxItems,
@@ -471,8 +472,11 @@ export default function (pi: ExtensionAPI) {
 		const widgetRuntimeRoot = sessionRuntimeDir(runtimeSessionId(ctx));
 		setMiniDashboardWidget(ctx, SUBAGENT_WIDGET_KEY, MINI_DASHBOARD_RANK.AGENTS, (tui, theme) => {
 			const animationTimer = (() => {
+				if (!animateSpinnersEnabled(ctx.cwd)) return undefined;
 				if (!Object.values(dashboardState.items).some((item) => isDashboardWorkingStatus(item.status))) return undefined;
-				const timer = setInterval(() => tui.requestRender(), 120);
+				const timer = setInterval(() => {
+					if (animateSpinnersEnabled(ctx.cwd)) tui.requestRender();
+				}, 120);
 				timer.unref?.();
 				return timer;
 			})();

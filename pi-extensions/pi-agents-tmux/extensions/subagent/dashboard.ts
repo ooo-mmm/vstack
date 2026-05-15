@@ -14,6 +14,7 @@ import {
 	subagentStem,
 } from "./format.js";
 import {
+	animateSpinnersEnabled,
 	dashboardEnabled,
 	dashboardMaxItems,
 	dashboardShortcut,
@@ -73,12 +74,13 @@ function workingSpinnerFrame(): string {
 	return WORKING_SPINNER_FRAMES[Math.floor(Date.now() / 120) % WORKING_SPINNER_FRAMES.length] ?? "•";
 }
 
-export function dashboardStatusIcon(status: SubagentDashboardItem["status"], theme: Theme): string {
+export function dashboardStatusIcon(status: SubagentDashboardItem["status"], theme: Theme, options: { animateSpinners?: boolean } = {}): string {
+	const animateSpinners = options.animateSpinners ?? true;
 	if (status === "completed") return theme.fg("success", ICONS.check);
 	if (status === "failed") return theme.fg("error", ICONS.times);
 	if (status === "blocked") return theme.fg("error", ICONS.times);
 	if (status === "needs_completion") return theme.fg("warning", ICONS.warning);
-	if (status === "running") return theme.fg("warning", workingSpinnerFrame());
+	if (status === "running") return theme.fg("warning", animateSpinners ? workingSpinnerFrame() : ICONS.cog);
 	if (status === "waiting") return theme.fg("warning", ICONS.clock);
 	if (status === "queued") return theme.fg("warning", ICONS.clock);
 	if (status === "unknown") return theme.fg("warning", ICONS.warning);
@@ -260,6 +262,7 @@ function dashboardLabelsForItems(items: SubagentDashboardItem[], persistentTaskN
 
 export function renderDashboardWidgetLines(state: SubagentDashboardState, theme: Theme, cwd: string, width: number, runtimeRoot?: string): string[] {
 	const items = sortDashboardItems(Object.values(state.items));
+	const animateSpinners = animateSpinnersEnabled(cwd);
 	// Cheap sync read of the persisted task registry once per widget render
 	// gives the mini widget the same `<agent> #N` numbers as the popup, so
 	// a task reads identically across surfaces. Skipped when runtimeRoot is
@@ -333,7 +336,7 @@ export function renderDashboardWidgetLines(state: SubagentDashboardState, theme:
 			const activity = latestDashboardActivity(item);
 			if (activity) rowParts.push(theme.fg("toolOutput", activity));
 		}
-		lines.push(`${branch}${dashboardStatusIcon(item.status, theme)} ${name}${dotSep}${rowParts.join(dotSep)}`);
+		lines.push(`${branch}${dashboardStatusIcon(item.status, theme, { animateSpinners })} ${name}${dotSep}${rowParts.join(dotSep)}`);
 		if (state.mode === "expanded" && !state.collapsed && item.message) {
 			lines.push(`${subagentStem(theme, index === shown.length - 1 && items.length <= shown.length, cwd)}${theme.fg("toolOutput", oneLinePreview(item.message, Math.max(48, width - 16)))}`);
 		}

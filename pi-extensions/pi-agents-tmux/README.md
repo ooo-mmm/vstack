@@ -119,6 +119,7 @@ Open `/extensions:settings`; settings appear under the **Agents (tmux)** tab.
 | Quiet inline output with dashboard | Keep inline tool output to short crumbs. |
 | Dashboard max items | Maximum agent rows shown. |
 | Dashboard collapsed by default | Start collapsed. |
+| Animate spinners | Animate running-agent spinner frames; disable for a static gear icon to reduce terminal flickering. |
 | Tree connector style | `unicode` or `ascii`. |
 | Collapsed item count | Items shown in collapsed agent results. |
 

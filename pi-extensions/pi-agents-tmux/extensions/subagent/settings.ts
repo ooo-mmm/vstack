@@ -176,6 +176,10 @@ export function dashboardDefaultCollapsed(cwd?: string): boolean {
 	return settingBoolean("dashboardCollapsed", false, cwd);
 }
 
+export function animateSpinnersEnabled(cwd?: string): boolean {
+	return settingBoolean("animateSpinners", true, cwd);
+}
+
 export function dashboardShortcut(cwd?: string): string {
 	return settingString("dashboardShortcut", "alt+a", cwd);
 }
