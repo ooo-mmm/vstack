@@ -38,10 +38,8 @@ import {
 	formatUsageStats,
 	highlightInlinePreview,
 	inactivePill,
-	sessionModeChipLabel,
 	sessionModeDetailLabel,
 	simpleFrame,
-	truncateSessionKeyForChip,
 } from "./format.js";
 import {
 	ensurePersistentPane,
@@ -810,10 +808,6 @@ export function taskNumberById(records: PaneTaskRecord[]): Map<string, number> {
 	return out;
 }
 
-function sessionNumberLabel(group: MonitorSessionGroup | { sessionNumber?: number }, prefix = "session"): string | undefined {
-	return group.sessionNumber ? `${prefix} #${group.sessionNumber}` : undefined;
-}
-
 function recordClockTime(record: PaneTaskRecord): string {
 	const raw = record.completedAt ?? record.updatedAt ?? record.createdAt;
 	if (!raw) return "--:--";
@@ -978,25 +972,10 @@ export function clampMonitorUiToRows(ui: AgentBrowserUiState, rows: MonitorTreeR
 	ui.monitorScroll = Math.max(0, Math.min(ui.monitorScroll, Math.max(0, rows.length - listRows)));
 }
 
-function monitorSessionKindLabel(group: MonitorSessionGroup): string {
-	if (group.type === "pane") return "pane";
-	if (group.type === "bg-lane") return `bg lane:${truncateSessionKeyForChip(group.sessionKey) ?? "?"}`;
-	return "bg";
-}
-
-function monitorSessionModeLabel(group: MonitorSessionGroup): string | undefined {
-	if (group.type === "bg-lane") return group.sessionMode === "fresh" ? "fresh" : "resumed";
-	return sessionModeChipLabel({ kind: group.kind, sessionMode: group.sessionMode, sessionKey: group.sessionKey });
-}
-
 function monitorSessionRowLabel(group: MonitorSessionGroup, theme: Theme): string {
-	const mode = monitorSessionModeLabel(group);
-	const sessionNumber = sessionNumberLabel(group);
-	const sessionNumberSuffix = sessionNumber ? `${theme.fg("dim", " · ")}${theme.fg("muted", sessionNumber)}` : "";
-	const modeSuffix = mode ? `${theme.fg("dim", " · ")}${theme.fg("muted", mode)}` : "";
 	const tasksText = group.taskCount === 1 ? "1 task" : `${group.taskCount} tasks`;
-	const meta = theme.fg("dim", ` (${tasksText} · last ${formatRelativeTime(group.latestAt)})`);
-	return `${theme.fg("muted", monitorSessionKindLabel(group))}${theme.fg("dim", " · ")}${ansiMagenta(group.agent)}${sessionNumberSuffix}${modeSuffix}${meta}`;
+	const meta = theme.fg("dim", ` · ${tasksText} · ${formatRelativeTime(group.latestAt)}`);
+	return `${ansiMagenta(group.agent)}${meta}`;
 }
 
 export function renderMonitorTree(rows: MonitorTreeRow[], records: PaneTaskRecord[], collapsedSessionIds: Set<string>, ui: AgentBrowserUiState, width: number, theme: Theme, listRows: number, animateSpinners = true): string[] {
@@ -1100,19 +1079,6 @@ function renderTraceContentLine(raw: string, type: TraceViewerItem["type"] | und
 	return wrapTextWithAnsi(theme.fg(type === "summary" ? "text" : "toolOutput", backtick), width);
 }
 
-function monitorTaskTitle(record: PaneTaskRecord, taskNumber: number | undefined, discovery: ReturnType<typeof discoverAgents>, theme: Theme, active: boolean, sessionNumber?: number): string {
-	const agentConfig = discovery.agents.find((agent) => agent.name === record.agent);
-	const sessionNumberText = sessionNumber ? `${theme.fg("dim", " · ")}${theme.fg("muted", `session #${sessionNumber}`)}` : "";
-	const taskNumberText = taskNumber ? `${theme.fg("dim", " · ")}${theme.fg("muted", `task #${taskNumber}`)}` : "";
-	const kind = recordMonitorKind(record) === "pane" ? "pane" : "bg";
-	const session = sessionModeChipLabel({ kind: recordMonitorKind(record), sessionMode: record.sessionMode, sessionKey: record.sessionKey });
-	const sessionPart = session ? `${theme.fg("dim", " · ")}${theme.fg("muted", session)}` : "";
-	const model = recordRunModel(record, agentConfig);
-	const effort = recordRunEffort(record, agentConfig);
-	const modelPart = model ? `${theme.fg("dim", " · ")}${theme.fg("muted", `${model}${effort ? ` ${effort}` : ""}`)}` : "";
-	return `${agentPaneTitle(theme, "Detail", active)} ${ansiMagenta(theme.bold(record.agent))}${sessionNumberText}${taskNumberText}${theme.fg("dim", " · ")}${monitorStatusText(record.status, theme)}${theme.fg("dim", " · ")}${theme.fg("muted", kind)}${sessionPart}${modelPart}`;
-}
-
 export function monitorFooterHint(theme: Theme): string {
 	return `${ansiYellow("tab")} ${theme.fg("dim", "switch · ")}${ansiYellow("↑/↓ -/=")} ${theme.fg("dim", "page · ")}${ansiYellow("←/→")} ${theme.fg("dim", "tree↔detail · ")}${ansiYellow("enter")} ${theme.fg("dim", "open/toggle")}${theme.fg("dim", " · ")}${ansiYellow("esc")} ${theme.fg("dim", "close")}`;
 }
@@ -1121,12 +1087,9 @@ export function renderMonitorDetail(
 	record: PaneTaskRecord | undefined,
 	cache: Map<string, MonitorDetailEntry>,
 	ui: AgentBrowserUiState,
-	taskNumber: number | undefined,
-	discovery: ReturnType<typeof discoverAgents>,
 	width: number,
 	rows: number,
 	theme: Theme,
-	sessionNumber?: number,
 ): string[] {
 	if (!record) {
 		return [`${agentPaneTitle(theme, "Detail", ui.pane === "inspector")} ${theme.fg("dim", "Select a task to view its trace.")}`];
@@ -1138,7 +1101,7 @@ export function renderMonitorDetail(
 	const subtabs: TraceViewerItem[] = items ?? MONITOR_SUBTAB_LABELS.map((label) => ({ label, text: placeholderText, type: label.toLowerCase() as TraceViewerItem["type"] }));
 	const subtabIndex = Math.max(0, Math.min(ui.monitorSubtab, subtabs.length - 1));
 	ui.monitorSubtab = subtabIndex;
-	const titleLine = monitorTaskTitle(record, taskNumber, discovery, theme, ui.pane === "inspector", sessionNumber);
+	const titleLine = agentPaneTitle(theme, "Detail", ui.pane === "inspector");
 	const subtabLine = renderTraceTabBar(subtabs, subtabIndex, safeWidth, theme);
 	const item = subtabs[subtabIndex];
 	const fileLines = item?.path
@@ -1277,9 +1240,7 @@ function renderScrollableTraceText(rawLines: string[], type: TraceViewerItem["ty
 export function renderMonitorSessionDetail(group: MonitorSessionGroup | undefined, taskNumbers: Map<string, number>, ui: AgentBrowserUiState, width: number, rows: number, theme: Theme, animateSpinners = true): string[] {
 	if (!group) return [`${agentPaneTitle(theme, "Detail", ui.pane === "inspector")} ${theme.fg("dim", "Select a session or task.")}`];
 	const safeWidth = Math.max(8, width);
-	const mode = monitorSessionModeLabel(group);
-	const sessionNumber = sessionNumberLabel(group);
-	const header = `${agentPaneTitle(theme, "Detail", ui.pane === "inspector")} ${theme.fg("muted", monitorSessionKindLabel(group))}${theme.fg("dim", " · ")}${ansiMagenta(theme.bold(group.agent))}${sessionNumber ? `${theme.fg("dim", " · ")}${theme.fg("muted", sessionNumber)}` : ""}${mode ? `${theme.fg("dim", " · ")}${theme.fg("muted", mode)}` : ""}`;
+	const header = agentPaneTitle(theme, "Detail", ui.pane === "inspector");
 	const taskCountText = group.taskCount === 1 ? "1 task" : `${group.taskCount} tasks`;
 	const metadata = [
 		"Session",
@@ -1328,7 +1289,7 @@ function renderMonitorTabBody(
 	const selection = selectedMonitorRow(rows, ui);
 	const taskNumbers = taskNumberById(records);
 	const right = selection?.kind === "task"
-		? renderMonitorDetail(selection.record, cache, ui, taskNumbers.get(selection.record.taskId), discovery, rightWidth, bodyRows, theme, selection.group.sessionNumber)
+		? renderMonitorDetail(selection.record, cache, ui, rightWidth, bodyRows, theme)
 		: renderMonitorSessionDetail(selection?.kind === "session" ? selection.group : undefined, taskNumbers, ui, rightWidth, bodyRows, theme, animateSpinners);
 	const lines: string[] = [agentDivider(width, theme)];
 	for (let i = 0; i < bodyRows; i += 1) {
@@ -2014,7 +1975,11 @@ export async function traceViewerItems(record: PaneTaskRecord, taskNumber?: numb
 		record.validation?.length ? record.validation.map((item) => `- ${item}`).join("\n") : "None reported",
 		record.notes ? `\nNotes\n-----\n${record.notes}` : "",
 	].filter(Boolean).join("\n");
-	const completion = await readTextFileIfExists(record.completionArchivePath ?? record.completionSourcePath, 24_000);
+	const completionPath = record.completionArchivePath ?? record.completionSourcePath;
+	const completion = await readTextFileIfExists(completionPath, 24_000);
+	const completionText = completion || (completionPath
+		? "Completion JSON file could not be read. Summary uses the persisted task result."
+		: "No completion JSON artifact for this task. Background runs persist results in Summary.");
 	const common = { agent: record.agent, createdAt: record.completedAt ?? record.createdAt, ref, status: record.status, summary: summaryText };
 	const taskText = [
 		`Task ID  ${record.taskId}`,
@@ -2028,7 +1993,7 @@ export async function traceViewerItems(record: PaneTaskRecord, taskNumber?: numb
 	].filter(Boolean).join("\n");
 	return [
 		{ ...common, label: "Summary", text: metadata, type: "summary" },
-		{ ...common, label: "Completion", path: record.completionArchivePath ?? record.completionSourcePath, text: completion || "Completion JSON unavailable.", type: "completion" },
+		{ ...common, label: "Completion", path: completionPath, text: completionText, type: completionPath ? "completion" : "summary" },
 		{ ...common, label: "Task", path: record.inboxFile, text: taskText, type: "task" },
 	];
 }

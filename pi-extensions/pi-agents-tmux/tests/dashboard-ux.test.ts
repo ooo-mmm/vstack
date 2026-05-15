@@ -485,14 +485,14 @@ test("Monitor numbers repeated agent launches as sessions and resets task number
 	assert.equal(latestReviewerGroup.sessionNumber, 2);
 
 	const tree = renderMonitorTree(monitorTreeRows(groups), records, new Set(), uiState({ tab: "monitor", pane: "list" }), 180, theme as any, 20).join("\n").replace(/\x1b\[[0-9;]*m/g, "");
-	assert.match(tree, /reviewer-arch · session #2 · fresh/);
-	assert.match(tree, /reviewer-arch · session #1 · fresh/);
+	assert.match(tree, /reviewer-arch · 1 task · /);
 	assert.match(tree, /Task #1 · \d{2}:\d{2} · completed/);
-	assert.doesNotMatch(tree, /reviewer-arch #2/);
+	assert.doesNotMatch(tree, /bg · reviewer-arch|session #2 · fresh|reviewer-arch #2/);
 
 	const items = await traceViewerItems(second, numbers.get(second.taskId), { agents: [agent("reviewer-arch")] }, latestReviewerGroup.sessionNumber);
-	const detail = renderMonitorDetail(second, new Map([[second.taskId, { items }]]), uiState({ tab: "monitor", pane: "inspector" }), numbers.get(second.taskId), { agents: [agent("reviewer-arch")] } as any, 180, 30, theme as any, latestReviewerGroup.sessionNumber).join("\n").replace(/\x1b\[[0-9;]*m/g, "");
-	assert.match(detail, /reviewer-arch · session #2 · task #1 · completed/);
+	const detail = renderMonitorDetail(second, new Map([[second.taskId, { items }]]), uiState({ tab: "monitor", pane: "inspector" }), 180, 30, theme as any).join("\n").replace(/\x1b\[[0-9;]*m/g, "");
+	assert.equal(detail.split("\n")[0]?.trim(), "Detail");
+	assert.doesNotMatch(detail.split("\n")[0] ?? "", /reviewer-arch|session #|task #|completed|fresh|gpt/);
 	assert.match(items[0]!.text, /Session #  2/);
 	assert.match(items[0]!.text, /Task #   1/);
 	assert.doesNotMatch(detail, /reviewer-arch #2/);
@@ -624,7 +624,8 @@ test("Monitor session selection shows aggregate detail", () => {
 	const rendered = renderMonitorSessionDetail(group, taskNumberById([first, second]), uiState({ tab: "monitor" }), 140, 40, theme as any).join("\n");
 	const plain = rendered.replace(/\x1b\[[0-9;]*m/g, "");
 
-	assert.match(plain, /pane · planner · resumed/);
+	assert.equal(plain.split("\n")[0]?.trim(), "Detail");
+	assert.doesNotMatch(plain.split("\n")[0] ?? "", /pane|planner|resumed/);
 	assert.match(plain, /Session type:\s+pane/);
 	assert.match(plain, /Tasks:\s+2 tasks · completed:1 · running:1/);
 	assert.match(plain, /Usage:/);
@@ -706,10 +707,25 @@ test("Monitor tab task rendering still exposes task trace metadata", async () =>
 	assert.match(items[0]!.text, /completed planner summary/);
 });
 
+test("Monitor completion tab explains missing bg completion artifacts", async () => {
+	const taskRecord = record("reviewer-doc", "reviewer-doc-1700000120-bg", "2026-05-14T05:02:00.000Z", {
+		kind: "oneshot",
+		sessionMode: "fresh",
+		summary: "completed reviewer summary",
+	});
+	const items = await traceViewerItems(taskRecord, 1, { agents: [agent("reviewer-doc")] });
+
+	assert.equal(items[1]!.label, "Completion");
+	assert.equal(items[1]!.path, undefined);
+	assert.equal(items[1]!.type, "summary");
+	assert.match(items[1]!.text, /No completion JSON artifact/);
+	assert.match(items[1]!.text, /persist results in Summary/);
+});
+
 test("Monitor right-pane section labels use ANSI magenta", async () => {
 	const taskRecord = record("planner", "planner-1700000120-section", "2026-05-14T05:02:00.000Z", { summary: "done" });
 	const items = await traceViewerItems(taskRecord, 1, { agents: [agent("planner", true)] });
-	const rendered = renderMonitorDetail(taskRecord, new Map([[taskRecord.taskId, { items }]]), uiState({ tab: "monitor", pane: "inspector" }), 1, { agents: [agent("planner", true)] } as any, 120, 40, ansiTheme as any).join("\n");
+	const rendered = renderMonitorDetail(taskRecord, new Map([[taskRecord.taskId, { items }]]), uiState({ tab: "monitor", pane: "inspector" }), 120, 40, ansiTheme as any).join("\n");
 
 	assert.match(rendered, /\x1b\[35m\x1b\[1mOverview/);
 });
