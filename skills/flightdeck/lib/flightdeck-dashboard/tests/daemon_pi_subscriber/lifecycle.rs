@@ -101,16 +101,16 @@ exit 0
         temp.path(),
         &state_file,
         &bridge,
-        &[("FD_FAKE_CHILD_PID", bridge_pid_file.as_path())],
+        &[
+            ("FD_FAKE_CHILD_PID", bridge_pid_file.as_path()),
+            ("FLIGHTDECK_DASHBOARD_TEST_WEDGE_SIGNALS", temp.path()),
+        ],
     )
     .await?;
     let bridge_pid = parse_pid(&wait_for_file_text(&bridge_pid_file).await?)?;
     let _marker_pid = wait_for_file_text(&subscriber_pid_path(temp.path())).await?;
 
-    daemon.stop_with_env(&[
-        ("FLIGHTDECK_DASHBOARD_TEST_WEDGE_SIGNALS", "1"),
-        ("FLIGHTDECK_DASHBOARD_STOP_GRACE_MS", "100"),
-    ]);
+    daemon.stop_with_env(&[("FLIGHTDECK_DASHBOARD_STOP_GRACE_MS", "100")]);
     wait_for_pid_dead(bridge_pid).await?;
     Ok(())
 }

@@ -58,18 +58,6 @@ impl Tab {
     }
 
     #[must_use]
-    pub const fn placeholder(self) -> &'static str {
-        match self {
-            Self::Overview => "",
-            Self::LiveFeed => "Live feed — coming in Phase 3",
-            Self::Conversations => "Conversations — coming in Phase 3",
-            Self::Merges => "Conflicts & merges — coming in Phase 3",
-            Self::Decisions => "Decisions — coming in Phase 3",
-            Self::Daemon => "Daemon — coming in Phase 4",
-        }
-    }
-
-    #[must_use]
     pub fn index(self) -> usize {
         Self::ALL.iter().position(|tab| *tab == self).unwrap_or(0)
     }

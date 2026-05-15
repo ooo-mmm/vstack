@@ -14,8 +14,8 @@ use crate::cli::{DaemonAction, DaemonArgs, DaemonStartArgs, DaemonTailSource, Su
 use crate::daemon::busy::{self, BusyPaths};
 use crate::daemon::client::DaemonClient;
 use crate::daemon::lifecycle::{
-    self, append_log, pid_alive, read_pid, remove_pid, remove_socket, stop_pid, write_pid,
-    DaemonLock, ReadyNotifier, RuntimePaths,
+    self, append_log, pid_alive, read_pid, read_pid_file, remove_pid, remove_socket, stop_pid,
+    write_pid, DaemonLock, ReadyNotifier, RuntimePaths,
 };
 use crate::daemon::socket;
 use crate::daemon::state::{self, DaemonSnapshotSource};
@@ -182,15 +182,42 @@ async fn run_foreground(
 async fn stop_daemon(session: Option<&str>) -> Result<()> {
     let state_dir = fd_resolve_state_dir();
     let session_key = resolve_session_key_or_passthrough(session)?;
+    let subscriber_pids = read_subscriber_pids(&state_dir, &session_key);
     if let Some(pid) = read_pid(&state_dir, &session_key) {
         if pid_alive(pid) {
             stop_pid(pid, stop_grace())?;
+        }
+    }
+    for (path, pid) in subscriber_pids {
+        if pid_alive(pid) {
+            stop_pid(pid, Duration::from_millis(500))?;
+        }
+        if let Err(error) = std::fs::remove_file(&path) {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                tracing::debug!(path = %path.display(), %error, "failed to remove subscriber pid marker");
+            }
         }
     }
     let paths = RuntimePaths::new(state_dir, session_key);
     remove_pid(&paths);
     remove_socket(&paths);
     Ok(())
+}
+
+fn read_subscriber_pids(state_dir: &Path, session_key: &str) -> Vec<(PathBuf, u32)> {
+    let prefix = format!("fd-pi-subscriber-{session_key}-");
+    let Ok(entries) = std::fs::read_dir(state_dir) else {
+        return Vec::new();
+    };
+    entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let path = entry.path();
+            let name = path.file_name()?.to_str()?;
+            (name.starts_with(&prefix) && name.ends_with(".pid"))
+                .then(|| read_pid_file(&path).map(|pid| (path, pid)))?
+        })
+        .collect()
 }
 
 async fn print_status(session: Option<&str>) -> Result<()> {
@@ -252,8 +279,11 @@ async fn tail(session: Option<&str>, source: DaemonTailSource) -> Result<()> {
             let socket = dashboard_socket_file(&state_dir, &session_key);
             let mut client = DaemonClient::connect(&socket).await?;
             let mut rx = client.subscribe_snapshots().await?;
-            while let Some(snapshot) = rx.recv().await {
-                println!("{}", serde_json::to_string(&snapshot)?);
+            while let Some(result) = rx.recv().await {
+                match result {
+                    Ok(snapshot) => println!("{}", serde_json::to_string(&snapshot)?),
+                    Err(error) => return Err(error.into()),
+                }
             }
         }
         DaemonTailSource::Events | DaemonTailSource::Wake => {

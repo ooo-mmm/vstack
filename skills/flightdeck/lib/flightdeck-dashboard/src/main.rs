@@ -1,15 +1,12 @@
+mod terminal_guard;
+
 use std::io::{self, IsTerminal, Stdout};
 use std::path::Path;
 use std::time::Duration;
 
 use clap::Parser;
-use color_eyre::eyre::{eyre, Result};
-use crossterm::cursor::Show;
-use crossterm::event::{DisableMouseCapture, EnableMouseCapture, Event, EventStream, KeyEventKind};
-use crossterm::execute;
-use crossterm::terminal::{
-    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
-};
+use color_eyre::eyre::Result;
+use crossterm::event::{Event, EventStream, KeyEventKind};
 use flightdeck_dashboard::app::command::SnapshotSource;
 use flightdeck_dashboard::app::effects::Effects;
 use flightdeck_dashboard::app::model::{utc_now, Model, ReadSourceState};
@@ -33,6 +30,7 @@ use flightdeck_dashboard::watcher::{StateWatcher, WatcherEvent};
 use futures::StreamExt;
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
+use terminal_guard::TerminalGuard;
 use tokio::sync::mpsc;
 use tokio::time::{timeout, MissedTickBehavior};
 
@@ -499,106 +497,5 @@ fn event_to_msg(
         Some(Err(error)) => Some(flightdeck_dashboard::app::msg::Msg::Error(
             error.to_string(),
         )),
-    }
-}
-
-#[derive(Default)]
-struct TerminalGuard {
-    terminal: Option<Terminal<CrosstermBackend<Stdout>>>,
-    raw_enabled: bool,
-    alt_screen: bool,
-    mouse_capture: bool,
-}
-
-impl TerminalGuard {
-    fn enter() -> Result<Self> {
-        let mut guard = Self::default();
-        if let Err(error) = guard.enter_inner() {
-            guard.cleanup();
-            return Err(error);
-        }
-        Ok(guard)
-    }
-
-    fn terminal_mut(&mut self) -> Result<&mut Terminal<CrosstermBackend<Stdout>>> {
-        self.terminal
-            .as_mut()
-            .ok_or_else(|| eyre!("terminal not initialized"))
-    }
-
-    fn enter_inner(&mut self) -> Result<()> {
-        if let Err(error) = enable_raw_mode() {
-            return Err(error.into());
-        }
-        self.raw_enabled = true;
-
-        let mut stdout = io::stdout();
-        if let Err(error) = execute!(stdout, EnterAlternateScreen) {
-            return Err(error.into());
-        }
-        self.alt_screen = true;
-
-        if let Err(error) = execute!(stdout, EnableMouseCapture) {
-            return Err(error.into());
-        }
-        self.mouse_capture = true;
-
-        let backend = CrosstermBackend::new(stdout);
-        let mut terminal = Terminal::new(backend)?;
-        terminal.clear()?;
-        self.terminal = Some(terminal);
-        Ok(())
-    }
-
-    fn cleanup(&mut self) {
-        if self.raw_enabled {
-            if let Err(error) = disable_raw_mode() {
-                tracing::warn!(%error, "failed to disable raw mode");
-            }
-            self.raw_enabled = false;
-        }
-
-        if let Some(terminal) = self.terminal.as_mut() {
-            if self.alt_screen {
-                if let Err(error) = execute!(terminal.backend_mut(), LeaveAlternateScreen) {
-                    tracing::warn!(%error, "failed to leave alternate screen");
-                }
-                self.alt_screen = false;
-            }
-            if self.mouse_capture {
-                if let Err(error) = execute!(terminal.backend_mut(), DisableMouseCapture) {
-                    tracing::warn!(%error, "failed to disable mouse capture");
-                }
-                self.mouse_capture = false;
-            }
-            if let Err(error) = execute!(terminal.backend_mut(), Show) {
-                tracing::warn!(%error, "failed to show cursor");
-            }
-        } else {
-            let mut stdout = io::stdout();
-            if self.alt_screen {
-                if let Err(error) = execute!(stdout, LeaveAlternateScreen) {
-                    tracing::warn!(%error, "failed to leave alternate screen");
-                }
-                self.alt_screen = false;
-            }
-            if self.mouse_capture {
-                if let Err(error) = execute!(stdout, DisableMouseCapture) {
-                    tracing::warn!(%error, "failed to disable mouse capture");
-                }
-                self.mouse_capture = false;
-            }
-            if let Err(error) = execute!(stdout, Show) {
-                tracing::warn!(%error, "failed to show cursor");
-            }
-        }
-
-        self.terminal = None;
-    }
-}
-
-impl Drop for TerminalGuard {
-    fn drop(&mut self) {
-        self.cleanup();
     }
 }
