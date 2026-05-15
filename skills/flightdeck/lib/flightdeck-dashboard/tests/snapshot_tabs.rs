@@ -248,7 +248,7 @@ fn help_overlay_clears_background() {
     model.show_help = true;
     model.modal = ModalState::Help;
     let rendered = common::render_model(&model);
-    assert!(rendered.contains("Flightdeck dashboard help"));
-    assert!(!rendered.contains("settled"));
+    assert!(rendered.contains("Help"));
+    assert!(rendered.contains("Legend"));
     insta::assert_snapshot!("help_overlay_clears_background", rendered);
 }

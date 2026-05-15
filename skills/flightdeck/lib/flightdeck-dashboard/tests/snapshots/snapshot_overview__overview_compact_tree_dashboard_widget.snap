@@ -3,7 +3,7 @@ source: tests/snapshot_overview.rs
 expression: rendered
 ---
 "┌ Flightdeck ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐"
-"│ Flightdeck  session demo-mixed  owner pi · %25 · /repo/demo  daemon: file-mode  elapsed 2h25m  AH:1 ISS:1 WF:1  P:1 S:1 W:1   stale-warn 4m                                                          │"
+"│ Flightdeck   session demo-mixed  ·  Master pi at /repo/demo  ·  daemon: file-mode  ·  uptime 2h25m  ·  Adhoc 1 · Issue 1 · Workflow 1  ·  stale-warn 4m  moon ▾                                      │"
 "└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘"
 "┌ tabs ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐"
 "│ Overview │ Live feed │ Conversations │ Conflicts & merges (issue mode) │ Decisions │ Daemon                                                                                                          │"
@@ -11,9 +11,9 @@ expression: rendered
 "┌ sessions (3 tracked) ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐"
 "│Session demo-mixed  ·  AH:1  ISS:1  WF:1  ·  2h25m                                                                                                                                                    │"
 "│                                                                                                                                                                                                      │"
-"│› VST-101               prompting    opencode Fix dashboard state reader              PR #44                                                                                                          │"
-"│flightdeck-dashboard  ready        codex    Flightdeck Dashboard                                                                                                                                      │"
-"│adhoc-logs            waiting      pi       Watch daemon logs                                                                                                                                         │"
+"│› VST-101               Needs input  opencode Fix dashboard state reader              PR #44                                                                                                          │"
+"│flightdeck-dashboard  Idle         codex    Flightdeck Dashboard                                                                                                                                      │"
+"│adhoc-logs            Running      pi       Watch daemon logs                                                                                                                                         │"
 "│                                                                                                                                                                                                      │"
 "│                                                                                                                                                                                                      │"
 "│                                                                                                                                                                                                      │"
@@ -60,5 +60,5 @@ expression: rendered
 "│                                                                                                                                                                                                      │"
 "│                                                                                                                                                                                                      │"
 "└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘"
-" Tab/Shift+Tab tabs  j/k select  r reload  Ctrl+N noise: hidden  / filter:off  Alt+M compact  ? help  q quit                                                                                            "
+" ↹ tabs   j/k or ↑/↓ select   ⏎ detail   / filter   ⇧M compact   ? help   q quit                                                                                           noise: hidden  ·  filter: off"
 "                                                                                                                                                                                                        "

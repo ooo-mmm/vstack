@@ -3,7 +3,7 @@ source: tests/snapshot_tabs.rs
 expression: rendered
 ---
 "┌ Flightdeck ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐"
-"│ Flightdeck  session demo-conversations  owner pi · no-pane · /repo/demo  daemon: file-mode  elapsed 1h40m  AH:1 ISS:1 WF:0  P:1 W:1   fresh                                                          │"
+"│ Flightdeck   session demo-conversations  ·  Master pi at /repo/demo  ·  daemon: file-mode  ·  uptime 1h40m  ·  Adhoc 1 · Issue 1 · Workflow 0  ·  fresh  moon ▾                                      │"
 "└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘"
 "┌ tabs ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐"
 "│ Overview │ Live feed │ Conversations │ Conflicts & merges (issue mode) │ Decisions │ Daemon                                                                                                          │"
@@ -60,5 +60,5 @@ expression: rendered
 "│                                                                                                                                                                                                      │"
 "│                                                                                                                                                                                                      │"
 "└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘"
-" Tab/Shift+Tab tabs  j/k select  r reload  Ctrl+N noise: hidden  / filter:off  Alt+M compact  ? help  q quit                                                                                            "
+" ↹ tabs   j/k or ↑/↓ select   ⏎ detail   / filter   ⇧M compact   ? help   q quit                                                                                           noise: hidden  ·  filter: off"
 "                                                                                                                                                                                                        "

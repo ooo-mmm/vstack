@@ -102,7 +102,8 @@ fn pause_banner_at_top_and_right_rail_only_on_paused_row() {
     let paused_render = common::render_model(&model);
     let top_region = paused_render.lines().take(5).collect::<Vec<_>>().join("\n");
     assert!(top_region.contains("PAUSED FOR USER · VST-101 · scope_creep_detected"));
-    assert_eq!(paused_render.matches("PAUSED FOR USER").count(), 2);
+    assert_eq!(paused_render.matches("PAUSED FOR USER").count(), 1);
+    assert!(paused_render.contains("Paused"));
 
     let other_index = model
         .snapshot
@@ -177,9 +178,10 @@ fn header_counts_fit_at_140_cols() {
         140,
         common::SNAPSHOT_HEIGHT,
     );
-    assert!(rendered.contains("P:1"));
-    assert!(rendered.contains("S:1"));
-    assert!(rendered.contains("W:1"));
+    assert!(rendered.contains("Adhoc 1"));
+    assert!(rendered.contains("Issue 1"));
+    assert!(rendered.contains("Workflow 1"));
+    assert!(!rendered.contains("P:1"));
     assert!(!rendered.contains("prompting:"));
     insta::assert_snapshot!("overview_header_counts_140_cols", rendered);
 }
@@ -219,7 +221,7 @@ fn compact_tree_dashboard_widget() {
     model.ui.compact = true;
     let rendered = common::render_model(&model);
     assert!(rendered.contains("› VST-101"));
-    assert!(rendered.contains("flightdeck-dashboard  ready"));
+    assert!(rendered.contains("flightdeck-dashboard  Idle"));
     assert!(!rendered.contains("flightdeck-dashboardready"));
     insta::assert_snapshot!("overview_compact_tree_dashboard_widget", rendered);
 }
