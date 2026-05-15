@@ -61,11 +61,31 @@ fn mixed_conversations_tab() {
 }
 
 #[test]
+fn conversations_stream_newest_first() {
+    let mut model = common::model_for_fixture("conversations", MotionLevel::Off);
+    model.current_tab = Tab::Conversations;
+    let rendered = common::render_model(&model);
+    assert!(rendered.contains("newest first · pane ids hidden"));
+    assert!(rendered.contains("assistant (stream)"));
+    assert!(!rendered.contains("10:08:35"));
+    insta::assert_snapshot!("tab_conversations_stream", rendered);
+}
+
+#[test]
 fn mixed_merges_tab() {
     insta::assert_snapshot!(
         "tab_merges",
         common::render_model(&common::model_for_tab(Tab::Merges))
     );
+}
+
+#[test]
+fn merges_tab_hidden_without_issue_rows() {
+    let model = common::model_for_fixture("no-issue", MotionLevel::Off);
+    let rendered = common::render_model(&model);
+    assert!(!model.tabs_enabled.contains(&Tab::Merges));
+    assert!(!rendered.contains("Conflicts & merges"));
+    insta::assert_snapshot!("tab_merges_hidden_without_issue_rows", rendered);
 }
 
 #[test]
@@ -77,11 +97,24 @@ fn mixed_decisions_tab() {
 }
 
 #[test]
+fn decisions_detail_popup() {
+    let mut model = common::model_for_fixture("decisions", MotionLevel::Off);
+    model.current_tab = Tab::Decisions;
+    model.modal = ModalState::DecisionDetail;
+    insta::assert_snapshot!("tab_decisions_detail_popup", common::render_model(&model));
+}
+
+#[test]
 fn mixed_daemon_tab() {
-    insta::assert_snapshot!(
-        "tab_daemon",
-        common::render_model(&common::model_for_tab(Tab::Daemon))
-    );
+    let mut model = common::model_for_tab(Tab::Daemon);
+    model.snapshot.daemon = flightdeck_dashboard::state::snapshot::DaemonStatus {
+        label: "daemon: rust pid=4242".to_owned(),
+        healthy: Some(true),
+        pid: Some(4242),
+        last_heartbeat_at: Some(common::fixed_now() - chrono::Duration::seconds(8)),
+    };
+    seed_events(&mut model);
+    insta::assert_snapshot!("tab_daemon", common::render_model(&model));
 }
 
 fn seed_events(model: &mut flightdeck_dashboard::app::model::Model) {

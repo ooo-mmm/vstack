@@ -54,7 +54,7 @@ Runtime requirements for the shipped core scripts remain `bash` 4+, `tmux` 3.x, 
 
 `skills/flightdeck/scripts/flightdeck-dashboard launch` is the best-effort startup hook used by Flightdeck. It opens one tracked tmux window through `flightdeck-session start --kind workflow --harness shell`, registers `.entries.flightdeck-dashboard`, and skips cleanly outside tmux, when `FLIGHTDECK_DASHBOARD=0`, or when tmux idempotency probes fail (to avoid duplicate windows). By default it leaves wake delivery to the canonical TypeScript daemon; set `FLIGHTDECK_DAEMON_RUST=1` to have launch start the Rust dashboard daemon, or pass `--no-daemon` for file-mode only.
 
-`skills/flightdeck/scripts/flightdeck-dashboard tui --demo[=NAME]` runs compiled demo fixtures (`empty`, `one-adhoc`, `one-issue`, `mixed`, `terminated`, `paused`). `tui --state-file <path>` reads a concrete master-state JSON file, and `tui --session <name>` resolves `<project-root>/<FLIGHTDECK_STATE_DIR>/flightdeck-state-<name>.json` (default state dir `tmp/`) with terminated-archive fallback. With neither flag inside tmux, the dashboard uses the current tmux session. Live runs watch the state directory with debounced reloads, show stale/archive/pre-purge chips and banners, and populate the Activity tab from daemon/wake JSONL tailers.
+`skills/flightdeck/scripts/flightdeck-dashboard tui --demo[=NAME]` runs compiled demo fixtures (`empty`, `one-adhoc`, `one-issue`, `mixed`, `terminated`, `paused`, `observer`, `conversations`, `no-issue`, `decisions`). `tui --state-file <path>` reads a concrete master-state JSON file, and `tui --session <name>` resolves `<project-root>/<FLIGHTDECK_STATE_DIR>/flightdeck-state-<name>.json` (default state dir `tmp/`) with terminated-archive fallback. With neither flag inside tmux, the dashboard uses the current tmux session. Live runs watch the state directory with debounced reloads, show stale/archive/pre-purge chips and banners, and populate the Activity tab from daemon/wake JSONL tailers.
 
 Build a prebuilt binary with:
 
@@ -67,7 +67,7 @@ The script prefers `lib/flightdeck-dashboard/target/release/flightdeck-dashboard
 
 ## Pi dashboard (optional)
 
-If your master agent runs in Pi, install the [`pi-flightdeck`](../../pi-extensions/pi-flightdeck/README.md) extension for a live mission-control overlay — pause banner, persistent dashboard above the editor, `/flightdeck` popup with six tabs. It's read-only; the skill works identically with or without it.
+New sessions should prefer the Rust dashboard above. If your master agent runs in Pi and you still want in-editor mission control, the deprecated [`pi-flightdeck`](../../pi-extensions/pi-flightdeck/README.md) extension remains available as a read-only overlay — pause banner, persistent dashboard above the editor, `/flightdeck` popup with six tabs. The skill works identically with or without it.
 
 ```bash
 vstack add vanillagreencom/vstack --pi-extension pi-flightdeck --harness pi -y
@@ -87,6 +87,8 @@ Most users never touch these. The ones that occasionally matter:
 | `FLIGHTDECK_DASHBOARD_WINDOW` | Tmux window name for the Rust dashboard launch hook. Defaults to `flightdeck`. |
 | `FLIGHTDECK_DASHBOARD_MOTION` | Rust dashboard motion level: `full`, `reduced`, or `off`. `NO_MOTION` and `NO_COLOR` also disable motion. |
 | `FLIGHTDECK_DAEMON_RUST` | Set to `1` to let `flightdeck-dashboard launch` start the Rust daemon; unset/`0` defers daemon ownership to the canonical TypeScript path. |
+| `FLIGHTDECK_DASHBOARD_BELL` | Set to `0` to suppress the terminal bell on a new pause-for-user edge. |
+| `FLIGHTDECK_DASHBOARD_AUTO_FOCUS` | Set to `0` to suppress `tmux select-window` auto-focus on a new pause-for-user edge. |
 | `FLIGHTDECK_DASHBOARD_STALE_WARN_SECS` | Rust dashboard stale-warning threshold in seconds (default `30`). |
 | `FLIGHTDECK_DASHBOARD_STALE_DEAD_SECS` | Rust dashboard stale/dead threshold in seconds (default `300`). |
 

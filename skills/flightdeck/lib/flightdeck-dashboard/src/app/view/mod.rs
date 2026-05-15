@@ -8,7 +8,7 @@ pub mod modals;
 pub mod overview;
 
 use chrono::{DateTime, Utc};
-use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Tabs};
 use ratatui::Frame;
@@ -35,8 +35,12 @@ pub fn render(frame: &mut Frame<'_>, model: &Model) {
     render_body(frame, chunks[2], model, theme);
     render_footer(frame, chunks[3], model, theme);
 
-    if model.show_help {
-        modals::render_help(frame, area, model, theme);
+    match model.modal {
+        crate::app::model::ModalState::Help => modals::render_help(frame, area, model, theme),
+        crate::app::model::ModalState::DecisionDetail => {
+            modals::render_decision_detail(frame, area, model, theme);
+        }
+        crate::app::model::ModalState::None => {}
     }
 }
 
@@ -97,6 +101,10 @@ fn render_status(frame: &mut Frame<'_>, area: Rect, model: &Model, theme: Theme)
         spans.push(Span::raw("  "));
         spans.push(Span::styled(" ✔ session complete ", theme.ok));
     }
+    if model.is_observer() {
+        spans.push(Span::raw("  "));
+        spans.push(Span::styled(" OBSERVER ", theme.warning));
+    }
     if snapshot.paused_for_user.is_some() {
         spans.push(Span::raw("  "));
         spans.push(Span::styled(" PAUSED FOR USER ", theme.pause));
@@ -122,7 +130,7 @@ fn render_tabs(frame: &mut Frame<'_>, area: Rect, model: &Model, theme: Theme) {
     let labels = model
         .tabs_enabled
         .iter()
-        .map(|tab| Line::from(Span::raw(tab.label())))
+        .map(|tab| Line::from(Span::raw(model.tab_label(*tab))))
         .collect::<Vec<_>>();
     let fx_hint = fx::tab_switch_hint(model);
     let title = if fx_hint.is_empty() {
@@ -137,7 +145,7 @@ fn render_tabs(frame: &mut Frame<'_>, area: Rect, model: &Model, theme: Theme) {
                 .border_style(theme.border)
                 .title(Span::styled(title, theme.muted)),
         )
-        .select(model.current_tab.index())
+        .select(model.selected_tab_position())
         .style(theme.tab_inactive)
         .highlight_style(theme.tab_active);
     frame.render_widget(tabs, area);
@@ -191,23 +199,6 @@ fn render_footer(frame: &mut Frame<'_>, area: Rect, model: &Model, theme: Theme)
                 .border_style(theme.error),
         );
     }
-    frame.render_widget(paragraph, area);
-}
-
-pub(super) fn render_placeholder(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    label: &'static str,
-    theme: Theme,
-) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(theme.border)
-        .title(Span::styled(" scaffold ", theme.muted));
-    let paragraph = Paragraph::new(label)
-        .block(block)
-        .style(theme.muted)
-        .alignment(Alignment::Center);
     frame.render_widget(paragraph, area);
 }
 

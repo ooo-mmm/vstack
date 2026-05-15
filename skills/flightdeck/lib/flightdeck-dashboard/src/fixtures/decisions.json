@@ -1,0 +1,62 @@
+{
+  "session_id": "demo-decisions",
+  "started_at": "2026-05-15T08:15:00Z",
+  "updated_at": "2026-05-15T10:09:55Z",
+  "terminated": false,
+  "terminated_at": null,
+  "owner": {
+    "harness": "pi",
+    "pane_id": "%25",
+    "pane_target": "demo:1.0",
+    "cwd": "/repo/demo",
+    "pid": 2001,
+    "pi_session_id": "pi-demo-decisions",
+    "pi_bridge_socket": "/run/user/1000/pi-demo.sock",
+    "discovery_error": null
+  },
+  "entries": {
+    "VST-404": {
+      "id": "VST-404",
+      "title": "Resolve review prompt",
+      "kind": "issue",
+      "state": "prompting",
+      "substate": "awaiting review answer",
+      "harness": "pi",
+      "cwd": "/repo/worktrees/vst-404",
+      "window": "VST-404",
+      "pane_target": "demo:2.0",
+      "pane_id": "%31",
+      "launch": { "model": "gpt-5.5", "effort": "xhigh", "cmd": "pi issue VST-404" },
+      "adapter": { "pi_bridge_pid": 2504, "pi_bridge_socket": "/run/user/1000/pi-vst-404.sock", "pi_session_id": "pi-vst-404" },
+      "domain": {
+        "issue": {
+          "id": "VST-404",
+          "worktree": "/repo/worktrees/vst-404",
+          "pr_number": 404,
+          "scope_files_declared": 8,
+          "scope_files_actual": 8,
+          "orchestration_started": true,
+          "merge_commit": null
+        }
+      },
+      "last_response_at": "2026-05-15T10:08:00Z",
+      "spawned_at": "2026-05-15T09:45:00Z",
+      "last_polled_at": "2026-05-15T10:09:30Z",
+      "decisions_log": [
+        {
+          "ts": "2026-05-15T10:09:20Z",
+          "prompt_tag": "external-fix-suggestions",
+          "answer": "Apply the reviewer fix for the launch path only; keep unrelated daemon subscriber changes out of scope, rerun cargo fmt, clippy, cargo test, and cargo insta before committing."
+        },
+        {
+          "ts": "2026-05-15T10:01:00Z",
+          "prompt_tag": "merge-now",
+          "answer": "Proceed after checks are green."
+        }
+      ]
+    }
+  },
+  "merge_queue": ["VST-404"],
+  "conflict_graph": { "edges": [], "computed_at": "2026-05-15T10:09:00Z" },
+  "paused_for_user": null
+}

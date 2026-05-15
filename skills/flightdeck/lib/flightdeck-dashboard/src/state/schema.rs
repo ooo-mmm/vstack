@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use super::snapshot::{ConflictGraph, PauseInfo, SessionKind, SessionState};
+use super::snapshot::{ConflictGraph, ConversationStream, PauseInfo, SessionKind, SessionState};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct MasterState {
@@ -24,6 +24,8 @@ pub struct MasterState {
     pub conflict_graph: ConflictGraph,
     #[serde(default)]
     pub paused_for_user: Option<PauseInfo>,
+    #[serde(default)]
+    pub conversations: Vec<ConversationStream>,
     #[serde(default)]
     pub master_archive_error: Option<String>,
     #[serde(default)]

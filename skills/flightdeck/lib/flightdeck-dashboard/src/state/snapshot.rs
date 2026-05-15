@@ -251,7 +251,7 @@ impl DashboardSnapshot {
             conflict_graph: state.conflict_graph,
             paused_for_user: state.paused_for_user,
             recent_events: VecDeque::with_capacity(0),
-            conversations: Vec::new(),
+            conversations: folded_conversations(state.conversations),
             summary_path: state.summary_path,
         }
     }
@@ -566,4 +566,25 @@ impl EventImportance {
 pub struct ConversationStream {
     pub entry_id: String,
     pub excerpt: String,
+    pub ts: Option<DateTime<Utc>>,
+    pub role: Option<String>,
+    #[serde(default)]
+    pub partial: bool,
+}
+
+fn folded_conversations(mut conversations: Vec<ConversationStream>) -> Vec<ConversationStream> {
+    conversations.sort_by(|left, right| right.ts.cmp(&left.ts));
+    let mut seen_streams = std::collections::HashSet::new();
+    let mut folded = Vec::with_capacity(conversations.len());
+    for conversation in conversations {
+        let key = (
+            conversation.entry_id.clone(),
+            conversation.role.clone().unwrap_or_default(),
+        );
+        if conversation.partial && !seen_streams.insert(key) {
+            continue;
+        }
+        folded.push(conversation);
+    }
+    folded
 }

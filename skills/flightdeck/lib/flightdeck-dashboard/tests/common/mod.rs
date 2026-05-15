@@ -20,7 +20,9 @@ pub fn fixed_now() -> DateTime<Utc> {
 
 pub fn model_for_fixture(name: &'static str, motion: MotionLevel) -> Model {
     let snapshot = fixtures::load_demo_snapshot(name, fixed_now()).expect("fixture loads");
-    Model::new(snapshot, SnapshotSource::Demo(name), motion, fixed_now)
+    let mut model = Model::new(snapshot, SnapshotSource::Demo(name), motion, fixed_now);
+    model.current_pane_id = None;
+    model
 }
 
 pub fn model_for_tab(tab: Tab) -> Model {

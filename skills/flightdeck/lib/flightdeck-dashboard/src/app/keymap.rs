@@ -70,12 +70,12 @@ pub const BINDINGS: &[KeyBinding] = &[
     },
     KeyBinding {
         keys: "Enter",
-        description: "Open detail (placeholder)",
+        description: "Open selected detail",
         action: Action::OpenDetail,
     },
     KeyBinding {
         keys: "/",
-        description: "Open filter input (placeholder)",
+        description: "Open filter input",
         action: Action::OpenFilter,
     },
     KeyBinding {

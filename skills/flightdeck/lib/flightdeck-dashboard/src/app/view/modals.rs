@@ -61,3 +61,47 @@ fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
         .split(vertical[1]);
     horizontal[1]
 }
+
+pub fn render_decision_detail(frame: &mut Frame<'_>, area: Rect, model: &Model, theme: Theme) {
+    let popup = centered_rect(72, 58, area);
+    frame.render_widget(Clear, popup);
+    let lines = if let Some(decision) = super::decisions::selected_decision(model) {
+        vec![
+            Line::from(vec![
+                Span::styled("Session ", theme.status_label),
+                Span::raw(format!("{} · {}", decision.entry_id, decision.title)),
+            ]),
+            Line::from(vec![
+                Span::styled("Time ", theme.status_label),
+                Span::raw(decision.ts.to_rfc3339()),
+            ]),
+            Line::from(vec![
+                Span::styled("Prompt tag ", theme.status_label),
+                Span::styled(decision.prompt_tag, theme.warning),
+            ]),
+            Line::from(""),
+            Line::from(Span::styled("Answer", theme.header)),
+            Line::from(decision.answer),
+            Line::from(""),
+            Line::from(Span::styled(
+                "Esc or Backspace returns to decisions list",
+                theme.footer,
+            )),
+        ]
+    } else {
+        vec![Line::from(Span::styled(
+            "No decision selected",
+            theme.muted,
+        ))]
+    };
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(theme.border_active)
+        .title(Span::styled(" decision detail ", theme.title));
+    let paragraph = Paragraph::new(lines)
+        .block(block)
+        .alignment(Alignment::Left)
+        .wrap(Wrap { trim: true });
+    frame.render_widget(paragraph, popup);
+}

@@ -10,10 +10,14 @@ const ONE_ISSUE: &str = include_str!("fixtures/one-issue.json");
 const MIXED: &str = include_str!("fixtures/mixed.json");
 const TERMINATED: &str = include_str!("fixtures/terminated.json");
 const PAUSED: &str = include_str!("fixtures/paused.json");
+const OBSERVER: &str = include_str!("fixtures/observer.json");
+const CONVERSATIONS: &str = include_str!("fixtures/conversations.json");
+const NO_ISSUE: &str = include_str!("fixtures/no-issue.json");
+const DECISIONS: &str = include_str!("fixtures/decisions.json");
 
 #[derive(Debug, Error)]
 pub enum FixtureError {
-    #[error("unknown demo fixture {0:?}; available: empty, one-adhoc, one-issue, mixed, terminated, paused")]
+    #[error("unknown demo fixture {0:?}; available: empty, one-adhoc, one-issue, mixed, terminated, paused, observer, conversations, no-issue, decisions")]
     UnknownFixture(String),
     #[error(transparent)]
     State(#[from] StateError),
@@ -28,6 +32,10 @@ pub fn available() -> &'static [&'static str] {
         "mixed",
         "terminated",
         "paused",
+        "observer",
+        "conversations",
+        "no-issue",
+        "decisions",
     ]
 }
 
@@ -39,6 +47,10 @@ pub fn canonical_name(name: &str) -> Result<&'static str, FixtureError> {
         "mixed" => Ok("mixed"),
         "terminated" => Ok("terminated"),
         "paused" => Ok("paused"),
+        "observer" => Ok("observer"),
+        "conversations" => Ok("conversations"),
+        "no-issue" => Ok("no-issue"),
+        "decisions" => Ok("decisions"),
         other => Err(FixtureError::UnknownFixture(other.to_owned())),
     }
 }
@@ -51,6 +63,10 @@ pub fn fixture_source(name: &str) -> Result<&'static str, FixtureError> {
         "mixed" => Ok(MIXED),
         "terminated" => Ok(TERMINATED),
         "paused" => Ok(PAUSED),
+        "observer" => Ok(OBSERVER),
+        "conversations" => Ok(CONVERSATIONS),
+        "no-issue" => Ok(NO_ISSUE),
+        "decisions" => Ok(DECISIONS),
         other => Err(FixtureError::UnknownFixture(other.to_owned())),
     }
 }

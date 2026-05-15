@@ -69,11 +69,15 @@ fn handle_snapshot_updated(
         model.snapshot_diff_drops = model.snapshot_diff_drops.saturating_add(1);
         return pending_reload;
     }
+    let pause_edge = model.snapshot.paused_for_user.is_none() && snapshot.paused_for_user.is_some();
     model.snapshot = snapshot;
     model.read_source_state = source_state;
     model.refresh_now();
-    model.clamp_selection();
+    model.refresh_tabs_enabled();
     let mut commands = vec![Cmd::Render];
+    if pause_edge {
+        commands.push(Cmd::PauseSideEffects);
+    }
     commands.extend(pending_reload);
     commands
 }
@@ -117,14 +121,14 @@ fn handle_key(model: &mut Model, key: &KeyEvent) -> Vec<Cmd> {
 
     match action {
         Action::NextTab => {
-            model.current_tab = model.current_tab.next();
-            let target = EffectTarget::Tab(model.current_tab.index());
+            model.current_tab = model.next_tab();
+            let target = EffectTarget::Tab(model.selected_tab_position());
             push_effect(model, EffectKind::TabSwitchForward, target);
             vec![Cmd::Render]
         }
         Action::PreviousTab => {
-            model.current_tab = model.current_tab.previous();
-            let target = EffectTarget::Tab(model.current_tab.index());
+            model.current_tab = model.previous_tab();
+            let target = EffectTarget::Tab(model.selected_tab_position());
             push_effect(model, EffectKind::TabSwitchBackward, target);
             vec![Cmd::Render]
         }
@@ -156,11 +160,17 @@ fn handle_key(model: &mut Model, key: &KeyEvent) -> Vec<Cmd> {
             push_effect(model, EffectKind::SelectionHalo, target);
             vec![Cmd::Render]
         }
-        Action::OpenDetail => vec![Cmd::LogAction(format!(
-            "detail requested for tab={} row={}",
-            model.current_tab.label(),
-            model.selected_index()
-        ))],
+        Action::OpenDetail => {
+            if model.current_tab == super::model::Tab::Decisions && model.decision_count() > 0 {
+                model.modal = ModalState::DecisionDetail;
+                return vec![Cmd::Render];
+            }
+            vec![Cmd::LogAction(format!(
+                "detail requested for tab={} row={}",
+                model.current_tab.label(),
+                model.selected_index()
+            ))]
+        }
         Action::OpenFilter => {
             model.feed_filter.begin_edit();
             model.ui.filter_open = true;

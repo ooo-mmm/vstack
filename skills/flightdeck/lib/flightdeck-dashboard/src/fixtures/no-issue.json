@@ -1,0 +1,60 @@
+{
+  "session_id": "demo-no-issue",
+  "started_at": "2026-05-15T08:00:00Z",
+  "updated_at": "2026-05-15T10:09:40Z",
+  "terminated": false,
+  "terminated_at": null,
+  "owner": {
+    "harness": "codex",
+    "pane_id": "%25",
+    "pane_target": "demo:1.0",
+    "cwd": "/repo/demo",
+    "pid": 2001,
+    "pi_session_id": null,
+    "pi_bridge_socket": null,
+    "discovery_error": null
+  },
+  "entries": {
+    "adhoc-docs": {
+      "id": "adhoc-docs",
+      "title": "Read docs",
+      "kind": "adhoc",
+      "state": "waiting",
+      "substate": "idle",
+      "harness": "claude",
+      "cwd": "/repo/demo",
+      "window": "adhoc-docs",
+      "pane_target": "demo:2.0",
+      "pane_id": "%31",
+      "launch": { "model": "gpt-5.5", "effort": "medium", "cmd": "claude docs" },
+      "adapter": { "cc_url": "http://127.0.0.1:7070", "cc_session_uuid": "cc-docs" },
+      "domain": null,
+      "last_response_at": "2026-05-15T10:03:00Z",
+      "spawned_at": "2026-05-15T08:10:00Z",
+      "last_polled_at": "2026-05-15T10:09:00Z",
+      "decisions_log": []
+    },
+    "wf-dashboard": {
+      "id": "wf-dashboard",
+      "title": "Dashboard smoke",
+      "kind": "workflow",
+      "state": "submitting",
+      "substate": "running smoke",
+      "harness": "shell",
+      "cwd": "/repo/demo",
+      "window": "wf-dashboard",
+      "pane_target": "demo:3.0",
+      "pane_id": "%41",
+      "launch": { "model": null, "effort": null, "cmd": "cargo run -- tui --demo" },
+      "adapter": {},
+      "domain": null,
+      "last_response_at": "2026-05-15T10:05:00Z",
+      "spawned_at": "2026-05-15T09:00:00Z",
+      "last_polled_at": "2026-05-15T10:09:00Z",
+      "decisions_log": []
+    }
+  },
+  "merge_queue": [],
+  "conflict_graph": { "edges": [], "computed_at": "2026-05-15T10:09:00Z" },
+  "paused_for_user": null
+}

@@ -58,6 +58,22 @@ fn render_transition_banners(
             theme.error,
         );
     }
+    if model.is_observer() {
+        let owner = model
+            .snapshot
+            .owner
+            .as_ref()
+            .and_then(|owner| owner.pane_id.as_deref())
+            .unwrap_or("unknown");
+        let current = model.current_pane_id.as_deref().unwrap_or("unknown");
+        area = render_banner(
+            frame,
+            area,
+            " observer mode ",
+            &format!("Read-only observer: owner pane {owner}, dashboard pane {current}."),
+            theme.warning,
+        );
+    }
     match model.read_source_state {
         ReadSourceState::Archive { archived_at } => {
             area = render_banner(

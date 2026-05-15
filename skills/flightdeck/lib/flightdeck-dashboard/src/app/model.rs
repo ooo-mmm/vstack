@@ -9,7 +9,9 @@ use chrono::{DateTime, Utc};
 use crate::app::command::SnapshotSource;
 use crate::app::motion::{EffectInstance, MotionLevel};
 use crate::app::reload::ReloadCoalescer;
-use crate::state::snapshot::{DashboardSnapshot, Event, EventImportance, TrackedSession};
+use crate::state::snapshot::{
+    DashboardSnapshot, Event, EventImportance, SessionKind, TrackedSession,
+};
 
 pub type Clock = fn() -> DateTime<Utc>;
 
@@ -44,6 +46,14 @@ impl Tab {
             Self::Merges => "Conflicts & merges",
             Self::Decisions => "Decisions",
             Self::Daemon => "Daemon",
+        }
+    }
+
+    #[must_use]
+    pub const fn issue_mode_label(self) -> &'static str {
+        match self {
+            Self::Merges => "Conflicts & merges (issue mode)",
+            _ => self.label(),
         }
     }
 
@@ -178,6 +188,7 @@ fn is_archive_path(path: &Path) -> bool {
 pub enum ModalState {
     None,
     Help,
+    DecisionDetail,
 }
 
 #[derive(Debug)]
@@ -199,6 +210,7 @@ pub struct Model {
     pub modal: ModalState,
     pub ui: UiFlags,
     pub feed_filter: FeedFilter,
+    pub current_pane_id: Option<String>,
     pub quit_requested: bool,
     pub error: Option<String>,
     pub clock: Clock,
@@ -213,7 +225,7 @@ impl Model {
         motion: MotionLevel,
         clock: Clock,
     ) -> Self {
-        let tabs_enabled = Tab::ALL.to_vec();
+        let tabs_enabled = enabled_tabs_for(&snapshot);
         let mut selection = HashMap::with_capacity(Tab::ALL.len());
         for tab in Tab::ALL {
             selection.insert(tab, 0);
@@ -242,6 +254,9 @@ impl Model {
                 show_noisy: true,
             },
             feed_filter: FeedFilter::new(),
+            current_pane_id: std::env::var("TMUX_PANE")
+                .ok()
+                .filter(|pane| !pane.is_empty()),
             quit_requested: false,
             error: None,
             clock,
@@ -273,12 +288,98 @@ impl Model {
 
     #[must_use]
     pub fn max_selection_index(&self) -> usize {
-        self.snapshot.sessions.len().saturating_sub(1)
+        let len = match self.current_tab {
+            Tab::Overview => self.snapshot.sessions.len(),
+            Tab::LiveFeed => self.filtered_events().len(),
+            Tab::Conversations => self.snapshot.conversations.len(),
+            Tab::Merges => self
+                .snapshot
+                .merge_queue
+                .len()
+                .saturating_add(self.snapshot.conflict_graph.edges.len()),
+            Tab::Decisions => self.decision_count(),
+            Tab::Daemon => 1,
+        };
+        len.saturating_sub(1)
     }
 
     pub fn clamp_selection(&mut self) {
+        if !self.tabs_enabled.contains(&self.current_tab) {
+            self.current_tab = self.tabs_enabled.first().copied().unwrap_or(Tab::Overview);
+        }
         let current = self.selected_index();
         self.set_selected_index(current);
+    }
+
+    pub fn refresh_tabs_enabled(&mut self) {
+        self.tabs_enabled = enabled_tabs_for(&self.snapshot);
+        self.clamp_selection();
+    }
+
+    #[must_use]
+    pub fn selected_tab_position(&self) -> usize {
+        self.tabs_enabled
+            .iter()
+            .position(|tab| *tab == self.current_tab)
+            .unwrap_or_default()
+    }
+
+    #[must_use]
+    pub fn tab_label(&self, tab: Tab) -> &'static str {
+        if tab == Tab::Merges && self.has_issue_sessions() {
+            return tab.issue_mode_label();
+        }
+        tab.label()
+    }
+
+    #[must_use]
+    pub fn next_tab(&self) -> Tab {
+        let current = self.selected_tab_position();
+        self.tabs_enabled
+            .get((current + 1) % self.tabs_enabled.len().max(1))
+            .copied()
+            .unwrap_or(Tab::Overview)
+    }
+
+    #[must_use]
+    pub fn previous_tab(&self) -> Tab {
+        let len = self.tabs_enabled.len();
+        if len == 0 {
+            return Tab::Overview;
+        }
+        let current = self.selected_tab_position();
+        self.tabs_enabled[(current + len - 1) % len]
+    }
+
+    #[must_use]
+    pub fn has_issue_sessions(&self) -> bool {
+        self.snapshot
+            .sessions
+            .iter()
+            .any(|session| session.kind == SessionKind::Issue)
+    }
+
+    #[must_use]
+    pub fn decision_count(&self) -> usize {
+        self.snapshot
+            .sessions
+            .iter()
+            .map(|session| session.decisions_log.len())
+            .sum()
+    }
+
+    #[must_use]
+    pub fn is_observer(&self) -> bool {
+        let Some(current) = self.current_pane_id.as_deref() else {
+            return false;
+        };
+        let Some(owner) = &self.snapshot.owner else {
+            return false;
+        };
+        owner
+            .pane_id
+            .as_deref()
+            .is_some_and(|owner_pane| owner_pane != current)
     }
 
     pub fn push_event(&mut self, event: Event) {
@@ -297,6 +398,19 @@ impl Model {
             .filter(|event| self.feed_filter.matches(event))
             .collect()
     }
+}
+
+fn enabled_tabs_for(snapshot: &DashboardSnapshot) -> Vec<Tab> {
+    Tab::ALL
+        .into_iter()
+        .filter(|tab| {
+            *tab != Tab::Merges
+                || snapshot
+                    .sessions
+                    .iter()
+                    .any(|session| session.kind == SessionKind::Issue)
+        })
+        .collect()
 }
 
 pub fn utc_now() -> DateTime<Utc> {

@@ -1,0 +1,41 @@
+{
+  "session_id": "demo-observer",
+  "started_at": "2026-05-15T09:00:00Z",
+  "updated_at": "2026-05-15T10:09:45Z",
+  "terminated": false,
+  "terminated_at": null,
+  "owner": {
+    "harness": "pi",
+    "pane_id": "%25",
+    "pane_target": "demo:1.0",
+    "cwd": "/repo/demo",
+    "pid": 2001,
+    "pi_session_id": "pi-demo-observer",
+    "pi_bridge_socket": "/run/user/1000/pi-demo.sock",
+    "discovery_error": null
+  },
+  "entries": {
+    "observer-workflow": {
+      "id": "observer-workflow",
+      "title": "Observe another Flightdeck owner",
+      "kind": "workflow",
+      "state": "waiting",
+      "substate": "read-only view",
+      "harness": "pi",
+      "cwd": "/repo/demo",
+      "window": "observer-workflow",
+      "pane_target": "demo:2.0",
+      "pane_id": "%31",
+      "launch": { "model": "gpt-5.5", "effort": "medium", "cmd": "flightdeck dashboard" },
+      "adapter": { "pi_bridge_pid": 2401, "pi_bridge_socket": "/run/user/1000/pi-observer.sock", "pi_session_id": "pi-observer" },
+      "domain": null,
+      "last_response_at": "2026-05-15T10:08:00Z",
+      "spawned_at": "2026-05-15T09:05:00Z",
+      "last_polled_at": "2026-05-15T10:09:30Z",
+      "decisions_log": []
+    }
+  },
+  "merge_queue": [],
+  "conflict_graph": { "edges": [], "computed_at": "2026-05-15T10:09:00Z" },
+  "paused_for_user": null
+}
