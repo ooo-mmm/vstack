@@ -96,7 +96,11 @@ Snapshot tests use `ratatui::backend::TestBackend::new(200, 60)`. The shared con
 
 When adding a tab, wire the enum/state in `app/model.rs`, key handling in `app/keymap.rs`, update logic in `app/update.rs`, and render code under `app/view/<tab>.rs` plus `app/view/mod.rs`. Keep view modules render-only: write paths go through existing Flightdeck helpers, not direct mutations from the TUI.
 
-`app/theme.rs` is the single source of truth for colors and styles. Views must consume theme tokens (`theme.ok`, `theme.warning`, `theme.error`, etc.) and never hard-code raw colors. Motion effects live in `app/view/fx.rs` and `app/motion.rs`; add new effects to the catalog, respect `MotionLevel::Off`, and keep semantic information visible without animation.
+`app/theme.rs` is the single source of truth for colors and styles. Views must consume `Palette` style helpers (`theme.ok()`, `theme.warning()`, `theme.error()`, etc.) and never hard-code raw colors. Motion effects live in `app/view/fx.rs` and `app/motion.rs`; add new effects to the catalog, respect `MotionLevel::Off`, and keep semantic information visible without animation.
+
+### Theme tokens
+
+The Rust dashboard theme layer uses exactly 16 palette slots: four surfaces (`bg`, `surface`, `overlay`, `selected_bg`), three text tones (`text`, `subtle`, `muted`), five semantic colors (`accent`, `success`, `warning`, `error`, `info`), and four decoration colors (`secondary`, `border_active`, `border_inactive`, `chrome`). `Theme::Moon` and `Theme::Dawn` are Rose Pine truecolor palettes; `Theme::System` uses reset/ANSI colors so terminal palettes control the final look. Add a fourth theme by adding one `Palette` const, one `Theme` variant, parser/display-name branches, and snapshots/tests; do not add ad-hoc view colors or extend the slot set unless a new semantic category cannot be expressed with modifiers.
 
 Daemon code lives under `src/daemon/`. The Pi subscriber is split by responsibility in `daemon/subscribers/pi/{lifecycle,bridge,stream_parse,classifier,wake_emitter}.rs`; keep future subscriber work similarly scoped and leave Claude/OpenCode/Codex/tmux fallback stubs explicit until implemented.
 
@@ -132,7 +136,7 @@ cargo run --release -- tui --demo
 cargo run --release -- tui --state-file ../../tests/fixtures/state/entries-happy.json
 ```
 
-`flightdeck-dashboard launch` is the Flightdeck startup hook. It is best-effort: outside tmux it prints `flightdeck-dashboard: not in tmux; skipping launch`, `FLIGHTDECK_DASHBOARD=0` exits silently, `--no-daemon` skips Rust daemon startup, and `FLIGHTDECK_DAEMON_RUST=1` opts into `daemon start --detach` before opening the tracked workflow window through `flightdeck-session start`. The trampoline exports `FLIGHTDECK_SKILL_DIR` so installed `.agents/skills/flightdeck` projects can find sibling scripts. Use `FLIGHTDECK_DASHBOARD_WINDOW` and `FLIGHTDECK_DASHBOARD_MOTION` (or CLI `--window-name` / `--motion`) for local launch smoke variants; `NO_MOTION`/`NO_COLOR` force `--motion off` for launched TUI children.
+`flightdeck-dashboard launch` is the Flightdeck startup hook. It is best-effort: outside tmux it prints `flightdeck-dashboard: not in tmux; skipping launch`, `FLIGHTDECK_DASHBOARD=0` exits silently, `--no-daemon` skips Rust daemon startup, and `FLIGHTDECK_DAEMON_RUST=1` opts into `daemon start --detach` before opening the tracked workflow window through `flightdeck-session start`. The trampoline exports `FLIGHTDECK_SKILL_DIR` so installed `.agents/skills/flightdeck` projects can find sibling scripts. Use `FLIGHTDECK_DASHBOARD_WINDOW`, `FLIGHTDECK_DASHBOARD_MOTION`, and `FLIGHTDECK_DASHBOARD_THEME` (or CLI `--window-name` / `--motion` / `--theme`) for local launch smoke variants; `NO_MOTION`/`NO_COLOR` force `--motion off` for launched TUI children.
 
 Snapshots live under `tests/snapshots/`; update intentionally with `INSTA_UPDATE=always cargo insta test`, then review the `.snap` diff before committing. Phase 7 parity smoke steps for terminal bell, no-auto-focus pause behavior, and live observer panes live in `docs/work-in-progress/flightdeck-dashboard-parity-smokes.md`. Watcher tests use `notify-debouncer-full` against temp dirs; if they fail locally, verify the filesystem supports native file notifications.
 

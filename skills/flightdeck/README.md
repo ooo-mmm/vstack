@@ -54,18 +54,19 @@ Runtime requirements for the shipped core scripts remain `bash` 4+, `tmux` 3.x, 
 
 The Rust dashboard binary lives at `skills/flightdeck/lib/flightdeck-dashboard/`, with the user-facing trampoline at `skills/flightdeck/scripts/flightdeck-dashboard`. It is a read-only ratatui view of the master state file: it renders tracked sessions, owner/observer status, pause/stale/archive/pre-purge banners, live Activity rows from daemon/wake JSONL, conversations, decisions, merges, and daemon health. Live mode file-watches the state/archive paths with debounced reloads; the optional Rust daemon adds a UDS JSON-RPC snapshot stream and Pi-only wake subscriber absorption.
 
-`flightdeck-dashboard launch` is the best-effort startup hook used by Flightdeck. It opens one tracked tmux window through `flightdeck-session start --kind workflow --harness shell`, registers `.entries.flightdeck-dashboard`, and skips cleanly outside tmux, when disabled, or when tmux idempotency probes fail. It honors:
+`flightdeck-dashboard launch` is the best-effort startup hook used by Flightdeck. It opens one tracked tmux window through `flightdeck-session start --kind workflow --harness shell`, registers `.entries.flightdeck-dashboard`, and skips cleanly outside tmux, when disabled, or when tmux idempotency probes fail. Use `launch --theme moon|dawn|system` to forward a theme to the child TUI. It honors:
 
 | Variable | Purpose |
 | --- | --- |
 | `FLIGHTDECK_DASHBOARD=0` | Exit `0` silently without launching the dashboard. |
 | `FLIGHTDECK_DASHBOARD_WINDOW` | Tmux window name, default `flightdeck`. |
 | `FLIGHTDECK_DASHBOARD_MOTION` | Motion level: `full`, `reduced`, or `off`; `NO_MOTION` / `NO_COLOR` force `off`. |
+| `FLIGHTDECK_DASHBOARD_THEME` | Theme: `moon` (default Rose Pine Moon), `dawn`, or `system`; CLI `--theme` overrides it. |
 | `FLIGHTDECK_DAEMON_RUST=1` | Opt into the Rust daemon wake side; default off keeps the canonical TypeScript daemon in charge of wake delivery. |
 | `FLIGHTDECK_DASHBOARD_BELL=0` | Suppress the pause-edge terminal bell. |
 | `FLIGHTDECK_DASHBOARD_STALE_WARN_SECS` / `FLIGHTDECK_DASHBOARD_STALE_DEAD_SECS` | Tune stale-chip thresholds. |
 
-`flightdeck-dashboard tui --demo[=NAME]` runs compiled demo fixtures (`empty`, `one-adhoc`, `one-issue`, `mixed`, `terminated`, `paused`, `observer`, `conversations`, `no-issue`, `decisions`). `tui --state-file <path>` reads a concrete master-state JSON file, and `tui --session <name>` resolves `<project-root>/<FLIGHTDECK_STATE_DIR>/flightdeck-state-<name>.json` (default state dir `tmp/`) with terminated-archive fallback. With neither flag inside tmux, the dashboard uses the current tmux session.
+`flightdeck-dashboard tui --demo[=NAME]` runs compiled demo fixtures (`empty`, `one-adhoc`, `one-issue`, `mixed`, `terminated`, `paused`, `observer`, `conversations`, `no-issue`, `decisions`). `tui --state-file <path>` reads a concrete master-state JSON file, and `tui --session <name>` resolves `<project-root>/<FLIGHTDECK_STATE_DIR>/flightdeck-state-<name>.json` (default state dir `tmp/`) with terminated-archive fallback. With neither flag inside tmux, the dashboard uses the current tmux session. Use `--theme moon|dawn|system` to select Rose Pine Moon, Rose Pine Dawn, or terminal-system colors.
 
 The legacy in-Pi dashboard extension remains documented in [`pi-extensions/pi-flightdeck/README.md`](../../pi-extensions/pi-flightdeck/README.md), but it is deprecated for new sessions. Prefer the Rust dashboard for new Flightdeck runs.
 
@@ -99,6 +100,7 @@ Most users never touch these. The ones that occasionally matter:
 | `FLIGHTDECK_DASHBOARD` | Set to `0` to disable the Rust dashboard launch hook silently. |
 | `FLIGHTDECK_DASHBOARD_WINDOW` | Tmux window name for the Rust dashboard launch hook. Defaults to `flightdeck`. |
 | `FLIGHTDECK_DASHBOARD_MOTION` | Rust dashboard motion level: `full`, `reduced`, or `off`. `NO_MOTION` and `NO_COLOR` also disable motion. |
+| `FLIGHTDECK_DASHBOARD_THEME` | Rust dashboard theme: `moon` (default), `dawn`, or `system`. CLI `--theme` wins over the env var. |
 | `FLIGHTDECK_DAEMON_RUST` | Set to `1` to let `flightdeck-dashboard launch` start the Rust daemon; unset/`0` defers daemon ownership to the canonical TypeScript path. |
 | `FLIGHTDECK_DASHBOARD_BELL` | Set to `0` to suppress the terminal bell on a new pause-for-user edge. The dashboard never auto-focuses tmux windows. |
 | `FLIGHTDECK_DASHBOARD_STALE_WARN_SECS` | Rust dashboard stale-warning threshold in seconds (default `30`). |

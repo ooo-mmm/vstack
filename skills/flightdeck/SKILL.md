@@ -275,6 +275,7 @@ Rust dashboard env vars:
 | `FLIGHTDECK_DASHBOARD` | `1` | When `0`, `flightdeck-dashboard launch` exits `0` silently. |
 | `FLIGHTDECK_DASHBOARD_WINDOW` | `flightdeck` | Tmux window name used by the dashboard launch hook. |
 | `FLIGHTDECK_DASHBOARD_MOTION` | `full` | Animation intensity: `full`, `reduced`, or `off`. `NO_MOTION` / `NO_COLOR` force `off` regardless of this setting. CLI `--motion` overrides it. |
+| `FLIGHTDECK_DASHBOARD_THEME` | `moon` | Color theme: `moon`, `dawn`, or `system`. CLI `--theme` overrides it. |
 | `FLIGHTDECK_DAEMON_RUST` | `0` | Opt-in to the Rust daemon wake side / subscriber absorption. Default off keeps the canonical TypeScript daemon in charge of wake delivery. |
 | `FLIGHTDECK_DASHBOARD_BELL` | `1` | Set to `0` to suppress the terminal bell on a new pause-for-user edge. The dashboard never auto-focuses tmux windows. |
 | `FLIGHTDECK_DASHBOARD_STALE_WARN_SECS` | `30` | Stale-chip warning threshold in seconds. |
