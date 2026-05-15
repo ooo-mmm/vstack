@@ -614,6 +614,8 @@ test("Monitor clamp keeps section rows selectable", () => {
 test("Monitor empty tree renders dispatch hint", () => {
 	const rendered = renderMonitorTree([], [], new Set(), uiState({ tab: "monitor", pane: "list" }), 120, theme as any, 10).join("\n");
 
+	assert.match(rendered, /Sessions\s+\(0\)/);
+	assert.doesNotMatch(rendered, /Monitor\s+\(0\)/);
 	assert.match(rendered, /No tasks yet\. Dispatch via `subagent` or `\/agents`\./);
 });
 

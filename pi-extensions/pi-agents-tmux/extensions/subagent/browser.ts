@@ -953,7 +953,7 @@ function monitorSessionRowLabel(group: MonitorSessionGroup, theme: Theme): strin
 
 export function renderMonitorTree(rows: MonitorTreeRow[], records: PaneTaskRecord[], collapsedSessionIds: Set<string>, ui: AgentBrowserUiState, width: number, theme: Theme, listRows: number, animateSpinners = true): string[] {
 	const groups = buildMonitorSessionGroups(records).length;
-	const lines = [`${agentPaneTitle(theme, "Monitor", ui.pane === "list")} ${theme.fg("dim", `(${groups})`)}`, ""];
+	const lines = [`${agentPaneTitle(theme, "Sessions", ui.pane === "list")} ${theme.fg("dim", `(${groups})`)}`, ""];
 	if (records.length === 0 || rows.length === 0 || selectableMonitorRows(rows).length === 0) {
 		lines.push(theme.fg("dim", "No tasks yet. Dispatch via `subagent` or `/agents`."));
 		return lines;
