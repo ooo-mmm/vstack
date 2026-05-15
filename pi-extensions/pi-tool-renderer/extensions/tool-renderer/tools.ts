@@ -125,12 +125,8 @@ function renderBashTail(output: string, limit: number, theme: any, cwd?: string)
 	const trimmed = output.replace(/(?:\r?\n)+$/, "");
 	if (!trimmed) return "";
 	const tailLines = preview(trimmed, limit, "tail", cwd).split(/\r?\n/);
-	return tailLines
-		.map((line, index) => {
-			const connector = treeConnector(theme, index === tailLines.length - 1 ? "└" : "├", cwd);
-			return `${connector}${theme.fg("dim", line)}`;
-		})
-		.join("\n");
+	const connector = treeConnector(theme, "│", cwd);
+	return tailLines.map((line) => `${connector}${theme.fg("dim", line)}`).join("\n");
 }
 
 export function registerRead(pi: ExtensionAPI, agent: any, cwd: string): void {

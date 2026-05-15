@@ -132,11 +132,11 @@ function stackItemPreview(item: StackItem, theme: any, expanded: boolean, cwd?: 
 
 export function renderStackItemText(item: StackItem, theme: any, expanded: boolean, cwd?: string, branch = "├"): string {
 	const typedBranch = branch as TreeBranch;
-	const stem = treeStem(theme, typedBranch, cwd);
 	let text = `${treeConnector(theme, typedBranch, cwd)}${stackItemCallText(item, theme, cwd)}${theme.fg("dim", " · ")}${stackItemSummary(item, theme)}`;
 	if (expanded) {
 		const previewText = stackItemPreview(item, theme, expanded, cwd);
 		if (previewText) {
+			const stem = item.toolName === "bash" ? treeConnector(theme, "│", cwd) : treeStem(theme, typedBranch, cwd);
 			const lines = previewText.split(/\r?\n/).map((line) => `${stem}${theme.fg("dim", line)}`);
 			text += `\n${lines.join("\n")}`;
 		}
