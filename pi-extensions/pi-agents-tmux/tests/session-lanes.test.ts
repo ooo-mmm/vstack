@@ -13,6 +13,7 @@ import {
 	validateAgentInventory,
 } from "../extensions/subagent/dispatch.js";
 import {
+	isContextLengthExceededEnvelope,
 	isContextLengthExceededText,
 	ONESHOT_SESSION_PREFIX,
 	resolveBgSession,
@@ -169,6 +170,7 @@ test("explicit sessionKey reuses same lane", () => {
 
 test("context_length_exceeded detection triggers one retry with fresh session", async () => {
 	assert.equal(isContextLengthExceededText('Codex error: {"type":"error","error":{"type":"invalid_request_error","code":"context_length_exceeded"}}'), true);
+	assert.equal(isContextLengthExceededEnvelope({ type: "turn_end", message: { errorMessage: "context_length_exceeded" } }), true);
 	const calls = installMockSpawn([
 		{ code: 1, stdout: `${JSON.stringify({ error: { type: "invalid_request_error", code: "context_length_exceeded" } })}\n` },
 		{ code: 0, stdout: `${JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "ok after retry" }], usage: { input: 1, output: 1, totalTokens: 2 } } })}\n` },
@@ -197,6 +199,56 @@ test("context_length_exceeded detection triggers one retry with fresh session", 
 		assert.notEqual(result.attempts?.[0]?.sessionKey, result.attempts?.[1]?.sessionKey);
 		assert.match(result.attempts?.[0]?.errorEnvelope ?? "", /context_length_exceeded/);
 		assert.match(result.stderr, /retrying once with fresh session/);
+	} finally {
+		setSingleAgentSpawnForTests();
+	}
+});
+
+test("context_length_exceeded text in normal tool output does not trigger retry", async () => {
+	const stdout = bridgeStdout([
+		{
+			type: "tool_execution_end",
+			toolCallId: "call-grep",
+			toolName: "grep",
+			result: {
+				content: [
+					{ type: "text", text: "tests/session-lanes.test.ts: context_length_exceeded detection triggers one retry" },
+				],
+			},
+		},
+		{
+			type: "message_end",
+			message: {
+				role: "assistant",
+				content: [{ type: "text", text: "Reviewed context_length_exceeded docs/tests; no runtime overflow." }],
+				usage: { input: 1, output: 1, totalTokens: 2 },
+			},
+		},
+	]);
+	const calls = installMockSpawn([{ code: 0, stdout }]);
+	try {
+		const result = await runSingleAgent(
+			process.cwd(),
+			tempRuntime(),
+			[testAgent()],
+			"reviewer-test",
+			"review code",
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			{ getActiveTools: () => [], events: { emit: () => undefined } } as any,
+			undefined,
+			undefined,
+			makeDetails,
+		);
+		assert.equal(calls.length, 1);
+		assert.equal(result.exitCode, 0);
+		assert.equal(result.attempt, 1);
+		assert.equal(result.attempts, undefined);
+		assert.equal(result.errorEnvelope, undefined);
+		assert.equal(result.errorMessage, undefined);
+		assert.equal(result.stderr, "");
 	} finally {
 		setSingleAgentSpawnForTests();
 	}

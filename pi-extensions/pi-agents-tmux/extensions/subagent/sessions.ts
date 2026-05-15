@@ -172,14 +172,25 @@ export async function guardReusedSessionBudget(sessionPath: string, agentName: s
 	return { estimate, ok: policy === "warn", policy, warning };
 }
 
+function contextLengthExceededField(value: unknown): boolean {
+	return typeof value === "string" && isContextLengthExceededText(value);
+}
+
 export function isContextLengthExceededEnvelope(value: unknown): boolean {
 	if (!value || typeof value !== "object") return false;
 	const candidate = value as Record<string, unknown>;
-	const error = candidate.error && typeof candidate.error === "object" ? candidate.error as Record<string, unknown> : undefined;
+	const errorValue = candidate.error;
+	const error = errorValue && typeof errorValue === "object" ? errorValue as Record<string, unknown> : undefined;
+	const message = candidate.message && typeof candidate.message === "object" ? candidate.message as Record<string, unknown> : undefined;
 	return error?.code === "context_length_exceeded"
 		|| error?.type === "context_length_exceeded"
 		|| candidate.code === "context_length_exceeded"
-		|| candidate.type === "context_length_exceeded";
+		|| candidate.type === "context_length_exceeded"
+		|| contextLengthExceededField(errorValue)
+		|| contextLengthExceededField(candidate.errorMessage)
+		|| contextLengthExceededField(candidate.stopReason)
+		|| contextLengthExceededField(message?.errorMessage)
+		|| contextLengthExceededField(message?.stopReason);
 }
 
 export function isContextLengthExceededText(text: string | undefined): boolean {
@@ -189,26 +200,12 @@ export function isContextLengthExceededText(text: string | undefined): boolean {
 		|| /"type"\s*:\s*"context_length_exceeded"/i.test(text);
 }
 
-function messageText(result: SingleResult): string {
-	const parts: string[] = [];
-	for (const message of result.messages ?? []) {
-		for (const part of message.content ?? []) {
-			if (part && typeof part === "object" && (part as { type?: unknown }).type === "text") {
-				const text = (part as { text?: unknown }).text;
-				if (typeof text === "string") parts.push(text);
-			}
-		}
-	}
-	return parts.join("\n");
-}
-
 export function resultHasContextLengthExceeded(result: SingleResult): boolean {
 	return isContextLengthExceededText([
 		result.stderr,
 		result.errorEnvelope,
 		result.errorMessage,
 		result.stopReason,
-		messageText(result),
 	].filter(Boolean).join("\n"));
 }
 

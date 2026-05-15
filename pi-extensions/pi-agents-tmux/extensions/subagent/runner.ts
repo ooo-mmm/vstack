@@ -33,7 +33,6 @@ import {
 import {
 	guardReusedSessionBudget,
 	isContextLengthExceededEnvelope,
-	isContextLengthExceededText,
 	resolveBgSession,
 	resultHasContextLengthExceeded,
 	summarizeAttempt,
@@ -679,7 +678,7 @@ async function runSingleAgentAttempt(
 					emitUpdate();
 				}
 
-				const hasContextOverflowEnvelope = isContextLengthExceededEnvelope(event) || isContextLengthExceededEnvelope(payload) || isContextLengthExceededText(line);
+				const hasContextOverflowEnvelope = isContextLengthExceededEnvelope(event) || isContextLengthExceededEnvelope(payload);
 				if (eventName === "error" || hasContextOverflowEnvelope) {
 					const rawEnvelope = line;
 					const errorText = typeof payload.error === "string" ? payload.error : JSON.stringify(payload.error ?? payload ?? event);
