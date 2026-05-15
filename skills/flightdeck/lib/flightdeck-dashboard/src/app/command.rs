@@ -11,6 +11,7 @@ pub enum SnapshotSource {
     Demo(&'static str),
     File(PathBuf),
     Session(SessionResolution),
+    Socket(PathBuf),
 }
 
 pub enum Cmd {

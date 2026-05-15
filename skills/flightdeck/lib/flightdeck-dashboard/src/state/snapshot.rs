@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use super::schema::{
     AdapterMetadata, DecisionLogEntry, DomainBlock, LaunchInfo, MasterState, OwnerBlock,
@@ -49,6 +49,15 @@ impl SessionKind {
             Self::Workflow => "WF",
             Self::Other(_) => "??",
         }
+    }
+}
+
+impl Serialize for SessionKind {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.as_str())
     }
 }
 
@@ -137,6 +146,15 @@ impl SessionState {
     }
 }
 
+impl Serialize for SessionState {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
 impl<'de> Deserialize<'de> for SessionState {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -165,14 +183,14 @@ impl fmt::Display for SessionState {
     }
 }
 
-#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
 pub struct ConflictGraph {
     #[serde(default)]
     pub edges: Vec<(String, String)>,
     pub computed_at: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct PauseInfo {
     pub entry_id: Option<String>,
     pub issue_id: Option<String>,
@@ -180,7 +198,7 @@ pub struct PauseInfo {
     pub prompt_text: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct DashboardSnapshot {
     pub session_id: String,
     pub project_root: PathBuf,
@@ -350,7 +368,7 @@ fn threshold_secs(name: &str, default: u64) -> Duration {
         .unwrap_or_else(|| Duration::from_secs(default))
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct DaemonStatus {
     pub label: String,
     pub healthy: Option<bool>,
@@ -370,7 +388,7 @@ impl DaemonStatus {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
 pub struct KindCounts {
     pub total: usize,
     pub adhoc: usize,
@@ -399,7 +417,7 @@ impl KindCounts {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct TrackedSession {
     pub id: String,
     pub title: String,
@@ -465,14 +483,14 @@ impl TrackedSession {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
 pub struct PaneStats {
     pub turns: Option<u32>,
     pub tokens: Option<u64>,
     pub cost_usd: Option<f64>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct Event {
     pub ts: DateTime<Utc>,
     pub source: ActivitySource,
@@ -497,7 +515,8 @@ impl Event {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[serde(rename_all = "kebab-case")]
 pub enum ActivitySource {
     Daemon,
     Wake,
@@ -521,7 +540,10 @@ impl ActivitySource {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord, Hash,
+)]
+#[serde(rename_all = "kebab-case")]
 pub enum EventImportance {
     #[default]
     Low,
@@ -540,7 +562,7 @@ impl EventImportance {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct ConversationStream {
     pub entry_id: String,
     pub excerpt: String,

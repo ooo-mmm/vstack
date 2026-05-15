@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
 #[derive(Debug, Parser)]
 #[command(name = "flightdeck-dashboard")]
@@ -14,12 +14,12 @@ pub struct Cli {
 pub enum Command {
     /// Render the dashboard TUI.
     Tui(TuiArgs),
-    /// Start the future dashboard daemon.
-    Daemon(StubArgs),
-    /// Print future dashboard daemon status.
-    Status(StubArgs),
-    /// Back-compat alias for future daemon supervision.
-    Supervise(StubArgs),
+    /// Manage the read-only dashboard daemon.
+    Daemon(DaemonArgs),
+    /// Print dashboard daemon status.
+    Status(SessionArgs),
+    /// Back-compat alias: start daemon detached for the session.
+    Supervise(SuperviseArgs),
     /// Launch the dashboard window from Flightdeck startup.
     Launch(StubArgs),
 }
@@ -35,6 +35,73 @@ pub struct TuiArgs {
     /// Read state for a Flightdeck tmux session.
     #[arg(long, value_name = "NAME")]
     pub session: Option<String>,
+    /// Subscribe to a dashboard daemon Unix socket.
+    #[arg(long, value_name = "PATH")]
+    pub socket: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub struct DaemonArgs {
+    #[command(subcommand)]
+    pub action: DaemonAction,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum DaemonAction {
+    /// Start the read-only dashboard daemon.
+    Start(DaemonStartArgs),
+    /// Stop the daemon for a session.
+    Stop(SessionArgs),
+    /// Print daemon status JSON.
+    Status(SessionArgs),
+    /// Print health summary.
+    Health(SessionArgs),
+    /// Tail daemon output streams.
+    Tail(DaemonTailArgs),
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct DaemonStartArgs {
+    /// Detach into a background process.
+    #[arg(long)]
+    pub detach: bool,
+    /// Flightdeck tmux session name/id/key.
+    #[arg(long, value_name = "NAME")]
+    pub session: Option<String>,
+    /// Read a concrete Flightdeck master-state JSON file.
+    #[arg(long, value_name = "PATH")]
+    pub state_file: Option<PathBuf>,
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct SessionArgs {
+    /// Flightdeck tmux session name/id/key.
+    #[arg(long, value_name = "NAME")]
+    pub session: Option<String>,
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct SuperviseArgs {
+    /// Flightdeck tmux session name/id/key.
+    #[arg(long, value_name = "NAME")]
+    pub session: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct DaemonTailArgs {
+    /// Flightdeck tmux session name/id/key.
+    #[arg(long, value_name = "NAME")]
+    pub session: Option<String>,
+    /// Stream to tail.
+    #[arg(long, value_enum, default_value_t = DaemonTailSource::State)]
+    pub source: DaemonTailSource,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum DaemonTailSource {
+    State,
+    Events,
+    Wake,
 }
 
 #[derive(Debug, Args)]
@@ -48,6 +115,9 @@ impl TuiArgs {
 
     #[must_use]
     pub fn wants_live_state(&self) -> bool {
-        self.state_file.is_some() || self.session.is_some() || std::env::var_os("TMUX").is_some()
+        self.socket.is_some()
+            || self.state_file.is_some()
+            || self.session.is_some()
+            || std::env::var_os("TMUX").is_some()
     }
 }

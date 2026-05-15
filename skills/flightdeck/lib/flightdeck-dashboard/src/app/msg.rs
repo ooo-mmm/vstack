@@ -1,6 +1,7 @@
 use crossterm::event::KeyEvent;
 
 use crate::app::model::ReadSourceState;
+use crate::daemon::rpc::DaemonStatus as RuntimeDaemonStatus;
 use crate::state::snapshot::{DashboardSnapshot, Event};
 use crate::watcher::WatcherEvent;
 
@@ -16,6 +17,7 @@ pub enum Msg {
     },
     EventReceived(Event),
     WatcherEvent(WatcherEvent),
+    DaemonStatus(RuntimeDaemonStatus),
     Error(String),
     Quit,
 }

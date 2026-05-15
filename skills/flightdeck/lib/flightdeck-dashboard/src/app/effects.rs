@@ -4,6 +4,7 @@ use chrono::{DateTime, Utc};
 use tokio::sync::mpsc;
 
 use crate::app::model::{Clock, ReadSourceState};
+use crate::daemon::client::DaemonClient;
 use crate::fixtures;
 use crate::state::snapshot::DashboardSnapshot;
 use crate::state::tracked_entries::{self, ArchiveError, SessionResolution, SnapshotError};
@@ -58,6 +59,19 @@ impl Effects {
                 let clock = self.clock;
                 tokio::spawn(async move {
                     let msg = snapshot_session_msg(&resolution, clock());
+                    send_msg(&tx, msg);
+                });
+            }
+            SnapshotSource::Socket(path) => {
+                let tx = self.tx.clone();
+                tokio::spawn(async move {
+                    let msg = match DaemonClient::connect(&path).await {
+                        Ok(mut client) => match client.get_snapshot().await {
+                            Ok(snapshot) => snapshot_msg(snapshot, ReadSourceState::Live),
+                            Err(error) => Msg::Error(error.to_string()),
+                        },
+                        Err(error) => Msg::Error(error.to_string()),
+                    };
                     send_msg(&tx, msg);
                 });
             }

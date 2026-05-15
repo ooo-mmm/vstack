@@ -1,4 +1,5 @@
 use std::io::{self, IsTerminal, Stdout};
+use std::path::Path;
 use std::time::Duration;
 
 use clap::Parser;
@@ -13,11 +14,16 @@ use flightdeck_dashboard::app::command::SnapshotSource;
 use flightdeck_dashboard::app::effects::Effects;
 use flightdeck_dashboard::app::model::{utc_now, Model, ReadSourceState};
 use flightdeck_dashboard::app::motion::{self, MotionLevel};
+use flightdeck_dashboard::app::msg::Msg;
 use flightdeck_dashboard::app::{update, view};
-use flightdeck_dashboard::cli::{Cli, Command, TuiArgs};
+use flightdeck_dashboard::cli::{Cli, Command, DaemonAction, DaemonArgs, TuiArgs};
+use flightdeck_dashboard::daemon::client::DaemonClient;
+use flightdeck_dashboard::daemon::rpc::DaemonStatus as RuntimeDaemonStatus;
 use flightdeck_dashboard::events::{self, EventSource};
 use flightdeck_dashboard::fixtures;
-use flightdeck_dashboard::state::snapshot::DashboardSnapshot;
+use flightdeck_dashboard::state::snapshot::{
+    DaemonStatus as SnapshotDaemonStatus, DashboardSnapshot,
+};
 use flightdeck_dashboard::state::tracked_entries::{self, ArchiveError, SnapshotError};
 use flightdeck_dashboard::util::logging;
 use flightdeck_dashboard::watcher::{StateWatcher, WatcherEvent};
@@ -38,15 +44,23 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Command::Tui(args) => run_tui(args).await,
-        Command::Daemon(_) => not_implemented("daemon"),
-        Command::Status(_) => not_implemented("status"),
-        Command::Supervise(_) => not_implemented("supervise"),
+        Command::Daemon(args) => flightdeck_dashboard::daemon::cli::run_daemon(args).await,
+        Command::Status(args) => {
+            flightdeck_dashboard::daemon::cli::run_daemon(DaemonArgs {
+                action: DaemonAction::Status(args),
+            })
+            .await
+        }
+        Command::Supervise(args) => flightdeck_dashboard::daemon::cli::run_supervise(args).await,
         Command::Launch(_) => not_implemented("launch"),
     }
 }
 
 async fn run_tui(args: TuiArgs) -> Result<()> {
-    let initial = initial_snapshot(&args)?;
+    let mut initial = initial_snapshot(&args).await?;
+    if !matches!(initial.source, SnapshotSource::Socket(_)) {
+        initial.snapshot.daemon = file_mode_daemon_status();
+    }
     let mut model = Model::new(
         initial.snapshot,
         initial.source,
@@ -77,8 +91,63 @@ struct InitialSnapshot {
     status_error: Option<String>,
 }
 
-fn initial_snapshot(args: &TuiArgs) -> Result<InitialSnapshot> {
+async fn initial_socket_snapshot(path: &Path) -> Result<InitialSnapshot> {
+    let mut client = DaemonClient::connect(path).await?;
+    let mut snapshot = client.get_snapshot().await?;
+    let status_error = match client.get_status().await {
+        Ok(status) => {
+            snapshot.daemon = runtime_daemon_status_chip(&status);
+            None
+        }
+        Err(error) => {
+            snapshot.daemon = SnapshotDaemonStatus {
+                label: String::from("daemon: socket"),
+                healthy: None,
+                pid: None,
+                last_heartbeat_at: None,
+            };
+            Some(error.to_string())
+        }
+    };
+    Ok(InitialSnapshot {
+        snapshot,
+        source: SnapshotSource::Socket(path.to_path_buf()),
+        source_state: ReadSourceState::Live,
+        status_error,
+    })
+}
+
+fn file_mode_daemon_status() -> SnapshotDaemonStatus {
+    SnapshotDaemonStatus {
+        label: String::from("daemon: file-mode"),
+        healthy: Some(true),
+        pid: None,
+        last_heartbeat_at: None,
+    }
+}
+
+fn runtime_daemon_status_chip(status: &RuntimeDaemonStatus) -> SnapshotDaemonStatus {
+    let label = if status.running {
+        status.pid.map_or_else(
+            || String::from("daemon: rust"),
+            |pid| format!("daemon: rust pid={pid}"),
+        )
+    } else {
+        String::from("daemon: stopped")
+    };
+    SnapshotDaemonStatus {
+        label,
+        healthy: Some(status.running),
+        pid: status.pid,
+        last_heartbeat_at: status.last_change_at,
+    }
+}
+
+async fn initial_snapshot(args: &TuiArgs) -> Result<InitialSnapshot> {
     let now = utc_now();
+    if let Some(path) = &args.socket {
+        return initial_socket_snapshot(path).await;
+    }
     if let Some(path) = &args.state_file {
         return Ok(match tracked_entries::snapshot_from_file(path, now) {
             Ok(snapshot) => InitialSnapshot {
@@ -168,7 +237,7 @@ fn start_state_watcher(
     model: &mut Model,
 ) -> Option<StateWatcher> {
     let (live_path, archive_dir) = match source {
-        SnapshotSource::Demo(_) => return None,
+        SnapshotSource::Demo(_) | SnapshotSource::Socket(_) => return None,
         SnapshotSource::File(path) => {
             let archive_dir = path
                 .parent()
@@ -196,10 +265,10 @@ fn start_state_watcher(
 
 fn start_event_sources(
     source: &SnapshotSource,
-    tx: mpsc::UnboundedSender<flightdeck_dashboard::app::msg::Msg>,
+    tx: mpsc::UnboundedSender<Msg>,
 ) -> Option<tokio::task::JoinHandle<()>> {
     let session = match source {
-        SnapshotSource::Demo(_) => return None,
+        SnapshotSource::Demo(_) | SnapshotSource::Socket(_) => return None,
         SnapshotSource::File(path) => tracked_entries::session_id_from_state_path(path),
         SnapshotSource::Session(resolution) => resolution.session.clone(),
     };
@@ -213,10 +282,71 @@ fn start_event_sources(
     let mut rx = source.subscribe();
     Some(tokio::spawn(async move {
         while let Some(event) = rx.recv().await {
-            if tx
-                .send(flightdeck_dashboard::app::msg::Msg::EventReceived(event))
-                .is_err()
-            {
+            if tx.send(Msg::EventReceived(event)).is_err() {
+                break;
+            }
+        }
+    }))
+}
+
+fn start_socket_subscription(
+    source: &SnapshotSource,
+    tx: mpsc::UnboundedSender<Msg>,
+) -> Option<tokio::task::JoinHandle<()>> {
+    let path = match source {
+        SnapshotSource::Socket(path) => path.clone(),
+        SnapshotSource::Demo(_) | SnapshotSource::File(_) | SnapshotSource::Session(_) => {
+            return None
+        }
+    };
+    Some(tokio::spawn(async move {
+        let msg = match DaemonClient::connect(&path).await {
+            Ok(mut client) => match client.subscribe_snapshots().await {
+                Ok(mut rx) => {
+                    while let Some(snapshot) = rx.recv().await {
+                        let msg = Msg::SnapshotUpdated {
+                            snapshot: Box::new(snapshot),
+                            source_state: ReadSourceState::Live,
+                        };
+                        if tx.send(msg).is_err() {
+                            return;
+                        }
+                    }
+                    return;
+                }
+                Err(error) => Msg::Error(error.to_string()),
+            },
+            Err(error) => Msg::Error(error.to_string()),
+        };
+        if tx.send(msg).is_err() {
+            tracing::debug!("dashboard message receiver dropped");
+        }
+    }))
+}
+
+fn start_daemon_status_poll(
+    source: &SnapshotSource,
+    tx: mpsc::UnboundedSender<Msg>,
+) -> Option<tokio::task::JoinHandle<()>> {
+    let path = match source {
+        SnapshotSource::Socket(path) => path.clone(),
+        SnapshotSource::Demo(_) | SnapshotSource::File(_) | SnapshotSource::Session(_) => {
+            return None
+        }
+    };
+    Some(tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(1));
+        interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
+        loop {
+            interval.tick().await;
+            let msg = match DaemonClient::connect(&path).await {
+                Ok(mut client) => match client.get_status().await {
+                    Ok(status) => Msg::DaemonStatus(status),
+                    Err(error) => Msg::Error(error.to_string()),
+                },
+                Err(error) => Msg::Error(error.to_string()),
+            };
+            if tx.send(msg).is_err() {
                 break;
             }
         }
@@ -233,6 +363,8 @@ async fn run_app_loop(
     let (watch_tx, mut watch_rx) = mpsc::unbounded_channel();
     let _state_watcher = start_state_watcher(&source, watch_tx, model);
     let _event_task = start_event_sources(&source, tx.clone());
+    let _socket_task = start_socket_subscription(&source, tx.clone());
+    let _daemon_status_task = start_daemon_status_poll(&source, tx.clone());
     let mut events = EventStream::new();
     let mut anim = tokio::time::interval(Duration::from_millis(ANIMATION_TICK_MS));
     anim.set_missed_tick_behavior(MissedTickBehavior::Skip);

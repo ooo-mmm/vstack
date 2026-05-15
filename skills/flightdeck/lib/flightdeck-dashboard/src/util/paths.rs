@@ -81,6 +81,26 @@ pub fn fd_log_file(state_dir: &Path, session_key: &str) -> PathBuf {
 }
 
 #[must_use]
+pub fn dashboard_pid_file(state_dir: &Path, session_key: &str) -> PathBuf {
+    state_dir.join(format!("dashboard-{session_key}.pid"))
+}
+
+#[must_use]
+pub fn dashboard_lock_file(state_dir: &Path, session_key: &str) -> PathBuf {
+    state_dir.join(format!("dashboard-{session_key}.lock"))
+}
+
+#[must_use]
+pub fn dashboard_log_file(state_dir: &Path, session_key: &str) -> PathBuf {
+    state_dir.join(format!("dashboard-{session_key}.log"))
+}
+
+#[must_use]
+pub fn dashboard_socket_file(state_dir: &Path, session_key: &str) -> PathBuf {
+    state_dir.join(format!("dashboard-{session_key}.sock"))
+}
+
+#[must_use]
 pub fn fd_events_file(state_dir: &Path, session_key: &str) -> PathBuf {
     state_dir.join(format!("fd-daemon-events-{session_key}.jsonl"))
 }

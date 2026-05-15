@@ -23,6 +23,7 @@ pub enum WatcherError {
     InitChannel(String),
 }
 
+#[derive(Debug)]
 pub struct StateWatcher {
     stop_tx: Option<std_mpsc::Sender<()>>,
     handle: Option<thread::JoinHandle<()>>,
@@ -67,13 +68,13 @@ impl StateWatcher {
                 handle: Some(handle),
             }),
             Ok(Err(error)) => {
-                let _ = stop_tx.send(());
-                let _ = handle.join();
+                request_stop(&stop_tx);
+                join_watcher_thread(handle);
                 Err(WatcherError::Init(error))
             }
             Err(error) => {
-                let _ = stop_tx.send(());
-                let _ = handle.join();
+                request_stop(&stop_tx);
+                join_watcher_thread(handle);
                 Err(WatcherError::InitChannel(error.to_string()))
             }
         }
@@ -83,13 +84,29 @@ impl StateWatcher {
 impl Drop for StateWatcher {
     fn drop(&mut self) {
         if let Some(stop_tx) = self.stop_tx.take() {
-            let _ = stop_tx.send(());
+            request_stop(&stop_tx);
         }
         if let Some(handle) = self.handle.take() {
-            if handle.join().is_err() {
-                tracing::warn!("state watcher thread panicked during shutdown");
-            }
+            join_watcher_thread(handle);
         }
+    }
+}
+
+fn request_stop(stop_tx: &std_mpsc::Sender<()>) {
+    if stop_tx.send(()).is_err() {
+        tracing::debug!("state watcher stop receiver already closed");
+    }
+}
+
+fn join_watcher_thread(handle: thread::JoinHandle<()>) {
+    if handle.join().is_err() {
+        tracing::warn!("state watcher thread panicked during shutdown");
+    }
+}
+
+fn send_init_result(init_tx: &std_mpsc::Sender<Result<(), String>>, result: Result<(), String>) {
+    if init_tx.send(result).is_err() {
+        tracing::debug!("state watcher init receiver already closed");
     }
 }
 
@@ -106,7 +123,7 @@ fn run_thread(
     let mut debouncer = match new_debouncer(debounce, None, event_tx) {
         Ok(debouncer) => debouncer,
         Err(error) => {
-            let _ = init_tx.send(Err(error.to_string()));
+            send_init_result(&init_tx, Err(error.to_string()));
             return;
         }
     };
@@ -115,7 +132,7 @@ fn run_thread(
         .watcher()
         .watch(&watch_dir, RecursiveMode::NonRecursive)
     {
-        let _ = init_tx.send(Err(error.to_string()));
+        send_init_result(&init_tx, Err(error.to_string()));
         return;
     }
     if archive_dir != watch_dir {
@@ -123,11 +140,11 @@ fn run_thread(
             .watcher()
             .watch(&archive_dir, RecursiveMode::NonRecursive)
         {
-            let _ = init_tx.send(Err(error.to_string()));
+            send_init_result(&init_tx, Err(error.to_string()));
             return;
         }
     }
-    let _ = init_tx.send(Ok(()));
+    send_init_result(&init_tx, Ok(()));
 
     loop {
         if stop_rx.try_recv().is_ok() {

@@ -2,11 +2,11 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use super::snapshot::{ConflictGraph, PauseInfo, SessionKind, SessionState};
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct MasterState {
     #[serde(default)]
     pub session_id: String,
@@ -30,7 +30,7 @@ pub struct MasterState {
     pub summary_path: Option<PathBuf>,
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct OwnerBlock {
     pub harness: Option<String>,
     pub pane_id: Option<String>,
@@ -42,7 +42,7 @@ pub struct OwnerBlock {
     pub discovery_error: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct TrackedEntry {
     pub id: String,
     pub title: Option<String>,
@@ -68,14 +68,14 @@ pub struct TrackedEntry {
     pub merge_commit: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
 pub struct LaunchInfo {
     pub model: Option<String>,
     pub effort: Option<String>,
     pub cmd: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
 pub struct AdapterMetadata {
     pub pi_bridge_pid: Option<u32>,
     pub pi_bridge_socket: Option<String>,
@@ -91,12 +91,12 @@ pub struct AdapterMetadata {
     pub cx_thread_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
 pub struct DomainBlock {
     pub issue: Option<TrackedIssueDomain>,
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct TrackedIssueDomain {
     pub id: String,
     pub worktree: Option<PathBuf>,
@@ -107,7 +107,7 @@ pub struct TrackedIssueDomain {
     pub merge_commit: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct DecisionLogEntry {
     pub ts: DateTime<Utc>,
     pub prompt_tag: String,

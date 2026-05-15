@@ -1,6 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::state::snapshot::EventImportance;
+use crate::daemon::rpc::DaemonStatus as RuntimeDaemonStatus;
+use crate::state::snapshot::{DaemonStatus as SnapshotDaemonStatus, EventImportance};
 use crate::watcher::WatcherEvent;
 
 use super::command::Cmd;
@@ -42,6 +43,10 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
             vec![Cmd::Render]
         }
         Msg::WatcherEvent(WatcherEvent::Reload) => request_reload(model),
+        Msg::DaemonStatus(status) => {
+            model.snapshot.daemon = daemon_status_chip(&status);
+            vec![Cmd::Render]
+        }
         Msg::Error(error) => {
             model.error = Some(error);
             push_effect(model, EffectKind::ErrorFlash, EffectTarget::Global);
@@ -235,6 +240,23 @@ fn move_selection(model: &mut Model, delta: isize) {
     model.set_selected_index(next);
     let target = EffectTarget::Row(model.selected_index());
     push_effect(model, EffectKind::SelectionHalo, target);
+}
+
+fn daemon_status_chip(status: &RuntimeDaemonStatus) -> SnapshotDaemonStatus {
+    let label = if status.running {
+        status.pid.map_or_else(
+            || String::from("daemon: rust"),
+            |pid| format!("daemon: rust pid={pid}"),
+        )
+    } else {
+        String::from("daemon: stopped")
+    };
+    SnapshotDaemonStatus {
+        label,
+        healthy: Some(status.running),
+        pid: status.pid,
+        last_heartbeat_at: status.last_change_at,
+    }
 }
 
 fn push_effect(model: &mut Model, kind: EffectKind, target: EffectTarget) {
