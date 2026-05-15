@@ -57,6 +57,8 @@ fn render_transition_banners(
             PRE_PURGE_BANNER,
             theme.error,
         );
+    } else if let Some(error) = &model.snapshot.master_error {
+        area = render_banner(frame, area, " state read error ", error, theme.error);
     }
     if model.is_observer() {
         let owner = model

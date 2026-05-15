@@ -13,7 +13,7 @@ use crate::state::snapshot::DashboardSnapshot;
 
 use super::rpc::{
     DaemonStatus, RpcNotification, RpcRequest, RpcResponse, StateChangeParams, FRAME_TOO_LARGE,
-    INTERNAL_ERROR, MAX_FRAME_BYTES, METHOD_NOT_FOUND, PARSE_ERROR,
+    MAX_FRAME_BYTES, METHOD_NOT_FOUND, PARSE_ERROR,
 };
 use super::state::SharedState;
 
@@ -123,6 +123,7 @@ async fn handle_connection(
             }
             "subscribe_snapshots" => {
                 let mut rx = shared.snapshots.subscribe();
+                test_subscribe_pause().await;
                 let snapshot = shared.snapshot.read().await.clone();
                 write_ok_line(&mut write_half, request.id, json!({"subscribed": true})).await?;
                 write_snapshot_notification(&mut write_half, &snapshot).await?;
@@ -138,6 +139,7 @@ async fn handle_connection(
             }
             "tail_state" => {
                 let mut rx = shared.snapshots.subscribe();
+                test_subscribe_pause().await;
                 let snapshot = shared.snapshot.read().await.clone();
                 write_ok_line(&mut write_half, request.id, json!({"subscribed": true})).await?;
                 write_state_change_notification(&mut write_half, &snapshot).await?;
@@ -213,6 +215,32 @@ where
     }
 }
 
+async fn test_subscribe_pause() {
+    let Some(pause_file) =
+        std::env::var_os("FLIGHTDECK_DASHBOARD_TEST_SUBSCRIBE_PAUSE_FILE").map(PathBuf::from)
+    else {
+        return;
+    };
+    if let Some(parent) = pause_file.parent() {
+        let _ = tokio::fs::create_dir_all(parent).await;
+    }
+    let _ = tokio::fs::write(&pause_file, b"paused").await;
+    let release_file = std::env::var_os("FLIGHTDECK_DASHBOARD_TEST_SUBSCRIBE_RELEASE_FILE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| pause_file.with_extension("release"));
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        if tokio::fs::metadata(&release_file).await.is_ok() {
+            return;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            tracing::warn!(path = %release_file.display(), "subscribe pause test hook timed out");
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+}
+
 async fn status_with_uptime(status: &RwLock<DaemonStatus>, started_at: Instant) -> DaemonStatus {
     let mut status = status.read().await.clone();
     status.uptime_secs = Some(started_at.elapsed().as_secs());
@@ -264,9 +292,4 @@ where
     let mut line = serde_json::to_vec(value).map_err(std::io::Error::other)?;
     line.push(b'\n');
     writer.write_all(&line).await
-}
-
-#[allow(dead_code)]
-fn internal_error(id: Option<Value>, error: impl ToString) -> RpcResponse {
-    RpcResponse::err(id, INTERNAL_ERROR, error.to_string())
 }

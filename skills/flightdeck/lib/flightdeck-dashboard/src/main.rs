@@ -374,12 +374,16 @@ fn start_socket_subscription(
         let msg = match DaemonClient::connect(&path).await {
             Ok(mut client) => match client.subscribe_snapshots().await {
                 Ok(mut rx) => {
-                    while let Some(snapshot) = rx.recv().await {
-                        let msg = Msg::SnapshotUpdated {
-                            snapshot: Box::new(snapshot),
-                            source_state: ReadSourceState::Live,
+                    while let Some(result) = rx.recv().await {
+                        let should_return = result.is_err();
+                        let msg = match result {
+                            Ok(snapshot) => Msg::SnapshotUpdated {
+                                snapshot: Box::new(snapshot),
+                                source_state: ReadSourceState::Live,
+                            },
+                            Err(error) => Msg::Error(format!("daemon: {error}")),
                         };
-                        if tx.send(msg).is_err() {
+                        if tx.send(msg).is_err() || should_return {
                             return;
                         }
                     }

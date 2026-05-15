@@ -19,6 +19,8 @@ pub type StateError = SnapshotError;
 
 #[derive(Debug, Error)]
 pub enum SnapshotError {
+    #[error("state file missing {path}", path = path.display())]
+    StateFileMissing { path: PathBuf },
     #[error("failed to read state file {path}: {source}")]
     ReadFile {
         path: PathBuf,
@@ -120,9 +122,17 @@ pub fn snapshot_from_file_with_warn(
     now: DateTime<Utc>,
     warn: &mut WarnCallback<'_>,
 ) -> Result<DashboardSnapshot, SnapshotError> {
-    let source = fs::read_to_string(path).map_err(|source| SnapshotError::ReadFile {
-        path: path.to_path_buf(),
-        source,
+    let source = fs::read_to_string(path).map_err(|source| {
+        if source.kind() == std::io::ErrorKind::NotFound {
+            SnapshotError::StateFileMissing {
+                path: path.to_path_buf(),
+            }
+        } else {
+            SnapshotError::ReadFile {
+                path: path.to_path_buf(),
+                source,
+            }
+        }
     })?;
     let mut snapshot = snapshot_from_str_with_warn(&source, now, warn)?;
     snapshot.master_state_path = path.to_path_buf();

@@ -75,10 +75,61 @@ async fn daemon_rejects_oversized_frame_without_unbounded_read() -> Result<(), B
     let mut line = String::new();
     let mut reader = BufReader::new(stream);
     let read = timeout(Duration::from_secs(1), reader.read_line(&mut line)).await??;
-    if read > 0 {
-        let value: Value = serde_json::from_str(&line)?;
-        assert_eq!(value["error"]["code"], FRAME_TOO_LARGE);
-    }
+    assert!(
+        read > 0,
+        "daemon closed oversized frame without JSON-RPC error"
+    );
+    let value: Value = serde_json::from_str(&line)?;
+    assert_eq!(value["error"]["code"], FRAME_TOO_LARGE);
+
+    let stop = daemon_command(bin, temp.path(), ["daemon", "stop", "--session", SESSION])?;
+    assert!(stop.status.success(), "stop command failed");
+    daemon.wait_for_exit();
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn subscribe_then_snapshot_sees_mutation_during_subscribe() -> Result<(), Box<dyn Error>> {
+    let temp = tempfile::tempdir()?;
+    let state_file = temp.path().join("flightdeck-state-s404.json");
+    write_state(&state_file, "initial", "2026-05-15T00:00:00Z")?;
+    let pause_file = temp.path().join("subscribe-paused");
+    let release_file = temp.path().join("subscribe-release");
+
+    let bin = dashboard_bin();
+    let mut daemon = spawn_daemon_with_env(
+        bin,
+        temp.path(),
+        SESSION,
+        &state_file,
+        &[
+            (
+                "FLIGHTDECK_DASHBOARD_TEST_SUBSCRIBE_PAUSE_FILE",
+                pause_file.as_path(),
+            ),
+            (
+                "FLIGHTDECK_DASHBOARD_TEST_SUBSCRIBE_RELEASE_FILE",
+                release_file.as_path(),
+            ),
+        ],
+    )
+    .await?;
+    let socket = daemon.socket();
+
+    let mut client = DaemonClient::connect(&socket).await?;
+    let mut rx = client.subscribe_snapshots().await?;
+    wait_for_path(&pause_file).await?;
+    write_state(
+        &state_file,
+        "updated-during-subscribe",
+        "2026-05-15T00:00:01Z",
+    )?;
+    wait_for_snapshot_title(&socket, "updated-during-subscribe").await?;
+    std::fs::write(&release_file, "release")?;
+
+    let snapshot = recv_title(&mut rx, "updated-during-subscribe").await?;
+    assert_eq!(first_title(&snapshot), Some("updated-during-subscribe"));
 
     let stop = daemon_command(bin, temp.path(), ["daemon", "stop", "--session", SESSION])?;
     assert!(stop.status.success(), "stop command failed");
@@ -174,7 +225,18 @@ async fn spawn_daemon(
     session: &str,
     state_file: &Path,
 ) -> Result<DaemonGuard, Box<dyn Error>> {
-    let child = Command::new(bin)
+    spawn_daemon_with_env(bin, state_dir, session, state_file, &[]).await
+}
+
+async fn spawn_daemon_with_env(
+    bin: &'static str,
+    state_dir: &Path,
+    session: &str,
+    state_file: &Path,
+    extra_env: &[(&str, &Path)],
+) -> Result<DaemonGuard, Box<dyn Error>> {
+    let mut command = Command::new(bin);
+    command
         .args([
             "daemon",
             "start",
@@ -185,8 +247,11 @@ async fn spawn_daemon(
         ])
         .env("FD_STATE_DIR", state_dir)
         .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()?;
+        .stderr(Stdio::piped());
+    for (key, value) in extra_env {
+        command.env(key, value);
+    }
+    let child = command.spawn()?;
     let guard = DaemonGuard {
         child,
         bin,
@@ -195,6 +260,33 @@ async fn spawn_daemon(
     };
     wait_for_socket(&guard.socket()).await?;
     Ok(guard)
+}
+
+async fn wait_for_path(path: &Path) -> Result<(), Box<dyn Error>> {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        if path.exists() {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(format!("timed out waiting for path: {}", path.display()).into());
+        }
+        sleep(Duration::from_millis(50)).await;
+    }
+}
+
+async fn wait_for_snapshot_title(socket: &Path, expected: &str) -> Result<(), Box<dyn Error>> {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        let mut client = DaemonClient::connect(socket).await?;
+        if first_title(&client.get_snapshot().await?) == Some(expected) {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(format!("timed out waiting for daemon snapshot {expected:?}").into());
+        }
+        sleep(Duration::from_millis(50)).await;
+    }
 }
 
 async fn wait_for_socket(socket: &Path) -> Result<(), Box<dyn Error>> {
@@ -211,7 +303,9 @@ async fn wait_for_socket(socket: &Path) -> Result<(), Box<dyn Error>> {
 }
 
 async fn recv_title(
-    rx: &mut mpsc::UnboundedReceiver<DashboardSnapshot>,
+    rx: &mut mpsc::UnboundedReceiver<
+        Result<DashboardSnapshot, flightdeck_dashboard::daemon::client::ClientError>,
+    >,
     expected: &str,
 ) -> Result<DashboardSnapshot, Box<dyn Error>> {
     let deadline = Instant::now() + Duration::from_secs(3);
@@ -222,8 +316,11 @@ async fn recv_title(
         }
         let remaining = deadline.saturating_duration_since(now);
         match timeout(remaining, rx.recv()).await {
-            Ok(Some(snapshot)) if first_title(&snapshot) == Some(expected) => return Ok(snapshot),
-            Ok(Some(_)) => {}
+            Ok(Some(Ok(snapshot))) if first_title(&snapshot) == Some(expected) => {
+                return Ok(snapshot)
+            }
+            Ok(Some(Ok(_))) => {}
+            Ok(Some(Err(error))) => return Err(format!("snapshot stream error: {error}").into()),
             Ok(None) => return Err("snapshot stream closed".into()),
             Err(_) => {
                 return Err(format!("timed out waiting for snapshot title {expected:?}").into())

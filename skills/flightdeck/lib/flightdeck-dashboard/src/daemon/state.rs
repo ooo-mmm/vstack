@@ -69,7 +69,7 @@ pub async fn start_state_runtime(
     paths: RuntimePaths,
 ) -> Result<StateRuntime, SnapshotError> {
     let now = Utc::now();
-    let snapshot = load_snapshot(&source, now)?;
+    let snapshot = load_snapshot_or_error(&source, now);
     let (snapshots, _) = broadcast::channel(SNAPSHOT_CHANNEL_CAP);
     let status = DaemonStatus {
         session: paths.session_key.clone(),
@@ -100,19 +100,14 @@ pub async fn start_state_runtime(
     let task_shared = Arc::clone(&shared);
     let task = tokio::spawn(async move {
         while let Some(WatcherEvent::Reload) = watch_rx.recv().await {
-            match load_snapshot(&source, Utc::now()) {
-                Ok(snapshot) => {
-                    let mut current = task_shared.snapshot.write().await;
-                    if !current.structural_eq(&snapshot) {
-                        *current = snapshot.clone();
-                        task_shared.status.write().await.last_change_at = Some(Utc::now());
-                        if task_shared.snapshots.send(snapshot).is_err() {
-                            tracing::debug!("daemon snapshot channel has no subscribers");
-                        }
-                    }
-                }
-                Err(error) => {
-                    tracing::warn!(%error, "daemon failed to reload snapshot");
+            let now = Utc::now();
+            let snapshot = load_snapshot_or_error(&source, now);
+            let mut current = task_shared.snapshot.write().await;
+            if !current.structural_eq(&snapshot) {
+                *current = snapshot.clone();
+                task_shared.status.write().await.last_change_at = Some(now);
+                if task_shared.snapshots.send(snapshot).is_err() {
+                    tracing::debug!("daemon snapshot channel has no subscribers");
                 }
             }
         }
@@ -143,5 +138,43 @@ pub fn load_snapshot(
                 Err(error) => Err(error),
             }
         }
+    }
+}
+
+fn load_snapshot_or_error(source: &DaemonSnapshotSource, now: DateTime<Utc>) -> DashboardSnapshot {
+    match load_snapshot(source, now) {
+        Ok(mut snapshot) => {
+            snapshot.master_error = None;
+            snapshot.pre_purge_state = false;
+            snapshot
+        }
+        Err(error) => {
+            tracing::warn!(%error, "daemon failed to reload snapshot");
+            error_snapshot(source, now, &error)
+        }
+    }
+}
+
+fn error_snapshot(
+    source: &DaemonSnapshotSource,
+    now: DateTime<Utc>,
+    error: &SnapshotError,
+) -> DashboardSnapshot {
+    let pre_purge_state = matches!(error, SnapshotError::PrePurgeState);
+    match source {
+        DaemonSnapshotSource::File { path, session } => tracked_entries::snapshot_for_error(
+            session.clone(),
+            path.clone(),
+            now,
+            error.to_string(),
+            pre_purge_state,
+        ),
+        DaemonSnapshotSource::Session(resolution) => tracked_entries::snapshot_for_error(
+            resolution.session.clone(),
+            resolution.state_path.clone(),
+            now,
+            error.to_string(),
+            pre_purge_state,
+        ),
     }
 }

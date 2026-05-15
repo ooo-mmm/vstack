@@ -29,6 +29,10 @@ pub enum ClientError {
     MissingResult,
     #[error("daemon socket already subscribed")]
     AlreadySubscribed,
+    #[error("daemon subscription closed")]
+    SubscriptionClosed,
+    #[error("daemon subscription frame missing snapshot params")]
+    MissingSnapshotParams,
 }
 
 pub struct DaemonClient {
@@ -50,7 +54,7 @@ impl DaemonClient {
 
     pub async fn subscribe_snapshots(
         &mut self,
-    ) -> Result<mpsc::UnboundedReceiver<DashboardSnapshot>, ClientError> {
+    ) -> Result<mpsc::UnboundedReceiver<Result<DashboardSnapshot, ClientError>>, ClientError> {
         let mut stream = self.stream.take().ok_or(ClientError::AlreadySubscribed)?;
         write_request(&mut stream, "subscribe_snapshots", None).await?;
         let (read_half, _) = stream.into_split();
@@ -60,22 +64,21 @@ impl DaemonClient {
             let mut line = String::new();
             loop {
                 line.clear();
-                match reader.read_line(&mut line).await {
-                    Ok(0) | Err(_) => break,
-                    Ok(_) => {
-                        if let Ok(value) = serde_json::from_str::<Value>(&line) {
-                            if value.get("method").and_then(Value::as_str) == Some("snapshot") {
-                                if let Some(params) = value.get("params") {
-                                    if let Ok(snapshot) =
-                                        serde_json::from_value::<DashboardSnapshot>(params.clone())
-                                    {
-                                        if tx.send(snapshot).is_err() {
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
+                let result = match reader.read_line(&mut line).await {
+                    Ok(0) => Err(ClientError::SubscriptionClosed),
+                    Err(error) => Err(ClientError::Io(error)),
+                    Ok(_) => decode_subscription_line(&line),
+                };
+                match result {
+                    Ok(Some(snapshot)) => {
+                        if tx.send(Ok(snapshot)).is_err() {
+                            break;
                         }
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        let _ = tx.send(Err(error));
+                        break;
                     }
                 }
             }
@@ -99,6 +102,33 @@ impl DaemonClient {
     fn stream_mut(&mut self) -> Result<&mut UnixStream, ClientError> {
         self.stream.as_mut().ok_or(ClientError::AlreadySubscribed)
     }
+}
+
+fn decode_subscription_line(line: &str) -> Result<Option<DashboardSnapshot>, ClientError> {
+    let value = serde_json::from_str::<Value>(line)?;
+    if let Some(error) = value.get("error").filter(|error| !error.is_null()) {
+        return Err(ClientError::Rpc {
+            code: error
+                .get("code")
+                .and_then(Value::as_i64)
+                .unwrap_or_default(),
+            message: error
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("daemon returned subscription error")
+                .to_owned(),
+        });
+    }
+    if value.get("method").and_then(Value::as_str) != Some("snapshot") {
+        return Ok(None);
+    }
+    let params = value
+        .get("params")
+        .cloned()
+        .ok_or(ClientError::MissingSnapshotParams)?;
+    serde_json::from_value(params)
+        .map(Some)
+        .map_err(ClientError::Json)
 }
 
 async fn request_response<T>(
