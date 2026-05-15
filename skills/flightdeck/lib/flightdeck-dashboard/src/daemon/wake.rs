@@ -72,7 +72,6 @@ impl WakeAppender {
                     source,
                 }
             })?;
-            busy::record_wake_pending(&self.paths.busy, &event)?;
             Ok(())
         });
         match appended {
