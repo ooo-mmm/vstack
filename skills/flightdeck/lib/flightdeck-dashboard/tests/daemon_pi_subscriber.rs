@@ -129,6 +129,50 @@ exit 0
 }
 
 #[tokio::test]
+async fn pi_subscriber_pid_marker_records_bridge_child_and_cleans_on_abort(
+) -> Result<(), Box<dyn Error>> {
+    let temp = tempfile::tempdir()?;
+    let state_file = temp.path().join("flightdeck-state-s505.json");
+    write_state(&state_file, "issue")?;
+    let bridge_pid_file = temp.path().join("bridge-child-pid");
+    let bridge = write_fake_bridge(
+        temp.path(),
+        r#"
+if [[ "$1" == "stream" ]]; then
+  printf '%s\n' "$$" > "${FD_FAKE_CHILD_PID:?}"
+  while true; do sleep 1; done
+fi
+exit 0
+"#,
+    )?;
+
+    let bin = dashboard_bin();
+    let mut daemon = spawn_daemon(
+        bin,
+        temp.path(),
+        SESSION,
+        &state_file,
+        &bridge,
+        &[("FD_FAKE_CHILD_PID", bridge_pid_file.as_path())],
+    )
+    .await?;
+
+    let pid_path = subscriber_pid_path(temp.path());
+    let bridge_pid = wait_for_file_text(&bridge_pid_file).await?;
+    let marker_pid = wait_for_file_text(&pid_path).await?;
+    assert_eq!(
+        marker_pid, bridge_pid,
+        "pid marker records bridge child pid"
+    );
+
+    write_empty_state(&state_file)?;
+    wait_for_path_absent(&pid_path).await?;
+
+    daemon.stop();
+    Ok(())
+}
+
+#[tokio::test]
 async fn pi_subscriber_restarts_after_bridge_exit() -> Result<(), Box<dyn Error>> {
     let temp = tempfile::tempdir()?;
     let state_file = temp.path().join("flightdeck-state-s505.json");
@@ -315,6 +359,39 @@ fn wake_pending_path(state_dir: &Path) -> PathBuf {
     state_dir.join(format!("fd-wake-pending-{SESSION}"))
 }
 
+fn subscriber_pid_path(state_dir: &Path) -> PathBuf {
+    state_dir.join(format!("fd-pi-subscriber-{SESSION}-18.pid"))
+}
+
+async fn wait_for_file_text(path: &Path) -> Result<String, Box<dyn Error>> {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        if let Ok(body) = std::fs::read_to_string(path) {
+            let body = body.trim().to_owned();
+            if !body.is_empty() {
+                return Ok(body);
+            }
+        }
+        if Instant::now() >= deadline {
+            return Err(format!("timed out waiting for text in {}", path.display()).into());
+        }
+        sleep(Duration::from_millis(50)).await;
+    }
+}
+
+async fn wait_for_path_absent(path: &Path) -> Result<(), Box<dyn Error>> {
+    let deadline = Instant::now() + Duration::from_secs(1);
+    loop {
+        if !path.exists() {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(format!("timed out waiting for path removal: {}", path.display()).into());
+        }
+        sleep(Duration::from_millis(50)).await;
+    }
+}
+
 async fn wait_for_count(path: &Path, min_count: u32) -> Result<(), Box<dyn Error>> {
     let deadline = Instant::now() + Duration::from_secs(3);
     loop {
@@ -352,6 +429,18 @@ fn write_state(path: &Path, kind: &str) -> Result<(), Box<dyn Error>> {
       }}
     }}
   }}
+}}"#
+    );
+    std::fs::write(path, json)?;
+    Ok(())
+}
+
+fn write_empty_state(path: &Path) -> Result<(), Box<dyn Error>> {
+    let json = format!(
+        r#"{{
+  "session_id": "{SESSION}",
+  "updated_at": "2026-05-15T00:00:01Z",
+  "entries": {{}}
 }}"#
     );
     std::fs::write(path, json)?;

@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::io;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::Duration;
@@ -33,15 +34,8 @@ impl Subscriber for PiSubscriber {
             &config.pane_id,
         );
         let join = tokio::spawn(async move {
-            if let Err(error) = std::fs::write(&pid_file, std::process::id().to_string()) {
-                tracing::debug!(path = %pid_file.display(), %error, "failed to write pi subscriber pid marker");
-            }
-            run_with_restart(config).await;
-            if let Err(error) = std::fs::remove_file(&pid_file) {
-                if error.kind() != std::io::ErrorKind::NotFound {
-                    tracing::debug!(path = %pid_file.display(), %error, "failed to remove pi subscriber pid marker");
-                }
-            }
+            let lifecycle = SubscriberLifecycle::new(pid_file, config.pane_id.clone());
+            run_with_restart(config, &lifecycle).await;
         });
         Ok(SubscriberHandle::new(join))
     }
@@ -147,16 +141,53 @@ enum BridgeEvent {
     Ignored,
 }
 
-async fn run_with_restart(config: PiConfig) {
+#[derive(Debug)]
+struct SubscriberLifecycle {
+    pid_path: PathBuf,
+    pane_id: String,
+}
+
+impl SubscriberLifecycle {
+    fn new(pid_path: PathBuf, pane_id: String) -> Self {
+        Self { pid_path, pane_id }
+    }
+
+    fn record_bridge_pid(&self, pid: Option<u32>) {
+        let Some(pid) = pid else {
+            tracing::debug!(pane_id = %self.pane_id, path = %self.pid_path.display(), "pi-bridge child pid unavailable");
+            return;
+        };
+        if let Err(error) = std::fs::write(&self.pid_path, pid.to_string()) {
+            tracing::debug!(pane_id = %self.pane_id, path = %self.pid_path.display(), %error, "failed to write pi subscriber pid marker");
+        }
+    }
+
+    fn clear_pid(&self) {
+        if let Err(error) = std::fs::remove_file(&self.pid_path) {
+            if error.kind() != io::ErrorKind::NotFound {
+                tracing::debug!(pane_id = %self.pane_id, path = %self.pid_path.display(), %error, "failed to remove pi subscriber pid marker");
+            }
+        }
+    }
+}
+
+impl Drop for SubscriberLifecycle {
+    fn drop(&mut self) {
+        self.clear_pid();
+    }
+}
+
+async fn run_with_restart(config: PiConfig, lifecycle: &SubscriberLifecycle) {
     let mut backoff = INITIAL_RESTART_BACKOFF;
     loop {
         let mut state = PiStreamState::new();
-        match run_stream_once(&config, &mut state).await {
+        match run_stream_once(&config, &mut state, lifecycle).await {
             Ok(()) => tracing::warn!(pane_id = %config.pane_id, "pi subscriber stream exited"),
             Err(error) => {
                 tracing::warn!(pane_id = %config.pane_id, %error, "pi subscriber stream failed")
             }
         }
+        lifecycle.clear_pid();
         tracing::warn!(pane_id = %config.pane_id, delay_ms = backoff.as_millis(), "pi subscriber restarting");
         tokio::time::sleep(backoff).await;
         backoff = (backoff * 2).min(MAX_RESTART_BACKOFF);
@@ -166,6 +197,7 @@ async fn run_with_restart(config: PiConfig) {
 async fn run_stream_once(
     config: &PiConfig,
     state: &mut PiStreamState,
+    lifecycle: &SubscriberLifecycle,
 ) -> Result<(), std::io::Error> {
     let target = config.target.args();
     let mut child = Command::new(&config.bridge_bin)
@@ -176,6 +208,7 @@ async fn run_stream_once(
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()?;
+    lifecycle.record_bridge_pid(child.id());
     let Some(stdout) = child.stdout.take() else {
         return Err(std::io::Error::other("pi-bridge stream stdout unavailable"));
     };
