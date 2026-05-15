@@ -50,6 +50,8 @@ pub struct DaemonArgs {
 pub enum DaemonAction {
     /// Start the read-only dashboard daemon.
     Start(DaemonStartArgs),
+    /// Back-compat alias: start the daemon in the foreground.
+    Foreground(DaemonStartArgs),
     /// Stop the daemon for a session.
     Stop(SessionArgs),
     /// Print daemon status JSON.

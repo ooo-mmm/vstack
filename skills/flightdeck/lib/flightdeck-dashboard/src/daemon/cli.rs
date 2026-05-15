@@ -1,8 +1,13 @@
-use std::path::Path;
-use std::time::{Duration, Instant};
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 
+use chrono::Utc;
 use color_eyre::eyre::{eyre, Result};
-use serde_json::json;
+use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
+use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::broadcast;
 
 use crate::cli::{DaemonAction, DaemonArgs, DaemonStartArgs, DaemonTailSource, SuperviseArgs};
@@ -10,7 +15,7 @@ use crate::daemon::busy::{self, BusyPaths};
 use crate::daemon::client::DaemonClient;
 use crate::daemon::lifecycle::{
     self, append_log, pid_alive, read_pid, remove_pid, remove_socket, stop_pid, write_pid,
-    DaemonLock, RuntimePaths,
+    DaemonLock, ReadyNotifier, RuntimePaths,
 };
 use crate::daemon::socket;
 use crate::daemon::state::{self, DaemonSnapshotSource};
@@ -21,10 +26,11 @@ use crate::util::paths::{
 };
 
 const STOP_GRACE: Duration = Duration::from_secs(5);
+const STOP_GRACE_ENV: &str = "FLIGHTDECK_DASHBOARD_STOP_GRACE_MS";
 
 pub async fn run_daemon(args: DaemonArgs) -> Result<()> {
     match args.action {
-        DaemonAction::Start(start) => start_daemon(start).await,
+        DaemonAction::Start(start) | DaemonAction::Foreground(start) => start_daemon(start).await,
         DaemonAction::Stop(args) => stop_daemon(args.session.as_deref()).await,
         DaemonAction::Status(args) => print_status(args.session.as_deref()).await,
         DaemonAction::Health(args) => print_health(args.session.as_deref()).await,
@@ -44,36 +50,59 @@ pub async fn run_supervise(args: SuperviseArgs) -> Result<()> {
 }
 
 async fn start_daemon(args: DaemonStartArgs) -> Result<()> {
+    let mut ready = ReadyNotifier::from_env();
+    let result = start_daemon_inner(args, ready.as_mut()).await;
+    if let Err(error) = &result {
+        if let Some(notifier) = ready.as_mut() {
+            notifier.error(error.to_string());
+        }
+    }
+    result
+}
+
+async fn start_daemon_inner(
+    args: DaemonStartArgs,
+    ready: Option<&mut ReadyNotifier>,
+) -> Result<()> {
     let state_dir = fd_resolve_state_dir();
     let source = resolve_source(args.session.as_deref(), args.state_file.as_deref())?;
     let session_key = resolve_runtime_session_key(args.session.as_deref(), &source)?;
     let paths = RuntimePaths::new(state_dir, session_key);
     if args.detach {
-        let child_args = detached_args(&args);
+        let child_args = detached_args(&args)?;
         lifecycle::spawn_detached(&child_args, &paths.log)?;
         println!(
-            "dashboard daemon detach requested session={} socket={}",
+            "dashboard daemon detach ready session={} socket={}",
             paths.session_key,
             paths.socket.display()
         );
         return Ok(());
     }
 
-    run_foreground(source, paths).await
+    run_foreground(source, paths, ready).await
 }
 
-async fn run_foreground(source: DaemonSnapshotSource, paths: RuntimePaths) -> Result<()> {
-    let _lock = match DaemonLock::acquire(&paths.state_dir, &paths.session_key) {
+async fn run_foreground(
+    source: DaemonSnapshotSource,
+    paths: RuntimePaths,
+    ready: Option<&mut ReadyNotifier>,
+) -> Result<()> {
+    let lock = match DaemonLock::acquire(&paths.state_dir, &paths.session_key) {
         Ok(lock) => lock,
         Err(error) => {
             eprintln!("{error}");
             return Err(error.into());
         }
     };
+    let mut cleanup = DaemonCleanup::new(paths.clone(), lock);
     write_pid(&paths)?;
     remove_socket(&paths);
     append_log(&paths.log, "dashboard daemon starting");
     let state_runtime = state::start_state_runtime(source, paths.clone()).await?;
+    let listener = socket::bind(&paths.socket)?;
+    if let Some(notifier) = ready {
+        notifier.ready();
+    }
     let _subscriber_runtime = if rust_wake_enabled() {
         append_log(&paths.log, "dashboard daemon rust wake side active");
         Some(SubscriberRuntime::spawn(
@@ -89,29 +118,63 @@ async fn run_foreground(source: DaemonSnapshotSource, paths: RuntimePaths) -> Re
     };
     let (shutdown_signal_tx, shutdown_signal_rx) = tokio::sync::oneshot::channel();
     let (shutdown_tx, mut shutdown_rx) = broadcast::channel::<()>(4);
-    let socket_path = paths.socket.clone();
-    let socket_task = tokio::spawn(socket::serve(
-        socket_path,
+    let mut socket_task = tokio::spawn(socket::serve(
+        listener,
         state_runtime.shared.clone(),
         std::time::Instant::now(),
         shutdown_signal_rx,
         shutdown_tx.clone(),
     ));
+    let mut sigterm = signal(SignalKind::terminate())?;
+    let mut sigint = signal(SignalKind::interrupt())?;
+    let mut sighup = signal(SignalKind::hangup())?;
+    let wedge_signals = std::env::var_os("FLIGHTDECK_DASHBOARD_TEST_WEDGE_SIGNALS").is_some();
 
-    tokio::select! {
-        _ = tokio::signal::ctrl_c() => {
-            append_log(&paths.log, "dashboard daemon shutdown signal=ctrl_c");
+    let mut socket_finished = false;
+    let reason = tokio::select! {
+        _ = sigterm.recv(), if !wedge_signals => {
+            append_log(&paths.log, "dashboard daemon shutdown signal=sigterm");
+            ExitReason::SignalTerm
+        }
+        _ = sigint.recv(), if !wedge_signals => {
+            append_log(&paths.log, "dashboard daemon shutdown signal=sigint");
+            ExitReason::SignalInt
+        }
+        _ = sighup.recv(), if !wedge_signals => {
+            append_log(&paths.log, "dashboard daemon shutdown signal=sighup");
+            ExitReason::SignalHup
         }
         _ = shutdown_rx.recv() => {
             append_log(&paths.log, "dashboard daemon shutdown method=rpc");
+            ExitReason::RpcShutdown
         }
+        result = &mut socket_task => {
+            socket_finished = true;
+            match result {
+                Ok(Ok(())) => {
+                    append_log(&paths.log, "dashboard daemon socket task stopped");
+                    ExitReason::SocketClosed
+                }
+                Ok(Err(error)) => {
+                    append_log(&paths.log, &format!("dashboard daemon socket task failed error={error}"));
+                    cleanup.set_reason(ExitReason::SocketClosed);
+                    return Err(error.into());
+                }
+                Err(error) => {
+                    append_log(&paths.log, &format!("dashboard daemon socket task join failed error={error}"));
+                    cleanup.set_reason(ExitReason::SocketClosed);
+                    return Err(error.into());
+                }
+            }
+        }
+    };
+    cleanup.set_reason(reason);
+    if !socket_finished {
+        if shutdown_signal_tx.send(()).is_err() {
+            tracing::debug!("daemon socket task already stopped");
+        }
+        socket_task.await??;
     }
-    if shutdown_signal_tx.send(()).is_err() {
-        tracing::debug!("daemon socket task already stopped");
-    }
-    socket_task.await??;
-    remove_socket(&paths);
-    remove_pid(&paths);
     append_log(&paths.log, "dashboard daemon stopped");
     Ok(())
 }
@@ -119,26 +182,9 @@ async fn run_foreground(source: DaemonSnapshotSource, paths: RuntimePaths) -> Re
 async fn stop_daemon(session: Option<&str>) -> Result<()> {
     let state_dir = fd_resolve_state_dir();
     let session_key = resolve_session_key_or_passthrough(session)?;
-    let socket = dashboard_socket_file(&state_dir, &session_key);
-    let mut shutdown_sent = false;
-    if socket.exists() {
-        if let Ok(mut client) = DaemonClient::connect(&socket).await {
-            match client.shutdown().await {
-                Ok(()) => {
-                    shutdown_sent = true;
-                    wait_for_path_removed(&socket, STOP_GRACE);
-                }
-                Err(error) => {
-                    tracing::debug!(%error, "daemon rpc shutdown failed; falling back to pid signal");
-                }
-            }
-        }
-    }
-    if !shutdown_sent {
-        if let Some(pid) = read_pid(&state_dir, &session_key) {
-            if pid_alive(pid) {
-                stop_pid(pid, STOP_GRACE)?;
-            }
+    if let Some(pid) = read_pid(&state_dir, &session_key) {
+        if pid_alive(pid) {
+            stop_pid(pid, stop_grace())?;
         }
     }
     let paths = RuntimePaths::new(state_dir, session_key);
@@ -224,11 +270,12 @@ fn rust_wake_enabled() -> bool {
     std::env::var("FLIGHTDECK_DAEMON_RUST").is_ok_and(|value| value == "1")
 }
 
-fn wait_for_path_removed(path: &Path, grace: Duration) {
-    let start = Instant::now();
-    while path.exists() && start.elapsed() < grace {
-        std::thread::sleep(Duration::from_millis(50));
-    }
+fn stop_grace() -> Duration {
+    std::env::var(STOP_GRACE_ENV)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .map(Duration::from_millis)
+        .unwrap_or(STOP_GRACE)
 }
 
 fn resolve_source(
@@ -280,7 +327,7 @@ fn file_session_key(session: &str) -> String {
     }
 }
 
-fn detached_args(args: &DaemonStartArgs) -> Vec<String> {
+fn detached_args(args: &DaemonStartArgs) -> Result<Vec<String>> {
     let mut out = vec!["daemon".to_owned(), "start".to_owned()];
     if let Some(session) = &args.session {
         out.push("--session".to_owned());
@@ -288,7 +335,133 @@ fn detached_args(args: &DaemonStartArgs) -> Vec<String> {
     }
     if let Some(state_file) = &args.state_file {
         out.push("--state-file".to_owned());
-        out.push(state_file.display().to_string());
+        out.push(absolute_path(state_file)?.display().to_string());
     }
-    out
+    Ok(out)
+}
+
+fn absolute_path(path: &Path) -> Result<PathBuf> {
+    if path.is_absolute() {
+        Ok(path.to_path_buf())
+    } else {
+        Ok(std::env::current_dir()?.join(path))
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ExitReason {
+    SignalTerm,
+    SignalInt,
+    SignalHup,
+    RpcShutdown,
+    SocketClosed,
+    Other,
+}
+
+impl ExitReason {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::SignalTerm => "signal-term",
+            Self::SignalInt => "signal-int",
+            Self::SignalHup => "signal-hup",
+            Self::RpcShutdown => "rpc-shutdown",
+            Self::SocketClosed => "socket-closed",
+            Self::Other => "other",
+        }
+    }
+}
+
+struct DaemonCleanup {
+    paths: RuntimePaths,
+    _lock: DaemonLock,
+    reason: ExitReason,
+}
+
+impl DaemonCleanup {
+    fn new(paths: RuntimePaths, lock: DaemonLock) -> Self {
+        Self {
+            paths,
+            _lock: lock,
+            reason: ExitReason::Other,
+        }
+    }
+
+    fn set_reason(&mut self, reason: ExitReason) {
+        self.reason = reason;
+    }
+}
+
+impl Drop for DaemonCleanup {
+    fn drop(&mut self) {
+        remove_socket(&self.paths);
+        remove_pid(&self.paths);
+        emit_daemon_exited(&self.paths, self.reason);
+    }
+}
+
+fn emit_daemon_exited(paths: &RuntimePaths, reason: ExitReason) {
+    let busy_paths = BusyPaths::new(&paths.state_dir, &paths.session_key);
+    if let Err(error) = busy::with_session_lock(&busy_paths, || {
+        append_daemon_exited_row(&busy_paths, &paths.session_key, reason)
+    }) {
+        tracing::warn!(%error, "failed to emit daemon-exited event");
+    }
+}
+
+fn append_daemon_exited_row(
+    busy_paths: &BusyPaths,
+    master_id: &str,
+    reason: ExitReason,
+) -> Result<(), busy::BusyError> {
+    if let Some(parent) = busy_paths.events_file.parent() {
+        std::fs::create_dir_all(parent).map_err(|source| busy::BusyError::Io {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    }
+    let ts = Utc::now().to_rfc3339();
+    let reason = reason.as_str();
+    let pid = std::process::id();
+    let hash_input = format!("{ts}|{reason}|{master_id}|{pid}");
+    let hash = format!("{:x}", Sha256::digest(hash_input.as_bytes()))
+        .chars()
+        .take(12)
+        .collect::<String>();
+    let row = json!({
+        "ts": ts,
+        "pane_id": master_id,
+        "event_type": "daemon-exited",
+        "reason": reason,
+        "master_id": master_id,
+        "pid": pid,
+        "hash": hash,
+        "tag": "daemon-exited",
+        "stable_age_sec": 0,
+        "details": {
+            "event_type": "daemon-exited",
+            "reason": reason,
+            "master_id": master_id,
+            "pid": pid,
+        },
+    });
+    append_json_line(&busy_paths.events_file, &row)
+}
+
+fn append_json_line(path: &Path, row: &Value) -> Result<(), busy::BusyError> {
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(|source| busy::BusyError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    let body = serde_json::to_string(row).map_err(|source| busy::BusyError::Json {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    writeln!(file, "{body}").map_err(|source| busy::BusyError::Io {
+        path: path.to_path_buf(),
+        source,
+    })
 }

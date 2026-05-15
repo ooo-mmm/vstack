@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -27,32 +27,35 @@ pub enum SocketError {
     },
 }
 
-pub async fn serve(
-    socket_path: PathBuf,
-    shared: Arc<SharedState>,
-    started_at: Instant,
-    mut shutdown_rx: oneshot::Receiver<()>,
-    shutdown_tx: broadcast::Sender<()>,
-) -> Result<(), SocketError> {
-    if let Err(error) = tokio::fs::remove_file(&socket_path).await {
+pub fn bind(socket_path: &Path) -> Result<UnixListener, SocketError> {
+    if let Err(error) = std::fs::remove_file(socket_path) {
         if error.kind() != std::io::ErrorKind::NotFound {
             tracing::debug!(path = %socket_path.display(), %error, "failed to remove stale socket");
         }
     }
-    let listener = UnixListener::bind(&socket_path).map_err(|source| SocketError::Io {
-        path: socket_path.clone(),
+    let listener = UnixListener::bind(socket_path).map_err(|source| SocketError::Io {
+        path: socket_path.to_path_buf(),
         source,
     })?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         if let Err(error) =
-            std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o600))
+            std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o600))
         {
             tracing::warn!(path = %socket_path.display(), %error, "failed to set socket mode");
         }
     }
+    Ok(listener)
+}
 
+pub async fn serve(
+    listener: UnixListener,
+    shared: Arc<SharedState>,
+    started_at: Instant,
+    mut shutdown_rx: oneshot::Receiver<()>,
+    shutdown_tx: broadcast::Sender<()>,
+) -> Result<(), SocketError> {
     loop {
         tokio::select! {
             biased;
