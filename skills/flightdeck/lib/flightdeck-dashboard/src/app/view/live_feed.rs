@@ -1,7 +1,7 @@
 use chrono::Local;
-use ratatui::layout::{Constraint, Rect};
+use ratatui::layout::{Alignment, Constraint, Rect};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Cell, Row, Table};
+use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table, Wrap};
 use ratatui::Frame;
 
 use crate::app::model::Model;
@@ -12,28 +12,38 @@ use crate::state::snapshot::{Event, EventImportance};
 pub fn render(frame: &mut Frame<'_>, area: Rect, model: &Model, theme: Theme) {
     let events = model.filtered_events();
     let hidden_noise = model.hidden_noise_count();
-    let max_rows = area.height.saturating_sub(3) as usize;
-    let event_limit = max_rows.saturating_sub(usize::from(hidden_noise > 0));
-    let mut rows = events
-        .iter()
-        .take(event_limit)
-        .enumerate()
-        .map(|(idx, event)| row_for_event(event, idx, model, theme))
-        .collect::<Vec<_>>();
-    if hidden_noise > 0 && rows.len() < max_rows {
-        rows.push(row_for_folded_noise(hidden_noise, rows.len(), model, theme));
+    let row_count = events.len().saturating_add(usize::from(hidden_noise > 0));
+    let title = title_for(row_count, model);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(theme.border_active)
+        .title(Span::styled(title, theme.title));
+
+    if model.recent_events.is_empty() {
+        frame.render_widget(
+            Paragraph::new("Activity feed is empty. Daemon events appear here when the daemon writes to fd-daemon-<key>.log / fd-wake-events-<key>.log.")
+                .block(block)
+                .style(theme.muted)
+                .alignment(Alignment::Center)
+                .wrap(Wrap { trim: true }),
+            area,
+        );
+        return;
     }
 
-    let row_count = events.len().saturating_add(usize::from(hidden_noise > 0));
-    let title = format!(
-        " activity feed · {} row{} · {} ",
-        row_count,
-        if row_count == 1 { "" } else { "s" },
-        if model.ui.hide_noise {
-            "noise hidden"
-        } else {
-            "noise shown"
-        }
+    let max_rows = area.height.saturating_sub(3) as usize;
+    let mut rows = Vec::with_capacity(row_count.min(max_rows));
+    if hidden_noise > 0 && rows.len() < max_rows {
+        rows.push(row_for_folded_noise(hidden_noise, 0, model, theme));
+    }
+    let event_row_start = rows.len();
+    let event_limit = max_rows.saturating_sub(event_row_start);
+    rows.extend(
+        events
+            .iter()
+            .take(event_limit)
+            .enumerate()
+            .map(|(idx, event)| row_for_event(event, idx + event_row_start, model, theme)),
     );
     let header = Row::new([
         Cell::from("Time"),
@@ -52,14 +62,22 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, model: &Model, theme: Theme) {
         ],
     )
     .header(header)
-    .block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_style(theme.border_active)
-            .title(Span::styled(title, theme.title)),
-    )
+    .block(block)
     .column_spacing(1);
     frame.render_widget(table, area);
+}
+
+fn title_for(row_count: usize, model: &Model) -> String {
+    format!(
+        " activity feed · {} row{} · {} ",
+        row_count,
+        if row_count == 1 { "" } else { "s" },
+        if model.ui.hide_noise {
+            "noise hidden"
+        } else {
+            "noise shown"
+        }
+    )
 }
 
 fn row_for_event<'a>(event: &Event, idx: usize, model: &Model, theme: Theme) -> Row<'a> {
@@ -104,13 +122,10 @@ fn row_for_event<'a>(event: &Event, idx: usize, model: &Model, theme: Theme) -> 
 fn row_for_folded_noise<'a>(count: usize, idx: usize, model: &Model, theme: Theme) -> Row<'a> {
     Row::new(vec![
         Cell::from("—"),
-        Cell::from(Span::styled("DAEMON", theme.muted)),
+        Cell::from(Span::styled("NOISE", theme.muted)),
         Cell::from(Span::styled("·", theme.muted)),
         Cell::from(Span::styled(
-            format!(
-                "{count} heartbeat event{} folded",
-                if count == 1 { "" } else { "s" }
-            ),
+            format!("{count} heartbeat/noise events folded · press Ctrl+N to show."),
             theme.muted,
         )),
     ])

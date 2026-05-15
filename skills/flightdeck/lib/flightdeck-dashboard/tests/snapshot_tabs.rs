@@ -21,6 +21,15 @@ fn mixed_live_feed_tab() {
 }
 
 #[test]
+fn live_feed_empty_state_when_no_events() {
+    let model = common::model_for_tab(Tab::LiveFeed);
+    let rendered = common::render_model(&model);
+    assert!(rendered.contains("Activity feed is empty"));
+    assert!(rendered.contains("fd-daemon-<key>.log / fd-wake-events-<key>.log"));
+    insta::assert_snapshot!("tab_live_feed_empty_state", rendered);
+}
+
+#[test]
 fn live_feed_with_events() {
     let mut model = common::model_for_tab(Tab::LiveFeed);
     seed_events(&mut model);
@@ -49,10 +58,31 @@ fn live_feed_folds_heartbeats_when_noise_hidden() {
         "wake delivered to master",
     ));
     let rendered = common::render_model(&model);
-    assert!(rendered.contains("2 heartbeat events folded"));
+    assert!(rendered.contains("2 heartbeat/noise events folded · press Ctrl+N to show."));
     assert!(!rendered.contains("daemon heartbeat #1"));
     assert!(rendered.contains("noise hidden"));
     insta::assert_snapshot!("tab_live_feed_folds_heartbeats", rendered);
+}
+
+#[test]
+fn live_feed_all_noise_shows_summary_row() {
+    let mut model = common::model_for_tab(Tab::LiveFeed);
+    model.push_event(Event::new(
+        common::fixed_now() - chrono::Duration::seconds(20),
+        ActivitySource::Daemon,
+        EventImportance::Low,
+        "daemon heartbeat #1",
+    ));
+    model.push_event(Event::new(
+        common::fixed_now() - chrono::Duration::seconds(10),
+        ActivitySource::Daemon,
+        EventImportance::Low,
+        "daemon heartbeat #2",
+    ));
+    let rendered = common::render_model(&model);
+    assert!(rendered.contains("2 heartbeat/noise events folded · press Ctrl+N to show."));
+    assert!(!rendered.contains("daemon heartbeat #1"));
+    insta::assert_snapshot!("tab_live_feed_all_noise_summary", rendered);
 }
 
 #[test]

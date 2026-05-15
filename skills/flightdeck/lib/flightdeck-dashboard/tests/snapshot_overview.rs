@@ -167,10 +167,20 @@ fn compact_dashboard_widget() {
 #[test]
 fn compact_tree_dashboard_widget() {
     let mut model = common::model_for_fixture("mixed", MotionLevel::Off);
+    let workflow = model
+        .snapshot
+        .sessions
+        .iter_mut()
+        .find(|session| session.id == "dashboard-rust")
+        .expect("workflow row exists");
+    workflow.id = "flightdeck-dashboard".to_owned();
+    workflow.state = SessionState::Ready;
+    workflow.title = "Flightdeck Dashboard".to_owned();
     model.ui.compact = true;
     let rendered = common::render_model(&model);
     assert!(rendered.contains("› VST-101"));
-    assert!(rendered.contains("dashboard-rust"));
+    assert!(rendered.contains("flightdeck-dashboard  ready"));
+    assert!(!rendered.contains("flightdeck-dashboardready"));
     insta::assert_snapshot!("overview_compact_tree_dashboard_widget", rendered);
 }
 

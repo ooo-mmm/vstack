@@ -167,7 +167,7 @@ fn render_single_column(frame: &mut Frame<'_>, area: Rect, model: &Model, theme:
         };
         lines.push(Line::from(vec![
             Span::styled(format!("{cursor} "), style),
-            Span::styled(format!("{:<15}", session.id), style),
+            Span::styled(format!("{:<20}  ", session.id), style),
             Span::styled(
                 format!("{:<12}", session.state.as_str()),
                 theme.state(&session.state),
