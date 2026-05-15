@@ -198,14 +198,17 @@ function outgoingDashboardMessage(item: SubagentDashboardItem): string | undefin
 	return message;
 }
 
-function expandedDashboardMessageLines(item: SubagentDashboardItem, stem: string, theme: Theme, width: number): string[] {
-	const childBranch = theme.fg("muted", "|_ ");
-	const maxChars = Math.max(48, width - 23);
-	const lines: string[] = [];
-	if (item.task?.trim()) lines.push(`${stem}${childBranch}${ansiYellow("->")} ${theme.fg("toolOutput", oneLinePreview(item.task, maxChars))}`);
+function expandedDashboardMessageLines(item: SubagentDashboardItem, stem: string, theme: Theme, width: number, cwd?: string): string[] {
+	const entries: Array<{ direction: "->" | "<-"; text: string }> = [];
+	if (item.task?.trim()) entries.push({ direction: "->", text: item.task });
 	const outgoing = outgoingDashboardMessage(item);
-	if (outgoing) lines.push(`${stem}${childBranch}${ansiGreen("<-")} ${theme.fg("toolOutput", oneLinePreview(outgoing, maxChars))}`);
-	return lines;
+	if (outgoing) entries.push({ direction: "<-", text: outgoing });
+	const maxChars = Math.max(48, width - 24);
+	return entries.map((entry, index) => {
+		const branch = subagentBranch(theme, index === entries.length - 1 ? "└" : "├", cwd);
+		const direction = entry.direction === "->" ? ansiYellow("->") : ansiGreen("<-");
+		return `${stem}${branch}${direction} ${theme.fg("toolOutput", oneLinePreview(entry.text, maxChars))}`;
+	});
 }
 
 function dashboardFrame(lines: string[], width: number, theme: Theme): string[] {
@@ -374,7 +377,7 @@ export function renderDashboardWidgetLines(state: SubagentDashboardState, theme:
 		}
 		lines.push(`${branch}${dashboardStatusIcon(item.status, theme, { animateSpinners })} ${name}${dotSep}${rowParts.join(dotSep)}`);
 		if (state.mode === "expanded" && !state.collapsed) {
-			lines.push(...expandedDashboardMessageLines(item, subagentStem(theme, index === shown.length - 1 && items.length <= shown.length, cwd), theme, width));
+			lines.push(...expandedDashboardMessageLines(item, subagentStem(theme, index === shown.length - 1 && items.length <= shown.length, cwd), theme, width, cwd));
 		}
 	}
 	const hidden = items.length - shown.length;
