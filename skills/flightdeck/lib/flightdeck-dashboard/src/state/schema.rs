@@ -209,8 +209,10 @@ pub struct KindCounts {
 impl KindCounts {
     #[must_use]
     pub fn from_sessions(sessions: &[TrackedSession]) -> Self {
-        let mut counts = Self::default();
-        counts.total = sessions.len();
+        let mut counts = Self {
+            total: sessions.len(),
+            ..Self::default()
+        };
         for session in sessions {
             match session.kind.as_str() {
                 "adhoc" => counts.adhoc += 1,

@@ -12,7 +12,7 @@ pub async fn run_commands(commands: Vec<Cmd>, tx: &mpsc::UnboundedSender<Msg>, c
             Cmd::Render => {}
             Cmd::ReloadDemo(name) => {
                 let msg = match fixtures::load_demo_snapshot(&name, clock()) {
-                    Ok(snapshot) => Msg::SnapshotUpdated(snapshot),
+                    Ok(snapshot) => Msg::SnapshotUpdated(Box::new(snapshot)),
                     Err(error) => Msg::Error(error.to_string()),
                 };
                 send_msg(tx, msg);

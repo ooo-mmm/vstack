@@ -20,7 +20,7 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
         Msg::KeyPressed(key) => handle_key(model, &key),
         Msg::Resize(_, _) => vec![Cmd::Render],
         Msg::SnapshotUpdated(snapshot) => {
-            model.snapshot = snapshot;
+            model.snapshot = *snapshot;
             model.clamp_selection();
             vec![Cmd::Render]
         }

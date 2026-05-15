@@ -8,7 +8,7 @@ pub enum Msg {
     AnimateTick,
     KeyPressed(KeyEvent),
     Resize(u16, u16),
-    SnapshotUpdated(DashboardSnapshot),
+    SnapshotUpdated(Box<DashboardSnapshot>),
     Error(String),
     Quit,
 }
