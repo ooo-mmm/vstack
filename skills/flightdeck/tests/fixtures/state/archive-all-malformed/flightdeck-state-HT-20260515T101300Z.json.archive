@@ -1,0 +1,8 @@
+{
+  "session_id": "HT",
+  "terminated": false,
+  "entries": {},
+  "merge_queue": [],
+  "conflict_graph": { "edges": [], "computed_at": null },
+  "paused_for_user": null
+}

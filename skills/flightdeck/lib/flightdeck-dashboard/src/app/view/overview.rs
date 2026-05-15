@@ -110,8 +110,8 @@ fn render_left_rail(frame: &mut Frame<'_>, area: Rect, model: &Model, theme: The
     if model.snapshot.conflict_graph.edges.is_empty() {
         lines.push(Line::from(Span::styled("no edges", theme.muted)));
     } else {
-        for edge in &model.snapshot.conflict_graph.edges {
-            lines.push(Line::from(Span::raw(format!("• {}", edge.join(" ↔ ")))));
+        for (from, to) in &model.snapshot.conflict_graph.edges {
+            lines.push(Line::from(Span::raw(format!("• {from} ↔ {to}"))));
         }
     }
 

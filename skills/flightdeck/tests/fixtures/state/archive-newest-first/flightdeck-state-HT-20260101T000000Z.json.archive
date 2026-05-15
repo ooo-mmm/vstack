@@ -1,0 +1,18 @@
+{
+  "session_id": "HT-old",
+  "started_at": "2026-01-01T00:00:00Z",
+  "updated_at": "2026-01-01T00:05:00Z",
+  "terminated": false,
+  "entries": {
+    "old-live": {
+      "id": "old-live",
+      "title": "Old non-terminated archive",
+      "kind": "adhoc",
+      "state": "waiting",
+      "decisions_log": []
+    }
+  },
+  "merge_queue": [],
+  "conflict_graph": { "edges": [], "computed_at": null },
+  "paused_for_user": null
+}

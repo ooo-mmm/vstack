@@ -8,6 +8,7 @@ use super::snapshot::{ConflictGraph, PauseInfo, SessionKind, SessionState};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct MasterState {
+    #[serde(default)]
     pub session_id: String,
     pub started_at: Option<DateTime<Utc>>,
     pub updated_at: Option<DateTime<Utc>>,
@@ -21,8 +22,11 @@ pub struct MasterState {
     pub merge_queue: Vec<String>,
     #[serde(default)]
     pub conflict_graph: ConflictGraph,
+    #[serde(default)]
     pub paused_for_user: Option<PauseInfo>,
+    #[serde(default)]
     pub master_archive_error: Option<String>,
+    #[serde(default)]
     pub summary_path: Option<PathBuf>,
 }
 

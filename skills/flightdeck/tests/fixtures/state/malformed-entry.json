@@ -1,0 +1,43 @@
+{
+  "session_id": "HT",
+  "started_at": "2026-05-15T08:00:00Z",
+  "updated_at": "2026-05-15T10:00:00Z",
+  "terminated": false,
+  "entries": {
+    "bad-value": "not an object",
+    "fallback-id": {
+      "id": 42,
+      "title": "Fallback id",
+      "kind": "",
+      "state": "waiting",
+      "decisions_log": [
+        { "ts": "2026-05-15T09:30:00Z", "prompt_tag": "ok", "answer": "YES" },
+        { "ts": "2026-05-15T09:31:00Z", "prompt_tag": "missing answer" }
+      ]
+    },
+    "valid.issue": {
+      "id": "valid.issue",
+      "title": "Valid issue",
+      "kind": "issue",
+      "state": "ready",
+      "pr_number": 999,
+      "worktree": "/wrong/top-level",
+      "merge_commit": "wrong-top-level",
+      "domain": {
+        "issue": {
+          "id": "valid.issue",
+          "worktree": "/repo/worktrees/valid.issue",
+          "pr_number": 31,
+          "scope_files_declared": 2,
+          "scope_files_actual": 2,
+          "orchestration_started": false,
+          "merge_commit": "domain-commit"
+        }
+      },
+      "decisions_log": []
+    }
+  },
+  "merge_queue": [],
+  "conflict_graph": { "edges": [], "computed_at": null },
+  "paused_for_user": null
+}

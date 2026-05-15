@@ -1,0 +1,20 @@
+{
+  "issues": {
+    "ISS-OLD": {
+      "state": "waiting",
+      "pane_id": "%9",
+      "pr_number": 12
+    }
+  },
+  "owner": {
+    "harness": "pi",
+    "pane_id": "%1",
+    "pane_target": "HT:1.0",
+    "cwd": "/repo/project",
+    "pid": 4242,
+    "pi_session_id": null,
+    "pi_bridge_socket": null,
+    "discovery_error": null
+  },
+  "schema_version": 1.1
+}

@@ -167,7 +167,7 @@ impl fmt::Display for SessionState {
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct ConflictGraph {
     #[serde(default)]
-    pub edges: Vec<Vec<String>>,
+    pub edges: Vec<(String, String)>,
     pub computed_at: Option<DateTime<Utc>>,
 }
 
@@ -189,6 +189,8 @@ pub struct DashboardSnapshot {
     pub terminated_at: Option<DateTime<Utc>>,
     pub master_state_path: PathBuf,
     pub master_archive_error: Option<String>,
+    pub master_error: Option<String>,
+    pub pre_purge_state: bool,
     pub owner: Option<OwnerBlock>,
     pub daemon: DaemonStatus,
     pub counts: KindCounts,
@@ -220,6 +222,8 @@ impl DashboardSnapshot {
             terminated_at: state.terminated_at,
             master_state_path: PathBuf::from("<demo-fixture>"),
             master_archive_error: state.master_archive_error,
+            master_error: None,
+            pre_purge_state: false,
             owner: state.owner,
             daemon: DaemonStatus::unknown(),
             counts,
@@ -230,6 +234,39 @@ impl DashboardSnapshot {
             recent_events: VecDeque::with_capacity(0),
             conversations: Vec::new(),
             summary_path: state.summary_path,
+        }
+    }
+
+    #[must_use]
+    pub fn empty_with_error(
+        session_id: impl Into<String>,
+        master_state_path: PathBuf,
+        now: DateTime<Utc>,
+        error: impl Into<String>,
+        pre_purge_state: bool,
+    ) -> Self {
+        let error = error.into();
+        Self {
+            session_id: session_id.into(),
+            project_root: PathBuf::from("."),
+            started_at: None,
+            updated_at: now,
+            terminated: false,
+            terminated_at: None,
+            master_state_path,
+            master_archive_error: None,
+            master_error: Some(error),
+            pre_purge_state,
+            owner: None,
+            daemon: DaemonStatus::unknown(),
+            counts: KindCounts::default(),
+            sessions: Vec::new(),
+            merge_queue: Vec::new(),
+            conflict_graph: ConflictGraph::default(),
+            paused_for_user: None,
+            recent_events: VecDeque::with_capacity(0),
+            conversations: Vec::new(),
+            summary_path: None,
         }
     }
 }

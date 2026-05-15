@@ -1,0 +1,82 @@
+{
+  "session_id": "HT",
+  "started_at": "2026-05-15T08:00:00Z",
+  "updated_at": "2026-05-15T10:00:00Z",
+  "terminated": false,
+  "owner": {
+    "harness": "pi",
+    "pane_id": "%1",
+    "pane_target": "HT:1.0",
+    "cwd": "/repo/project",
+    "pid": 4242,
+    "pi_session_id": "pi-ht",
+    "pi_bridge_socket": "/run/user/1000/pi.sock",
+    "discovery_error": null
+  },
+  "entries": {
+    "adhoc-default": {
+      "id": "adhoc-default",
+      "title": "Adhoc default kind",
+      "state": "waiting",
+      "harness": "pi",
+      "cwd": "/repo/project",
+      "pane_target": "HT:2.0",
+      "pane_id": "%2",
+      "spawned_at": "2026-05-15T08:10:00Z",
+      "last_polled_at": "2026-05-15T09:55:00Z",
+      "decisions_log": []
+    },
+    "ISS-7": {
+      "id": "ISS-7",
+      "title": "Issue with domain metadata",
+      "kind": "issue",
+      "state": "prompting",
+      "harness": "opencode",
+      "cwd": "/repo/worktrees/iss-7",
+      "pane_target": "HT:3.0",
+      "pane_id": "%3",
+      "pr_number": 999,
+      "worktree": "/wrong/top-level",
+      "merge_commit": "top-level-ignored",
+      "domain": {
+        "issue": {
+          "id": "ISS-7",
+          "worktree": "/repo/worktrees/iss-7",
+          "pr_number": 7,
+          "scope_files_declared": 3,
+          "scope_files_actual": 4,
+          "orchestration_started": true,
+          "merge_commit": "abc123"
+        }
+      },
+      "spawned_at": "2026-05-15T08:20:00Z",
+      "last_response_at": "2026-05-15T09:50:00Z",
+      "last_polled_at": "2026-05-15T09:58:00Z",
+      "decisions_log": [
+        { "ts": "2026-05-15T09:30:00Z", "prompt_tag": "merge-now", "answer": "YES" }
+      ]
+    },
+    "workflow.plan": {
+      "id": "workflow.plan",
+      "title": "Workflow planner",
+      "kind": "workflow",
+      "state": "submitting",
+      "harness": "codex",
+      "cwd": "/repo/project",
+      "pane_target": "HT:4.0",
+      "pane_id": "%4",
+      "spawned_at": "2026-05-15T08:30:00Z",
+      "last_polled_at": "2026-05-15T09:59:00Z",
+      "decisions_log": []
+    }
+  },
+  "merge_queue": ["ISS-7", "workflow.plan"],
+  "conflict_graph": {
+    "edges": [
+      { "from": "ISS-7", "to": "workflow.plan" },
+      ["ISS-7", "adhoc-default"]
+    ],
+    "computed_at": "2026-05-15T09:59:00Z"
+  },
+  "paused_for_user": null
+}

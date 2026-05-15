@@ -1,0 +1,20 @@
+{
+  "session_id": "HT",
+  "started_at": "2026-05-15T08:00:00Z",
+  "updated_at": "2026-05-15T10:15:00Z",
+  "terminated": true,
+  "terminated_at": "2026-05-15T10:15:00Z",
+  "entries": {
+    "newest-done": {
+      "id": "newest-done",
+      "title": "Newest terminated archive",
+      "kind": "adhoc",
+      "state": "complete",
+      "decisions_log": []
+    }
+  },
+  "merge_queue": [],
+  "conflict_graph": { "edges": [], "computed_at": null },
+  "paused_for_user": null,
+  "summary_path": "tmp/flightdeck-summary-HT.md"
+}
