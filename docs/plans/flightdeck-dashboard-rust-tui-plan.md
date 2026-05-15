@@ -298,7 +298,7 @@ The Rust TUI takes over every pi-flightdeck surface in its own tmux window. The 
 
 | pi-flightdeck surface | Rust TUI equivalent |
 | --- | --- |
-| Pause banner above editor | Status bar's pause chip + window-level border accent + optional terminal bell + optional `tmux select-window` auto-focus when master pauses |
+| Pause banner above editor | Status bar's pause chip + window-level border accent + optional terminal bell. Auto-focus on pause was removed in Phase 11 R1 — operator manually focuses the dashboard window. |
 | Persistent dashboard widget (compact tree) | The dashboard window itself is always "on"; an `Alt+M` collapsed view shrinks it to a compact tree if the user shares the pane |
 | Six-tab popup (Overview / Live feed / Conversations / Conflicts & merges / Decisions / Daemon) | Six tabs in the TUI proper; same labels |
 | Session-complete view (archive fallback) | Same `state-archive` semantics: newest-first iteration of `.json.archive` when live file is gone |
@@ -309,7 +309,7 @@ The Rust TUI takes over every pi-flightdeck surface in its own tmux window. The 
 | Decisions detail popup (Enter → wrapped answer, Esc/Backspace returns) | Same |
 | Daemon tab with heartbeat folding | Same |
 | Stable mini-dashboard stack order (Flightdeck → Tasks → Agents → BG tasks) | Not applicable (own window); the same vertical priority is used inside the Overview rail |
-| Terminal bell + auto-popup on pause | Bell preserved; auto-popup becomes `tmux select-window` |
+| Terminal bell + auto-popup on pause | Bell preserved; auto-popup/auto-focus on pause was removed in Phase 11 R1 — operator manually focuses the dashboard window. |
 
 Tabs:
 
@@ -608,7 +608,7 @@ Goals:
 
 - Walk every pi-flightdeck surface from the parity table above; tick each off with a snapshot test or a live smoke screenshot under `docs/work-in-progress/`.
 - Pause banner — verified visually.
-- Auto-focus on pause — verified.
+- Auto-focus on pause — removed in Phase 11 R1; pause is signalled by chip + bell and operators manually focus the dashboard window.
 - Owner / observer banner — verified.
 - Decisions detail popup — verified.
 - Archive fallback render — verified.
@@ -641,7 +641,7 @@ cd cli && cargo test
 - Launch dashboard via the integrated path with `FLIGHTDECK_DASHBOARD=1`.
 - Start a real Flightdeck adhoc session (`flightdeck-session start --kind adhoc --harness pi --prompt "stay idle"`).
 - Confirm dashboard updates from real files; daemon-survives-TUI-exit holds.
-- Master pauses → bell + auto-focus fire.
+- Master pauses → chip + bell fire; auto-focus on pause stays absent, and the operator manually focuses the dashboard window if desired.
 - `pane-registry set-state ... dead` → badge flips.
 - `pane-registry teardown-entry ...` → row removed; window closed.
 - Terminate flow archives state; dashboard switches to archive-read mode.
