@@ -130,9 +130,7 @@ interface TickPending {
 }
 
 // pane-registry helpers were moved to ./pane-registry.ts (W5 reviewer
-// follow-up B4). Re-export listTrackedEntriesForReconcile for backwards
-// compatibility with sibling modules that imported it from loop.ts.
-export { listTrackedEntriesForReconcile };
+// follow-up B4). Sibling modules should import them from there directly.
 
 export async function runLoop(opts: RunLoopOpts): Promise<void> {
 	const sessionLock = fdSessionLock(opts.stateDir, opts.sessionKey);

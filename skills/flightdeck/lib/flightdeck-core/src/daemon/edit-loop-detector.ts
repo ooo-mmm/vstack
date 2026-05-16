@@ -14,6 +14,16 @@
 // caller can emit a synthetic `blocked` outbox row. The state Map is
 // trimmed to the last N entries so memory stays bounded.
 //
+// Production wiring (subscribers.bash pi_subscriber_loop) currently
+// emits a `pi-edit-tool-loop` wake-event row to WAKE_EVENTS_LOG when
+// the bash mirror crosses the threshold; the daemon's canonical-tag
+// path then wakes master. `buildEditLoopSyntheticOutbox` below is
+// reserved for a future TS-side caller that wants to write a real
+// synthetic outbox JSON (via the W5 defaultWriteSyntheticOutbox
+// helper) the way pi-agents-tmux's agent-end + idle-stall watchdogs
+// do. Kept exported because the wiring is a likely follow-up; the
+// shape is locked by tests so a future caller can rely on it.
+//
 // Configuration via env vars (read by the caller, not by this module):
 //   VSTACK_EDIT_LOOP_DETECTOR=0     disables the detector entirely.
 //   VSTACK_EDIT_LOOP_THRESHOLD_N    consecutive failures gate (default 5).
@@ -110,6 +120,14 @@ export interface EditLoopSyntheticOutbox {
 	notes: string;
 }
 
+/**
+ * Build a synthetic `blocked` outbox payload for a pane that crossed
+ * the edit-loop threshold. NOT called by the current production wiring
+ * (the bash subscriber emits a wake-event row, not an outbox). Kept
+ * exported for a future TS-side caller that wants to write a real
+ * outbox JSON via the W5 defaultWriteSyntheticOutbox helper; the
+ * shape + tests are locked here so a follow-up wiring can rely on it.
+ */
 export function buildEditLoopSyntheticOutbox(input: {
 	agent: string;
 	taskId: string;

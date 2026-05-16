@@ -136,6 +136,23 @@ pr_checks_record_outcome() {
     pr_checks_prune_lru "$dir"
 }
 
+# Emit pr.checks_passed | pr.checks_failed activity rows. Best-effort
+# suppression of duplicate events on rollup flap:
+#
+#   - State sidecar at <state-dir>/flightdeck-pr-checks-<pr>.json holds
+#     the last-observed outcome. New event fires ONLY when the rollup
+#     transitions (prev != curr).
+#   - Read-compare-record-emit is serialized via flock against a sibling
+#     <state-dir>/flightdeck-pr-checks-<pr>.lock file so two concurrent
+#     pr-view calls on the same PR don't both observe the pre-transition
+#     state and double-emit (round-2 fix; see pr_checks_record_outcome).
+#   - State dir resolves via FLIGHTDECK_PR_CHECKS_STATE_DIR override,
+#     then dirname(FLIGHTDECK_ACTIVITY_FILE), then XDG_RUNTIME_DIR/
+#     flightdeck, then /tmp/flightdeck-$UID. Bounded by
+#     FLIGHTDECK_PR_CHECKS_LRU (default 50, oldest-mtime first).
+#
+# Best-effort means: any write/lock failure falls back to emitting the
+# event so a broken state file never silences master.
 emit_checks_activity() {
     local json_fields="$1"
     local pr_ref="$2"
