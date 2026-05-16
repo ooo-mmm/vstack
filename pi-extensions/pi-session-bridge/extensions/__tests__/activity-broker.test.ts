@@ -72,4 +72,34 @@ describe("Pi activity broker", () => {
 		expect(seen).toEqual(["pi.event.good"]);
 		expect(streamed.map((item) => item.type)).toEqual(["pi.event.good"]);
 	});
+
+	test("bridge publisher failures warn once per event type and error class", () => {
+		const originalWarn = console.warn;
+		const warnings: unknown[][] = [];
+		console.warn = (...args: unknown[]) => { warnings.push(args); };
+		try {
+			const broker = getPiActivityBroker();
+			installPiActivityBridgePublisher("failing", () => { throw new TypeError("socket closed"); });
+
+			broker.publish(event({ source: "pi-agents", type: "agent.task_completed" }));
+			broker.publish(event({ source: "pi-agents", type: "agent.task_completed" }));
+			broker.publish(event({ source: "pi-agents", type: "agent.task_failed" }));
+
+			expect(warnings).toHaveLength(2);
+			expect(String(warnings[0]?.[0])).toContain("type=agent.task_completed source=pi-agents");
+			expect(String(warnings[0]?.[0])).toContain("socket closed");
+			expect(String(warnings[1]?.[0])).toContain("type=agent.task_failed source=pi-agents");
+		} finally {
+			console.warn = originalWarn;
+		}
+	});
+
+	test("recent filters malformed internal entries", () => {
+		const broker = getPiActivityBroker();
+		broker.publish(event({ type: "pi.event.valid1" }));
+		(broker as unknown as { _events: unknown[] })._events.push({ source: "pi-session", type: "pi.event.malformed" });
+		broker.publish(event({ type: "pi.event.valid2" }));
+
+		expect(broker.recent(10).map((item) => item.type)).toEqual(["pi.event.valid2", "pi.event.valid1"]);
+	});
 });

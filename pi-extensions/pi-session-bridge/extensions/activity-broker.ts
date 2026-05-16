@@ -30,6 +30,7 @@ interface InternalActivityBroker extends PiActivityBroker {
 
 const ACTIVITY_BROKER_SYMBOL = Symbol.for("vstack.pi.activity");
 const DEFAULT_RECENT_LIMIT = 100;
+const warnedBridgePublisherFailures = new Set<string>();
 
 export function getPiActivityBroker(): PiActivityBroker {
 	return ensureActivityBroker();
@@ -73,7 +74,7 @@ function ensureActivityBroker(): InternalActivityBroker {
 					try { listener(event); } catch { /* listener failures are isolated */ }
 				}
 				for (const publisher of [...bridgePublishers.values()]) {
-					try { publisher(event); } catch { /* bridge failures are best-effort */ }
+					try { publisher(event); } catch (error) { warnBridgePublisherFailure(event, error); }
 				}
 			} catch {
 				// Invalid producer payloads are ignored; broker contract is fail-open.
@@ -81,7 +82,7 @@ function ensureActivityBroker(): InternalActivityBroker {
 		},
 		recent(limit = DEFAULT_RECENT_LIMIT): PiActivityEvent[] {
 			const safeLimit = Math.max(0, Math.floor(Number.isFinite(limit) ? limit : DEFAULT_RECENT_LIMIT));
-			return events.slice(-safeLimit).reverse();
+			return events.filter(isRecentActivityEvent).slice(-safeLimit).reverse();
 		},
 		subscribe(listener: (event: PiActivityEvent) => void): () => void {
 			listeners.add(listener);
@@ -150,4 +151,22 @@ function sanitizeStringRecord(input: Record<string, unknown>): Record<string, st
 		if (typeof value === "string" && value.trim()) out[key] = value.trim();
 	}
 	return out;
+}
+
+function isRecentActivityEvent(value: unknown): value is PiActivityEvent {
+	try {
+		normalizeActivityEvent(value as PiActivityEvent);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+function warnBridgePublisherFailure(event: PiActivityEvent, error: unknown): void {
+	const errorName = error instanceof Error && error.name ? error.name : typeof error;
+	const key = `bridge-publisher\0${event.type}\0${errorName}`;
+	if (warnedBridgePublisherFailures.has(key)) return;
+	warnedBridgePublisherFailures.add(key);
+	const message = error instanceof Error ? error.message : String(error);
+	console.warn(`[pi-session-bridge] activity bridge publisher failed type=${event.type} source=${event.source}: ${message}`);
 }

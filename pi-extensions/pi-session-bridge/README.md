@@ -82,6 +82,20 @@ Example response and event:
 
 Clients receive events by default. Send `{"type":"subscribe","enabled":false}` to mute them. `vstack_activity` rows are bridge events, not `sendMessage()` chat entries, so they do not render in the conversation.
 
+## Activity broker
+
+`pi-session-bridge` exposes an in-process broker at `globalThis[Symbol.for("vstack.pi.activity")]` for local Pi extensions:
+
+```ts
+interface PiActivityBroker {
+  publish(event: PiActivityEvent): void;
+  subscribe(listener: (event: PiActivityEvent) => void): () => void;
+  recent(limit?: number): PiActivityEvent[];
+}
+```
+
+`publish()` is best-effort and fail-open. The broker keeps a 100-event ring buffer; `recent(limit)` returns newest-first validated events for in-process replay. `pi-bridge stream` emits live broker publications as `event:"vstack_activity"` only while the bridge is connected; external clients that need earlier rows must use an in-process consumer before they leave the ring.
+
 ## Slash command notes
 
 `pi-bridge send` uses a hybrid slash dispatch path:
