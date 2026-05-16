@@ -546,6 +546,18 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 			else if (evTag === BG_TASK_EXIT_CLASSIFIER_TAG) src = "pi-bg-task-exit-event";
 
 			if (isCanonicalTag(evTag)) {
+				// vstack#69: respect notifyOnExit / notifyMode on bg-task-exit
+				// events so engineer-scaffolding tasks (smoke tests, daemon
+				// mocks) don't wake master. The event row is still appended to
+				// WAKE_EVENTS_LOG by the subscriber for the dashboard.
+				if (evTag === BG_TASK_EXIT_CLASSIFIER_TAG) {
+					const bgDecision = shouldEmitBgTaskExitWake({ task: ev.task as any });
+					if (!bgDecision.emit) {
+						if (opts.verbose) log("bg-task-drop", `${evPid} reason=${bgDecision.reason}`);
+						notifiedHash.set(evPid, evHash);
+						continue;
+					}
+				}
 				let extraJson = "null";
 				if (evTag === "oc-question" || evTag === "pi-question") {
 					extraJson = JSON.stringify({ event_type: ev.event_type, request_id: ev.request_id, question: ev.question, harness: ev.harness });
