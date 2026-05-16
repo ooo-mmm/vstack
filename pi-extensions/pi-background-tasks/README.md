@@ -14,7 +14,7 @@ Run shell commands in the background without blocking the conversation.
 - Arm-next-bash shortcut runs the next bash command in the background.
 - Long-running monitors (`watch`, `tail -f`, `journalctl -f`, polling loops) are auto-backgrounded.
 - Wakeups when a task exits, with optional wakeups on matching output.
-- When `pi-session-bridge` is loaded, task start/output/terminal transitions also publish structured `bg_task.*` activity broker events without adding chat messages.
+- When `pi-session-bridge` is loaded, task start/output/terminal transitions also publish structured `bg_task.*` activity broker events without adding chat messages (`bg_task.started`, `bg_task.output_matched`, `bg_task.completed`, `bg_task.failed`, `bg_task.timed_out`, `bg_task.stopped`).
 - Inline mini-dashboard above the editor; full dashboard popup for browsing details.
 - Inline mini-dashboard participates in vstack's stable stack order: Flightdeck → Tasks → Agents → BG tasks.
 - Persistent log files keep full output even when tool output is truncated.
@@ -122,7 +122,9 @@ Tasks are scoped to the current Pi runtime and stopped on session shutdown. Shel
 
 Exit wakeups are durable across session restarts and PID reuse — if a task ends while Pi is gone, the next session replays the missed wake. Output wakes scheduled before `stop` / `clear` are voided.
 
-See [`DEVELOPMENT.md`](./DEVELOPMENT.md) for the `bg_task` tool surface, wake-metadata schema, and orphan/PID-reuse identity probe.
+Activity broker publication is best-effort and requires `pi-session-bridge` in the same Pi runtime. Broker events are side-channel `vstack_activity` stream rows, not chat messages; Flightdeck consumes them into its activity JSONL sidecar when enabled.
+
+See [`DEVELOPMENT.md`](./DEVELOPMENT.md) for the `bg_task` tool surface, wake-metadata schema, activity broker mapping, and orphan/PID-reuse identity probe.
 
 ## Attribution
 

@@ -29,6 +29,12 @@ Every exit and output wake carries `eventAt`, `deliveredAt`, `taskStatusAtEmit`,
 
 `clearTaskTimers` records a `cleared-on-task-exit` diagnostic for any pending output wakes it cancels.
 
+## Activity broker publication
+
+When `pi-session-bridge` has installed `globalThis[Symbol.for("vstack.pi.activity")]`, task lifecycle code publishes best-effort broker events in addition to existing wake messages. `start` maps to `bg_task.started`; output match wake points map to `bg_task.output_matched`; terminal statuses map to `bg_task.completed`, `bg_task.failed`, `bg_task.timed_out`, or `bg_task.stopped`. Payload refs use `bg_task_id`; details include truncated command, output byte count, exit code, matched pattern/output tail when present, status, and wake `sequence`.
+
+Broker publication must never affect task control flow. Keep it isolated behind `publishBackgroundTaskActivity` / `publishBackgroundTaskStarted`, catch publisher errors, and preserve exit wake durability independently of broker success.
+
 ## Durable exit + orphan watcher
 
 Exit wakeups survive session restart. Each task carries an `exitNotified` flag in its persisted snapshot; if a task hits a terminal state without ever firing its `notifyOnExit` event (session shutdown, mid-session restore that coerced `running` → `stopped`), the next `session_start` replays the missed `exit` wakeup so the agent never silently stalls on a finished background task.
@@ -43,4 +49,4 @@ Orphans rehydrate as `running` rather than synthetically `stopped`, and a period
 cd pi-extensions/pi-background-tasks && bun test
 ```
 
-Coverage: lifecycle (normal/abnormal exit, partial output), wake-events (metadata, voided, dedupe, transition, first-match-only), orphan watcher (alive PID, mid-poll PID-reuse, comm drift, pre-1.2.2 fallback), persistence round-trip.
+Coverage: lifecycle (normal/abnormal exit, partial output), wake-events (metadata, voided, dedupe, transition, first-match-only), activity broker mapping, orphan watcher (alive PID, mid-poll PID-reuse, comm drift, pre-1.2.2 fallback), persistence round-trip.

@@ -14,6 +14,32 @@ Flightdeck core is the generic tmux-session manager. It owns `TrackedEntry` life
 
 Use the TrackedEntry seam everywhere new code reads tracked sessions. Core helpers (`readTrackedEntries`, `writeTrackedEntry`, `entryIdForIssue`, `issueIdForEntry`) live under `lib/flightdeck-core/src/state/`; `pane-registry list --format json` and `flightdeck-state tracked-entries` expose the same normalized view to scripts. `pi-flightdeck` consumes the same seam via read-only `TrackedSession` / `TrackedState` render types, reads `.entries`, and uses `owner.pane_id` for default owner-scoped rendering.
 
+## Activity stream architecture
+
+TypeScript activity code lives under `lib/flightdeck-core/src/activity/`: `types.ts` defines `FlightdeckActivityEventV1`, refs, severity, and importance; `paths.ts` resolves live/archive sidecar paths; `append.ts` locks, dedupes, truncates, and rotates the JSONL; `read.ts` tails and filters; `format.ts` renders text/Markdown/JSONL; `emit.ts` is the generic best-effort appender; `workflow-emit.ts` owns issue-workflow/github/linear helpers. Event ids are deterministic from `session_id`, `entry_id`, `type`, and the natural key (`natural_key`, `details.dedup_key`, selected refs, or timestamp). Duplicate ids are skipped in memory and under the activity file lock.
+
+The activity sidecar is `flightdeck-activity-<session>.jsonl` next to the master state. Archive uses the state lock and activity lock together, writes `<activity>.archived` as the append-side sentinel, then moves the live JSONL to `*-<terminated_at>.jsonl.archive`. Appenders check the sentinel before touching the live file, so a late activity write cannot recreate an archived sidecar. Live retention is capped at 5,000 events and 10 MiB; oversized details are collapsed to `{original_bytes,truncated}`.
+
+Daemon/subscriber emission map: daemon start/stop, subscriber start/death/reattach, max-lifetime handoff, and wake-delivery failures emit daemon rows. `pi-bg-task-exit` remains a wake signal and then emits bg-task activity; non-exit bg-task output, successful subagent completions, question open rows, and `pi-activity-broker` rows are activity-only and do not wake master. Failed/blocked subagent completions and terminal bg-task exits still wake through the canonical wake path first.
+
+Pi broker contract: `pi-session-bridge` installs `globalThis[Symbol.for("vstack.pi.activity")]` with `publish(event)`, `subscribe(listener)`, and `recent(limit)`. Producers publish best-effort, the broker holds a 100-event newest-first ring for in-process consumers, and `pi-bridge stream` forwards live publications as `event:"vstack_activity"` bridge rows. Flightdeck's Pi subscriber consumes those rows unless `FLIGHTDECK_PI_ACTIVITY_BROKER=0`.
+
+Dashboard activity: the Rust dashboard reads structured JSONL through `JsonlActivitySource`, not the legacy daemon/wake sources. It validates `schema_version: 1`, skips malformed lines with diagnostics, tracks device/inode for same-path rotation, falls back to newest archive filename when the live file is gone, and file-watches the activity sidecar for debounced reloads.
+
+Workflow emitter table:
+
+| Seam | Event types |
+| --- | --- |
+| `flightdeck-state init/archive` | `session.started`, `session.completed` |
+| `pane-registry log-decision` | `decision.recorded` |
+| `flightdeck-state set .merge_queue/.conflict_graph` | `daemon.warning` for merge-plan updates, warning when conflicts exist |
+| `pane-registry set-state merge-ready/merged/aborted` | `pr.merge_queued`, `pr.merged`, `pr.merge_blocked` |
+| `pane-registry teardown-entry` | `entry.completed`, `entry.cancelled`, `entry.dead` |
+| `github.sh` wrappers | `pr.comments_left`, `pr.merged`, `pr.merge_queued`, `pr.merge_blocked`, `pr.checks_passed`, `pr.checks_failed` |
+| `linear.sh` wrappers | `linear.issue_created`, `linear.issue_updated`, `linear.issue_finished`, `linear.issue_cancelled`, `linear.relation_created` |
+
+`workflow-emit.ts` resolves `FLIGHTDECK_ACTIVITY_FILE` first. Without it, it emits only when `FLIGHTDECK_MANAGED=1` and a state or explicit activity path resolves. Appends use `nonblocking: true`; failures warn once per `(file,type,reason)` and never fail the workflow mutation.
+
 ## `flightdeck-session` flag reference
 
 The README points users at natural-language invocation; this is the underlying script's actual surface for contributors and AI callers. All `start` invocations use `tmux new-window` (never split panes), set `FLIGHTDECK_MANAGED=1` + `FLIGHTDECK_CHILD_PANE=1` in the launched environment, capture stable `pane_id`/`window_id`, and register through `pane-registry init-entry`.

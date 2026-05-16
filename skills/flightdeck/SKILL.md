@@ -176,7 +176,9 @@ Functional + integration tests live under `lib/flightdeck-core/tests/`.
 
 The daemon (`lib/flightdeck-core/src/daemon/loop.ts`) treats the tag as canonical, appends to the per-session events file via `appendEvent`, extends `WAKE_PENDING.in_flight`, and wakes master before emitting structured activity. Non-exit bg-task subscriber signals (for example `details.eventType: "output"`) append activity-only `pi-bg-task-activity` rows with `activity_event_type` and `sequence`; the daemon records them as `bg_task.output_matched` activity without waking master. Master routes terminal rows through `workflows/session-watch.md` § 2 → `workflows/session-handle-prompt.md` § 7; issue mode may then resume `workflows/handle-prompt.md` § 4 for PR/CI/bot-review recovery. The classifier never sees these messages — they are system-role customType messages, not assistant text — so `prompt-classify` has no matching tag and only the daemon path produces them.
 
-`pi-activity-broker`: when `pi-session-bridge` streams `{type:"event", event:"vstack_activity", data:{...}}`, the Pi subscriber appends an activity-only `pi-activity-broker` row to `WAKE_EVENTS_LOG`. The TS daemon copies the subset payload into `flightdeck-activity-<session>.jsonl` with the tracked pane id and never wakes master. Set `FLIGHTDECK_PI_ACTIVITY_BROKER=0` to disable this broker drain and rely on legacy custom-message wake paths only.
+`pi-activity-broker`: Pi extensions publish through `globalThis[Symbol.for("vstack.pi.activity")]`; `pi-session-bridge` streams each publication as `{type:"event", event:"vstack_activity", data:{...}}`. The Pi subscriber appends an activity-only `pi-activity-broker` row to `WAKE_EVENTS_LOG`. The TS daemon copies the subset payload into `flightdeck-activity-<session>.jsonl` with the tracked pane id and never wakes master. Set `FLIGHTDECK_PI_ACTIVITY_BROKER=0` to disable this broker drain and rely on legacy custom-message wake paths only.
+
+Activity sidecar: `flightdeck-state init` records `activity_path` beside the master state as `flightdeck-activity-<TMUX_SESSION>.jsonl`. `flightdeck-state activity path|append|tail|export` exposes the path, appends a normalized event, tails recent rows, or exports JSONL/Markdown. Retention caps are 5,000 events and 10 MiB per live sidecar; oversized `details` are truncated to a 16 KiB budget. Daemon emission is curated: daemon/subscriber lifecycle, wake-delivery failures, subagent completions, bg-task exit/output rows, questions, and Pi broker rows. Workflow/github/linear helper emission is gated by `FLIGHTDECK_MANAGED=1 || FLIGHTDECK_ACTIVITY_FILE` so standalone wrapper use stays silent.
 
 `daemon-exited`: the daemon emits this lifecycle row during cleanup when it exits for `master-gone`, `signal-term`, `signal-int`, or another recorded reason. It writes directly to the per-session `EVENTS_FILE` under `SESSION_LOCK` (not `WAKE_EVENTS_LOG`), with `pane_id` set to the master pane id so pane-keyed drains include it:
 
@@ -267,11 +269,13 @@ Master-loop env vars consulted by workflows:
 |----------|---------|---------|
 | `FLIGHTDECK_FORCE_MERGE_AFTER_SECS` | `240` | UNKNOWN-state wait threshold before considering force-merge (predicate also requires APPROVED + green + disjoint) |
 | `FLIGHTDECK_STATE_DIR` | `tmp` | Project-relative master-state file directory |
+| `FLIGHTDECK_ACTIVITY_FILE` | unset | Explicit activity JSONL target for wrapper/workflow emitters and `flightdeck-state activity append`; when unset, managed workflows use `activity_path` from master state. |
 | `FLIGHTDECK_DEBOUNCE_CYCLES` | `2` | Consecutive poll cycles required for "all-done" termination check |
 | `FLIGHTDECK_AUTO_MERGE` | `1` | When `0`, the `merge-now` handler escalates instead of auto-answering. For sessions where the human gate is desired (compliance, big-blast-radius PRs) |
 | `FLIGHTDECK_HIJACK_GRACE_SECS` | `90` | Seconds after spawn that master tolerates no orchestration `workflow-state-<ISSUE>.json` before escalating "orchestration-never-started". Catches hijacked panes / failed launches. |
 | `FLIGHTDECK_LAUNCH_MODEL` | unset | Default `open-terminal --model` override when the workflow/user does not pass `--model`. |
 | `FLIGHTDECK_LAUNCH_EFFORT` | unset | Default `open-terminal --effort` / thinking override when the workflow/user does not pass `--effort`. |
+| `FLIGHTDECK_PI_ACTIVITY_BROKER` | `1` | Set to `0` to ignore `pi-session-bridge` `vstack_activity` broker rows and rely on legacy Pi wake messages only. |
 
 Rust dashboard env vars:
 
