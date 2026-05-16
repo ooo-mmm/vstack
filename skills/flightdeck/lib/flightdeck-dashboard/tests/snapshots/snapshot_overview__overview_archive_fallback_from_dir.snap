@@ -3,7 +3,7 @@ source: tests/snapshot_overview.rs
 expression: "common::render_model(&model)"
 ---
 "┌ Flightdeck ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐"
-"│ Flightdeck   session demo-terminated  ·  Master codex at /repo/demo  ·  daemon: file-mode  ·  uptime 4h10m  ·  Adhoc 1 · Issue 0 · Workflow 0  ✔ session complete  $0.00/0T                   moon ▾ │"
+"│ Flightdeck   session demo-terminated  ·  Master codex at /repo/demo  ·  daemon: file-mode  ·  uptime 4h10m  ·  Adhoc 1 · Issue 0 · Workflow 0  ✔ session complete  $0.00 · 0t                 moon ▾ │"
 "└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘"
 "┌ tabs ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐"
 "│ Overview │ Activity │ Conversations │ Decisions │ Costs │ Daemon                                                                                                                                     │"

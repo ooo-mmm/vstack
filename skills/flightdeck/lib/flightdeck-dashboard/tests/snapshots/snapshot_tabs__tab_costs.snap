@@ -3,7 +3,7 @@ source: tests/snapshot_tabs.rs
 expression: rendered
 ---
 "┌ Flightdeck ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐"
-"│ Flightdeck   session demo-mixed  ·  Master pi at /repo/demo  ·  daemon: file-mode  ·  uptime 2h25m  ·  Adhoc 1 · Issue 1 · Workflow 1  ·  4m old  $0.12/23T  1 cost source unhealthy          moon ▾ │"
+"│ Flightdeck   session demo-mixed  ·  Master pi at /repo/demo  ·  daemon: file-mode  ·  uptime 2h25m  ·  Adhoc 1 · Issue 1 · Workflow 1  ·  4m old  $0.12 · 23t  1 cost source unhealthy        moon ▾ │"
 "└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘"
 "┌ tabs ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐"
 "│ Overview │ Activity │ Conversations │ Merges │ Decisions │ Costs │ Daemon                                                                                                                            │"
@@ -16,7 +16,7 @@ expression: rendered
 "│opencode    1 session    $0.12 · 23 turns · in 845.2K / out 78.5K                                                                                                                                     │"
 "│                                                                                                                                                                                                      │"
 "│By session                                                                                                                                                                                            │"
-"│VST-101        opencode   $0.12 · 23T  in 845.2K / out 78.5K                                                                                                                                          │"
+"│VST-101        opencode   $0.12 · 23t  in 845.2K / out 78.5K                                                                                                                                          │"
 "│dashboard-rust codex      —            error: codex usage not yet supported                                                                                                                           │"
 "│adhoc-logs     pi         —            no cost source                                                                                                                                                 │"
 "│                                                                                                                                                                                                      │"

@@ -117,7 +117,7 @@ fn render_status(
     let kind_counts = kind_counts_label(model);
     let staleness = staleness_label(snapshot.staleness(model.now));
     let compact_cost_chip = format!(
-        "{}/{}T",
+        "{} · {}t",
         format_cost(model.cost_totals.grand.cost_usd),
         model.cost_totals.grand.turns
     );

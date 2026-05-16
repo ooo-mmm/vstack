@@ -129,7 +129,7 @@ pub fn format_compact(metrics: &CostMetrics) -> String {
     if metrics.source_error.is_some() || !metrics.has_usage() {
         return String::from("—");
     }
-    format!("{} · {}T", format_cost(metrics.cost_usd), metrics.turns)
+    format!("{} · {}t", format_cost(metrics.cost_usd), metrics.turns)
 }
 
 #[must_use]
