@@ -144,6 +144,43 @@ fi
 empty=$(pr_checks_state_path "" 2>/dev/null || true)
 assert_eq "state path empty when pr_number missing" "" "$empty"
 
+# Round-2 fix (reviewer-error major): two concurrent pr-view-equivalent
+# processes racing the read-compare-write must produce exactly one
+# transition record, not two duplicates. Simulate the race by having
+# two background subshells contend for the same lock file and observe
+# the lock+record sequence.
+RACE_STATE_FILE="$STATE_DIR/flightdeck-pr-checks-race.json"
+RACE_LOCK_FILE="$STATE_DIR/flightdeck-pr-checks-race.lock"
+RACE_OUTCOMES="$SANDBOX/race-outcomes"
+: > "$RACE_OUTCOMES"
+# Seed prior state as 'passed' so a 'failed' transition is the only
+# valid first-writer record.
+pr_checks_record_outcome "$RACE_STATE_FILE" "passed" "42"
+
+race_worker() {
+    local target="$1"
+    (
+        exec 9>"$RACE_LOCK_FILE"
+        flock -w 5 9 || exit 0
+        local prev
+        prev=$(pr_checks_last_outcome "$RACE_STATE_FILE")
+        if [ "$prev" = "$target" ]; then
+            exit 0
+        fi
+        # Simulate slow emit window where a peer could have raced.
+        sleep 0.05
+        pr_checks_record_outcome "$RACE_STATE_FILE" "$target" "42"
+        printf 'emit %s\n' "$target" >> "$RACE_OUTCOMES"
+    )
+}
+
+race_worker "failed" &
+race_worker "failed" &
+wait
+race_emits=$(grep -c '^emit ' "$RACE_OUTCOMES" 2>/dev/null || echo 0)
+assert_eq "flock collapses two racing transitions into one emit" "1" "$race_emits"
+assert_eq "final lastOutcome reflects the winning transition" "failed" "$(pr_checks_last_outcome "$RACE_STATE_FILE")"
+
 echo
 echo "PASS=$PASS FAIL=$FAIL"
 if [ "$FAIL" -ne 0 ]; then

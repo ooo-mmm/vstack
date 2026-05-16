@@ -172,18 +172,14 @@ emit_checks_activity() {
     # <state-dir>/flightdeck-pr-checks-<pr>.json records the last outcome
     # so duplicates collapse. State is bounded by FLIGHTDECK_PR_CHECKS_LRU
     # (default 50, oldest-mtime first).
-    if [ -n "$pr_number" ]; then
-        local state_file last_outcome
-        state_file=$(pr_checks_state_path "$pr_number")
-        if [ -n "$state_file" ]; then
-            last_outcome=$(pr_checks_last_outcome "$state_file")
-            if [ "$last_outcome" = "$outcome" ]; then
-                return 0
-            fi
-            pr_checks_record_outcome "$state_file" "$outcome" "$pr_number"
-        fi
-    fi
-
+    #
+    # Round-2 fix (reviewer-arch + reviewer-error major): the
+    # read-compare-write region is serialized via flock against a
+    # sibling .lock file so two concurrent pr-view calls on the same PR
+    # do not both observe the pre-transition state and both emit. The
+    # whole emit + record sequence runs under the lock; the activity-
+    # emit call stays inside so a slow emitter does not let a peer race
+    # past the dedup check.
     local type severity summary
     if [ "$outcome" = "passed" ]; then
         type="pr.checks_passed"
@@ -195,6 +191,35 @@ emit_checks_activity() {
         summary="PR checks failed"
     fi
     [ -n "$pr_number" ] && summary="$summary for #$pr_number"
+
+    if [ -n "$pr_number" ]; then
+        local state_file lock_file last_outcome
+        state_file=$(pr_checks_state_path "$pr_number")
+        if [ -n "$state_file" ]; then
+            lock_file="${state_file%.json}.lock"
+            mkdir -p "$(dirname "$lock_file")" 2>/dev/null || true
+            (
+                exec 9>"$lock_file"
+                if ! flock -w 5 9 2>/dev/null; then
+                    # Lock contention beyond 5s -> let the peer emit;
+                    # we drop this one to avoid double-firing.
+                    exit 0
+                fi
+                last_outcome=$(pr_checks_last_outcome "$state_file")
+                if [ "$last_outcome" = "$outcome" ]; then
+                    exit 0
+                fi
+                pr_checks_record_outcome "$state_file" "$outcome" "$pr_number"
+                bash "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../_activity-emit.sh" "$type" \
+                    --severity "$severity" \
+                    --importance normal \
+                    --summary "$summary" \
+                    --pr-number "$pr_number" || true
+            )
+            return 0
+        fi
+    fi
+
     bash "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../_activity-emit.sh" "$type" \
         --severity "$severity" \
         --importance normal \

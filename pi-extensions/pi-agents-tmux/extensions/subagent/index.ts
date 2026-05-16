@@ -104,6 +104,10 @@ import {
 	stallWatchdogIntervalMsFromEnv,
 	stallWatchdogThresholdMsFromEnv,
 } from "./idle-stall-watchdog.js";
+import {
+	probePaneIdle,
+	BRIDGE_IDLE_PROBE_DEFAULT_TIMEOUT_MS,
+} from "./idle-stall-probe.js";
 import { registerPaneSupportTools } from "./pane-support-tools.js";
 import { MINI_DASHBOARD_RANK, setMiniDashboardWidget } from "./stacked-widget.js";
 import {
@@ -424,16 +428,30 @@ export default function (pi: ExtensionAPI) {
 		outboxPathFor: (record) =>
 			record.outboxFile ??
 			completionPath(currentRuntimeRoot ?? "", record.agent, record.taskId),
-		isPaneIdle: async () => {
-			// In the parent session we don't have a per-pane idle probe handy;
-			// defer to the outbox-existence + staleness checks as the
-			// principal signal. A child Pi process that's still actively
-			// writing tool calls will keep updating its task record so
-			// lastActivityAt advances and the staleness gate refuses. Returning
-			// true here is conservative: it lets the watchdog fire on truly
-			// stale records but still falls through to the outbox-present /
-			// not-stale guards above.
-			return true;
+		isPaneIdle: async (record) => {
+			// Round-2 fix (reviewer-arch + reviewer-error major): probe the
+			// child Pi's bridge state directly via pi-bridge state and treat
+			// the response's data.isIdle === true as the authoritative
+			// signal. Any error / timeout / missing-metadata defaults to
+			// FALSE so the watchdog skips rather than false-fires against a
+			// long-running tool call that simply hasn't poked the registry.
+			if (!currentRuntimeRoot) return false;
+			const registry = await readPaneRegistry(currentRuntimeRoot);
+			const probe = await probePaneIdle(record, {
+				resolveBridgeBin: resolvePiBridgeBin,
+				execCapture: async (command, args, options) => {
+					const timeoutMs = options?.timeoutMs ?? BRIDGE_IDLE_PROBE_DEFAULT_TIMEOUT_MS;
+					return Promise.race([
+						execCapture(command, args, options),
+						new Promise<{ code: number; stdout: string; stderr: string }>((_, reject) =>
+							setTimeout(() => reject(new Error(`pi-bridge state timed out after ${timeoutMs}ms`)), timeoutMs),
+						),
+					]);
+				},
+				readPaneRegistryEntry: async (agent) => registry[agent],
+				logWarn: (msg) => console.warn(msg),
+			});
+			return probe.idle;
 		},
 		lastActivityAt: (record) => {
 			const raw = record.updatedAt ?? record.completedAt ?? record.createdAt;
