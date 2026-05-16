@@ -309,6 +309,62 @@ sleep 30
 			await sleep(50);
 		}
 	});
+
+	test("vstack_activity append failure logs error and stream loop continues", async () => {
+		const stateDir = mkdtempSync(join(tmpdir(), "fd-pi-activity-err-"));
+		stateDirs.push(stateDir);
+		const badWakeLog = join(stateDir, "wake-events-dir");
+		mkdirSync(badWakeLog, { recursive: true });
+		const subLog = join(stateDir, "daemon.log.pi-sub-21");
+		const bridgeDir = join(stateDir, "bin");
+		mkdirSync(bridgeDir, { recursive: true });
+		const bridgeBin = join(bridgeDir, "pi-bridge");
+		const bridgeScript = `#!/usr/bin/env bash
+if [[ "\${1:-}" != "stream" ]]; then exit 0; fi
+cat <<'JSON'
+{"type":"event","event":"vstack_activity","data":{"type":"agent.task_started","source":"pi-agents","severity":"info","importance":"normal","summary":"agent task started","refs":{"task_id":"task-err"}}}
+{"type":"event","event":"vstack_activity","data":{"type":"agent.task_completed","source":"pi-agents","severity":"success","importance":"normal","summary":"agent task completed","refs":{"task_id":"task-err"}}}
+JSON
+sleep 30
+`;
+		writeFileSync(bridgeBin, bridgeScript);
+		chmodSync(bridgeBin, 0o755);
+
+		const fakeParent = spawn("sleep", ["30"], { stdio: "ignore" });
+		const parentPid = fakeParent.pid!;
+		try {
+			const env = subscriberEnv(bridgeDir, stateDir, { WAKE_EVENTS_LOG: badWakeLog });
+			const sub = spawn("bash", [SUBSCRIBERS_BASH, "pi", "%21", "1184234", "", String(parentPid)], {
+				env,
+				stdio: "ignore",
+				detached: true,
+			});
+			const subPid = sub.pid!;
+			const deadline = Date.now() + 3000;
+			let logBody = "";
+			while (Date.now() < deadline) {
+				if (existsSync(subLog)) {
+					logBody = readFileSync(subLog, "utf8");
+					const errors = logBody.match(/\[pi-activity-broker-emit-error\]/g) ?? [];
+					if (errors.length >= 2) break;
+				}
+				await sleep(50);
+			}
+
+			try { process.kill(-subPid, "SIGTERM"); } catch { /* */ }
+			try { process.kill(subPid, "SIGTERM"); } catch { /* */ }
+
+			const errors = logBody.match(/\[pi-activity-broker-emit-error\]/g) ?? [];
+			expect(errors).toHaveLength(2);
+			expect(logBody).toContain("type=agent.task_started");
+			expect(logBody).toContain("type=agent.task_completed");
+			expect(logBody).toContain("rc=");
+			expect(logBody).toContain("error=");
+		} finally {
+			try { fakeParent.kill("SIGKILL"); } catch { /* */ }
+			await sleep(50);
+		}
+	});
 });
 
 describe("Pi subscriber question drain on attach (#37 D)", () => {

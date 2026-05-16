@@ -245,7 +245,42 @@ describe("subscriber wake row activity mapping", () => {
 		const rows = activityRows();
 		expect(rows[0]).toMatchObject({ harness: "pi", importance: "noisy", pane_id: "%26", severity: "info", source: "pi-bg-task", type: "bg_task.output_matched" });
 		expect(rows[0]?.refs).toMatchObject({ bg_task_id: "bg-7" });
-		expect(rows[0]?.details).toMatchObject({ broker_hash: "activityhash", event_type: "vstack_activity", sequence: 7 });
+		expect(rows[0]?.details).toMatchObject({ broker_hash: "activityhash", dedup_key: "%26:bg_task.output_matched:bg-7:7", event_type: "vstack_activity", sequence: 7 });
+	});
+
+	test("Pi broker bg-task event dedupes against legacy custom-message activity", () => {
+		const task = { command: "echo done", exitCode: 0, id: "bg-same", outputBytes: 10, status: "completed" };
+		emitActivityForWakeRow(ctx(), {
+			activity: {
+				details: { sequence: 42, status: "completed" },
+				importance: "normal",
+				refs: { bg_task_id: "bg-same" },
+				severity: "success",
+				source: "pi-bg-task",
+				summary: "background task bg-same completed",
+				ts: "2026-05-16T00:00:00.000Z",
+				type: "bg_task.completed",
+			},
+			classifier_tag: "pi-activity-broker",
+			event_type: "vstack_activity",
+			harness: "pi",
+			hash: "broker-same",
+			pane_id: "%27",
+		});
+		emitActivityForWakeRow(ctx(), {
+			classifier_tag: "pi-bg-task-exit",
+			event_type: "bg-task-exit",
+			harness: "pi",
+			hash: "legacy-same",
+			pane_id: "%27",
+			sequence: 42,
+			task,
+		});
+
+		const rows = activityRows();
+		expect(rows).toHaveLength(1);
+		expect(rows[0]).toMatchObject({ pane_id: "%27", source: "pi-bg-task", type: "bg_task.completed" });
+		expect(rows[0]?.details).toMatchObject({ dedup_key: "%27:bg_task.completed:bg-same:42" });
 	});
 });
 

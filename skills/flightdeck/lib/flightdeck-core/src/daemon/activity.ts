@@ -243,27 +243,51 @@ function brokerActivities(row: WakeEventRow): ActivityEventInput[] {
 	if (!type || !source || !summary) return [];
 	const paneId = str(row.pane_id);
 	const details = record(activity.details) ?? {};
-	const dedup = firstString(details.dedup_key, row.hash, activity.ts, row.ts) ?? `${paneId || "pane"}:${type}:${summary}`;
+	const refs = record(activity.refs) ?? {};
+	const dedupKey = brokerDedupKey({ activity, details, paneId, refs, row, summary, type });
 	return [{
 		body: str(activity.body),
 		details: {
 			...details,
 			broker_hash: str(row.hash) ?? null,
-			dedup_key: `${paneId || "pane"}:${type}:${dedup}`,
+			dedup_key: dedupKey,
 			event_type: "vstack_activity",
 		},
 		entry_id: str(row.entry_id) ?? str(activity.entry_id),
 		harness: str(row.harness) || "pi",
 		importance: str(activity.importance),
-		natural_key: `${paneId || "pane"}:${type}:${dedup}`,
+		natural_key: dedupKey,
 		pane_id: paneId,
-		refs: record(activity.refs) ?? undefined,
+		refs: Object.keys(refs).length > 0 ? refs : undefined,
 		severity: str(activity.severity),
 		source,
 		summary,
 		ts: str(activity.ts) ?? str(row.ts),
 		type,
 	}];
+}
+
+function brokerDedupKey(args: {
+	activity: Record<string, unknown>;
+	details: Record<string, unknown>;
+	paneId?: string;
+	refs: Record<string, unknown>;
+	row: WakeEventRow;
+	summary: string;
+	type: string;
+}): string {
+	const paneKey = args.paneId || "pane";
+	const bgTaskId = firstString(args.refs.bg_task_id);
+	if (bgTaskId) {
+		const sequence = firstString(args.details.sequence, args.row.sequence) ?? "0";
+		return `${paneKey}:${args.type}:${bgTaskId}:${sequence}`;
+	}
+	const taskId = firstString(args.refs.task_id);
+	if (taskId) return `${paneKey}:${args.type}:${taskId}`;
+	const questionId = firstString(args.refs.question_id);
+	if (questionId) return `${paneKey}:${args.type}:${questionId}`;
+	const fallback = firstString(args.row.hash, args.activity.ts, args.row.ts) ?? args.summary;
+	return `${paneKey}:${args.type}:${fallback}`;
 }
 
 function bgTaskActivities(row: WakeEventRow): ActivityEventInput[] {

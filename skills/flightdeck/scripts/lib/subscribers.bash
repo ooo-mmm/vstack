@@ -324,10 +324,9 @@ pi_subscriber_loop() {
         [[ -z "$activity_type" || "$activity_type" == "null" ]] && continue
         activity_hash=$(printf '%s' "$activity_payload" | sha256sum | awk '{print substr($1,1,12)}')
         [[ "$activity_hash" == "$last_activity_hash" ]] && continue
-        printf '%s [pi-activity-broker] pane=%s type=%s hash=%s\n' \
-          "$(date -Iseconds)" "$pane_id" "$activity_type" "$activity_hash" \
-          >> "$sub_log" 2>/dev/null || true
-        ( exec 218>"$SESSION_LOCK"
+        local append_error append_rc error_tail
+        append_rc=0
+        append_error=$( ( exec 218>"$SESSION_LOCK"
           flock 218
           jq -nc --arg ts "$(date -Iseconds)" \
                  --arg pid "$pane_id" \
@@ -337,8 +336,18 @@ pi_subscriber_loop() {
                  --argjson activity "$activity_payload" \
                  '{ts:$ts, pane_id:$pid, harness:$harness, event_type:"vstack_activity", activity:$activity, classifier_tag:$tag, hash:$h}' \
                  >> "$WAKE_EVENTS_LOG"
-        )
-        last_activity_hash="$activity_hash"
+        ) 2>&1 ) || append_rc=$?
+        if [[ "$append_rc" -eq 0 ]]; then
+          printf '%s [pi-activity-broker-emit-ok] pane=%s type=%s hash=%s rc=0\n' \
+            "$(date -Iseconds)" "$pane_id" "$activity_type" "$activity_hash" \
+            >> "$sub_log" 2>/dev/null || true
+          last_activity_hash="$activity_hash"
+        else
+          error_tail=$(printf '%s' "$append_error" | tr '\n' ' ' | tail -c 400)
+          printf '%s [pi-activity-broker-emit-error] pane=%s type=%s hash=%s rc=%s error=%s\n' \
+            "$(date -Iseconds)" "$pane_id" "$activity_type" "$activity_hash" "$append_rc" "$error_tail" \
+            >> "$sub_log" 2>/dev/null || true
+        fi
         continue
       fi
 
