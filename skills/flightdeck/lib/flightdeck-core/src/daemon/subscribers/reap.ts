@@ -1,0 +1,187 @@
+// Subscriber reap helper (vstack#58).
+//
+// When a tracked pane is destroyed (tmux kill-window, pane closed, or
+// the entry is removed from the registry by reconcile), the daemon must
+// stop the matching subscriber bash process and remove its pid/log
+// files. The naive `unlinkSync(pidFile)` from the original reconcile
+// reaper leaves the bash process running.
+//
+// Policy (from the brief, non-negotiable):
+//   1. SIGTERM the pid.
+//   2. Wait up to graceMs (default 5s) for clean exit.
+//   3. If still alive: SIGKILL.
+//   4. Remove the pid file (after the signal sequence resolves).
+//   5. Remove the matching log file if known.
+//
+// Failures (permission denied, missing pid file, malformed pid) warn-log
+// and continue — never throw. The reap is best-effort cleanup.
+
+import { existsSync, readFileSync, unlinkSync } from "node:fs";
+
+export const REAP_DEFAULT_GRACE_MS = 5_000;
+
+export type ReapOutcome =
+	| "no-pid"
+	| "already-gone"
+	| "term-ok"
+	| "kill-required"
+	| "signal-error"
+	| "kill-failed";
+
+export interface ReapSubscriberInput {
+	paneId: string;
+	reason: string;
+	pidFile: string;
+	logFile?: string;
+	pid?: number | null;
+	graceMs?: number;
+	harness?: string;
+}
+
+export interface ReapSubscriberResult {
+	paneId: string;
+	pid: number | null;
+	outcome: ReapOutcome;
+	pidFileRemoved: boolean;
+	logFileRemoved: boolean;
+	error?: string;
+}
+
+export interface ReapSubscriberDeps {
+	signal?: (pid: number, sig: NodeJS.Signals | 0) => void;
+	rm?: (path: string) => void;
+	scheduleAfter?: (ms: number, fn: () => void) => { cancel(): void };
+	log: (tag: string, msg: string) => void;
+	readPidFile?: (path: string) => number | null;
+}
+
+function defaultReadPidFile(path: string): number | null {
+	if (!path || !existsSync(path)) return null;
+	try {
+		const txt = readFileSync(path, "utf8").trim();
+		if (!/^[1-9][0-9]*$/.test(txt)) return null;
+		const pid = Number.parseInt(txt, 10);
+		return Number.isFinite(pid) && pid > 0 ? pid : null;
+	} catch { return null; }
+}
+
+function defaultSignal(pid: number, sig: NodeJS.Signals | 0): void {
+	process.kill(pid, sig);
+}
+
+function defaultRm(path: string): void {
+	unlinkSync(path);
+}
+
+function defaultScheduleAfter(ms: number, fn: () => void): { cancel(): void } {
+	const handle = setTimeout(fn, ms);
+	if (typeof (handle as any)?.unref === "function") (handle as any).unref();
+	return { cancel: () => clearTimeout(handle) };
+}
+
+function pidAlive(signal: (pid: number, sig: NodeJS.Signals | 0) => void, pid: number): boolean {
+	try { signal(pid, 0); return true; }
+	catch (e) {
+		const code = (e as NodeJS.ErrnoException).code;
+		return code === "EPERM";
+	}
+}
+
+function tryRemove(rm: (path: string) => void, path: string | undefined, log: (tag: string, msg: string) => void, label: string): boolean {
+	if (!path) return false;
+	try {
+		rm(path);
+		return true;
+	} catch (e) {
+		const code = (e as NodeJS.ErrnoException).code;
+		if (code !== "ENOENT") log("reap-warn", `${label}=${path} remove failed: ${(e as Error).message}`);
+		return false;
+	}
+}
+
+/**
+ * Reap a subscriber bash process. Returns immediately after the SIGTERM
+ * is sent or the no-process path resolves; the grace SIGKILL is fired
+ * asynchronously via scheduleAfter so the run loop is not blocked.
+ *
+ * The returned object reflects the state at SIGTERM-time. Tests that
+ * need to verify the SIGKILL fallback should provide a deterministic
+ * scheduleAfter that runs the deferred function immediately.
+ */
+export function reapSubscriber(input: ReapSubscriberInput, deps: ReapSubscriberDeps): ReapSubscriberResult {
+	const signal = deps.signal ?? defaultSignal;
+	const rm = deps.rm ?? defaultRm;
+	const scheduleAfter = deps.scheduleAfter ?? defaultScheduleAfter;
+	const readPidFile = deps.readPidFile ?? defaultReadPidFile;
+	const graceMs = Math.max(0, input.graceMs ?? REAP_DEFAULT_GRACE_MS);
+	const harnessLabel = input.harness ? `${input.harness}-subscriber` : "subscriber";
+	const pid = input.pid ?? readPidFile(input.pidFile);
+	if (!pid) {
+		const pidFileRemoved = tryRemove(rm, input.pidFile, deps.log, "pid-file");
+		const logFileRemoved = tryRemove(rm, input.logFile, deps.log, "log-file");
+		return {
+			paneId: input.paneId,
+			pid: null,
+			outcome: "no-pid",
+			pidFileRemoved,
+			logFileRemoved,
+		};
+	}
+	if (!pidAlive(signal, pid)) {
+		const pidFileRemoved = tryRemove(rm, input.pidFile, deps.log, "pid-file");
+		const logFileRemoved = tryRemove(rm, input.logFile, deps.log, "log-file");
+		deps.log("reap", `${harnessLabel} pid=${pid} pane=${input.paneId} reason=${input.reason} outcome=already-gone`);
+		return {
+			paneId: input.paneId,
+			pid,
+			outcome: "already-gone",
+			pidFileRemoved,
+			logFileRemoved,
+		};
+	}
+	let outcome: ReapOutcome = "term-ok";
+	let signalError: string | undefined;
+	try {
+		signal(pid, "SIGTERM");
+	} catch (e) {
+		const code = (e as NodeJS.ErrnoException).code;
+		if (code !== "ESRCH") {
+			signalError = (e as Error).message;
+			deps.log("reap-warn", `${harnessLabel} pid=${pid} pane=${input.paneId} reason=${input.reason} SIGTERM failed: ${signalError}`);
+		}
+		outcome = "signal-error";
+	}
+	const result: ReapSubscriberResult = {
+		paneId: input.paneId,
+		pid,
+		outcome,
+		pidFileRemoved: false,
+		logFileRemoved: false,
+		error: signalError,
+	};
+	scheduleAfter(graceMs, () => {
+		try {
+			if (pidAlive(signal, pid)) {
+				try {
+					signal(pid, "SIGKILL");
+					deps.log("reap", `${harnessLabel} pid=${pid} pane=${input.paneId} reason=${input.reason} outcome=kill-required (SIGTERM grace expired)`);
+				} catch (e) {
+					const code = (e as NodeJS.ErrnoException).code;
+					if (code === "ESRCH") {
+						deps.log("reap", `${harnessLabel} pid=${pid} pane=${input.paneId} reason=${input.reason} outcome=term-ok-race`);
+					} else {
+						deps.log("reap-warn", `${harnessLabel} pid=${pid} pane=${input.paneId} reason=${input.reason} SIGKILL failed: ${(e as Error).message}`);
+					}
+				}
+			} else {
+				deps.log("reap", `${harnessLabel} pid=${pid} pane=${input.paneId} reason=${input.reason} outcome=term-ok`);
+			}
+		} finally {
+			const pidFileRemoved = tryRemove(rm, input.pidFile, deps.log, "pid-file");
+			const logFileRemoved = tryRemove(rm, input.logFile, deps.log, "log-file");
+			result.pidFileRemoved = pidFileRemoved;
+			result.logFileRemoved = logFileRemoved;
+		}
+	});
+	return result;
+}

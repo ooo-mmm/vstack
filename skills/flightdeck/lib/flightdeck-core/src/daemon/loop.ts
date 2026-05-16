@@ -59,6 +59,7 @@ import {
 	type ReconcileAdapterMeta,
 	type ReconcileEntry,
 } from "./reconcile.ts";
+import { reapSubscriber } from "./subscribers/reap.ts";
 import { OC_LAST_ASSISTANT_JQ } from "../paths/oc.ts";
 import { CC_LAST_ASSISTANT_JQ } from "../paths/cc.ts";
 import { PI_LAST_ASSISTANT_JQ } from "../paths/pi.ts";
@@ -362,7 +363,7 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 				return { spawned: false, reason: entry.harness ? "no-adapter-meta" : "missing-harness" };
 			},
 			reap: (paneId) => {
-				reapSubscriberForPane(paneId);
+				reapSubscriberForPane(paneId, "entry-removed");
 				const idx = innerIds.indexOf(paneId);
 				if (idx >= 0) innerIds.splice(idx, 1);
 				seenInner.delete(paneId);
@@ -374,13 +375,32 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 		return void result;
 	}
 
-	function reapSubscriberForPane(paneId: string): void {
+	function subscriberLogFor(harness: string, paneId: string): string {
+		const safe = paneId.replace(/^%/, "");
+		switch (harness) {
+			case "opencode": return `${logFile}.oc-sub-${safe}`;
+			case "claude":   return `${logFile}.cc-sub-${safe}`;
+			case "pi":       return `${logFile}.pi-sub-${safe}`;
+			case "codex":    return `${logFile}.cx-sub-${safe}`;
+			default: return "";
+		}
+	}
+
+	function reapSubscriberForPane(paneId: string, reason: string): void {
 		const h = paneHarness.get(paneId) ?? "";
 		const pidFile = subscriberPidFor(h, paneId);
-		const pid = subscriberPid.get(paneId);
-		if (pid !== undefined) {
-			try { process.kill(pid, 0); process.kill(pid, "SIGTERM"); } catch { /* */ }
-		}
+		const pid = subscriberPid.get(paneId) ?? null;
+		reapSubscriber(
+			{
+				paneId,
+				reason,
+				pidFile,
+				logFile: subscriberLogFor(h, paneId),
+				pid,
+				harness: h || undefined,
+			},
+			{ log },
+		);
 		ocSubscribed.delete(paneId);
 		subscriberPid.delete(paneId);
 		lastActivityFlag.delete(paneId);
@@ -389,7 +409,6 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 		notifiedHash.delete(paneId);
 		lastBellHash.delete(paneId);
 		firstSeen.delete(paneId);
-		if (pidFile) try { unlinkSync(pidFile); } catch { /* */ }
 	}
 
 	function subscriberPidFor(harness: string, paneId: string): string {
@@ -545,7 +564,17 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 		for (const innerId of innerIds) {
 			if (!paneCache.alive(innerId)) {
 				const lastGone = lastGoneLog.get(innerId) ?? 0;
-				if (now - lastGone > 30) {
+				if (lastGone === 0) {
+					// vstack#58: first pane-gone observation reaps the orphaned
+					// subscriber so its bash sleep loop and pid/log files don't
+					// accumulate across long sessions. Subsequent ticks keep the
+					// 30s log-only cadence.
+					log("pane-gone", `${innerId} no longer exists; reaping subscriber`);
+					if (ocSubscribed.has(innerId) || subscriberPid.has(innerId)) {
+						reapSubscriberForPane(innerId, "pane-gone");
+					}
+					lastGoneLog.set(innerId, now);
+				} else if (now - lastGone > 30) {
 					log("pane-gone", `${innerId} no longer exists; skipping`);
 					lastGoneLog.set(innerId, now);
 				}
