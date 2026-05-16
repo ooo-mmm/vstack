@@ -14,6 +14,7 @@ Delegate work to specialized agents from a running Pi session. Agents run either
 - Task detail shows Summary and Completion tabs; Summary contains task metadata, artifacts, and task text, while Completion contains result summary, files changed, and validation.
 - Dashboard widget shows live state, turns, tokens, and cost for every spawned agent.
 - Grouped completion notifications batch multiple agents finishing together.
+- When `pi-session-bridge` is loaded, spawn/queue/start/steer/completion lifecycle points publish structured `agent.*` activity broker events without adding chat messages.
 - `taskId` retrieval, mid-run steering, and pane stop without losing memory.
 - Stop kills the tmux process but preserves the session — next launch resumes it.
 - Bg agents get fresh sessions per call by default; opt into shared memory with an explicit `sessionKey`.

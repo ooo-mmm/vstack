@@ -12,3 +12,4 @@ Calling rules:
 - `allowCustom: true` only when the option list may not cover the user's answer.
 - Group related sub-questions as separate `questions[]` tabs in one call rather than chaining tool calls.
 - Do not add a final `Confirm`, `Submit`, `Review`, or `Done` tab; pi-questions adds its own submit tab when needed.
+- When `pi-session-bridge` is loaded, opened/answered/rejected lifecycle changes also emit structured `question.*` activity broker events for external observers; these do not appear as chat messages.

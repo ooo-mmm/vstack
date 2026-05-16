@@ -36,7 +36,7 @@ function tempGitRepo(): string {
 	execFileSync("git", ["init"], { cwd, stdio: "ignore" });
 	writeFileSync(join(cwd, "tracked.txt"), "initial\n", "utf8");
 	execFileSync("git", ["add", "tracked.txt"], { cwd, stdio: "ignore" });
-	execFileSync("git", ["-c", "user.name=Pi Test", "-c", "user.email=pi-test@example.invalid", "commit", "-m", "initial commit"], { cwd, stdio: "ignore" });
+	execFileSync("git", ["-c", "user.name=Pi Test", "-c", "user.email=pi-test@example.invalid", "commit", "--no-gpg-sign", "-m", "initial commit"], { cwd, stdio: "ignore" });
 	writeFileSync(join(cwd, "dirty.txt"), "dirty\n", "utf8");
 	return cwd;
 }

@@ -17,5 +17,6 @@ Calling rules:
 - Dashboard, chat, Monitor, and `get_subagent_result` use persisted task summaries. If a summary is unavailable, inspect the transcript path shown with the task id instead of treating the original request as the result.
 - If a bg subagent hits `context_length_exceeded`, the extension retries once in a fresh one-shot lane and returns both attempt summaries if the retry also fails.
 - If a bg subagent returns `needs_completion` with `reason: "compact-then-empty"`, inspect `cwdSnapshot.head`, `cwdSnapshot.dirty`, and `cwdSnapshot.lastCommit.subject` before deciding whether the subagent's work completed.
+- When `pi-session-bridge` is loaded, subagent lifecycle changes also publish structured `agent.*` activity broker events for external observers; these do not appear as chat messages.
 - Stopping kills the tmux process but preserves the session file; the next default `subagent` call resumes it. Pass `forceSpawn: true` only when the user wants a fresh session.
 - `confirmProjectAgents: true` gates project-defined agents behind explicit user approval.

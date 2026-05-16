@@ -21,6 +21,7 @@ import {
 	bashBackgroundAckText,
 	forcedBackgroundDecision,
 } from "./auto-background.js";
+import { publishBackgroundTaskActivity, publishBackgroundTaskStarted } from "./activity.js";
 import {
 	BG_COMMAND,
 	BG_INSTALL_SYMBOL,
@@ -335,6 +336,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 			rememberSnapshot,
 			sendMessage: (message, messageOptions) => pi.sendMessage(message as any, messageOptions as any),
 		}, eventType, task, options);
+		publishBackgroundTaskActivity(eventType, task, { ...options, sequence: options.sequence ?? task.wakeSequence ?? 0 });
 		rememberSnapshot(task);
 		persistSnapshots();
 		return sent;
@@ -608,6 +610,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		tasks.set(task.id, task);
 		rememberSnapshot(task);
 		persistSnapshots();
+		publishBackgroundTaskStarted(task);
 
 		const handleChunk = (chunk: Buffer) => {
 			const text = chunk.toString();

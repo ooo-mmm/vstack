@@ -19,7 +19,7 @@
     "appendSystem": "./instructions.md"
   },
   "scripts": {
-    "test": "bun test --preload ./tests/preload.ts ./tests",
+    "test": "bun test ./tests ./extensions/subagent/__tests__",
     "postinstall": "node scripts/append-system.mjs install",
     "preuninstall": "node scripts/append-system.mjs remove"
   },

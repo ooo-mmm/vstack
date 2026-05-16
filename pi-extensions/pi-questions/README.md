@@ -12,6 +12,7 @@ Structured inline questions for Pi. Multi-tab categories, free-form answers, and
 - Compact answered tool output lists every category answer and expands inline to show each question with the selected choice marked.
 - Wrapped option labels stay readable in narrow panes.
 - `pi-session-bridge` integration lets external clients list, answer, and reject pending questions.
+- When the bridge is loaded, question opened/answered/rejected lifecycle points publish structured `question.*` activity broker events without adding chat messages.
 - `pi-qol` notification hook fires before prompts open.
 
 ## Install

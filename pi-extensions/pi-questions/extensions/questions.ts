@@ -16,6 +16,8 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
+import { publishQuestionActivity } from "./activity.js";
+
 const INSTALL_SYMBOL = Symbol.for("vstack.pi-questions.installed");
 const CONFIG_ID = "@vanillagreen/pi-questions";
 const SERVICE_SYMBOL = Symbol.for("vstack.pi-questions.service");
@@ -683,6 +685,7 @@ class QuestionServiceImpl implements QuestionService {
 	}
 
 	private publish(event: QuestionEvent): void {
+		publishQuestionActivity(event);
 		for (const listener of this.listeners) {
 			try {
 				listener(event);

@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { publishSubagentActivity } from "./activity.js";
 import { atomicWriteFile, withCrossProcessFileLock } from "./file-lock.js";
 import { readLastAssistantTextFromTranscript, stringifyError } from "./format.js";
 import { safeFileName } from "./names.js";
@@ -416,6 +417,7 @@ export function latestTaskRecord(records: PaneTaskRegistry, agent?: string): Pan
 }
 
 export function tryEmitSubagentEvent(pi: ExtensionAPI, event: string, payload: Record<string, unknown>): { error?: string; ok: boolean } {
+	let errorText: string | undefined;
 	try {
 		const bus = (pi as unknown as { events?: { emit?: (name: string, payload: unknown) => void } }).events;
 		bus?.emit?.(event, {
@@ -423,10 +425,11 @@ export function tryEmitSubagentEvent(pi: ExtensionAPI, event: string, payload: R
 			...payload,
 			timestamp: new Date().toISOString(),
 		});
-		return { ok: true };
 	} catch (error) {
-		return { error: stringifyError(error), ok: false };
+		errorText = stringifyError(error);
 	}
+	publishSubagentActivity(event, payload);
+	return errorText ? { error: errorText, ok: false } : { ok: true };
 }
 
 export function emitSubagentEvent(pi: ExtensionAPI, event: string, payload: Record<string, unknown>): void {

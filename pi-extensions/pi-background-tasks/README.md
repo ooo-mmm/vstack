@@ -14,6 +14,7 @@ Run shell commands in the background without blocking the conversation.
 - Arm-next-bash shortcut runs the next bash command in the background.
 - Long-running monitors (`watch`, `tail -f`, `journalctl -f`, polling loops) are auto-backgrounded.
 - Wakeups when a task exits, with optional wakeups on matching output.
+- When `pi-session-bridge` is loaded, task start/output/terminal transitions also publish structured `bg_task.*` activity broker events without adding chat messages.
 - Inline mini-dashboard above the editor; full dashboard popup for browsing details.
 - Inline mini-dashboard participates in vstack's stable stack order: Flightdeck → Tasks → Agents → BG tasks.
 - Persistent log files keep full output even when tool output is truncated.
