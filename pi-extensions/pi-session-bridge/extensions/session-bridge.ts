@@ -19,6 +19,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 import { installPiActivityBridgePublisher } from "./activity-broker.js";
+import { resolveSessionId } from "./child-session-id.js";
 
 const PROTOCOL = "pi-session-bridge.v1";
 const INSTALL_SYMBOL = Symbol.for("vstack.pi-session-bridge.installed");
@@ -73,6 +74,10 @@ interface InstanceInfo {
 	startedAt: string;
 	updatedAt: string;
 	lastReason?: string;
+	/** vstack#60: parent session id when this bridge runs in a spawned subagent pane. */
+	parentSessionId?: string;
+	/** vstack#60: PI_BRIDGE_CHILD_ROLE env value when set (e.g. 'subagent'). */
+	childRole?: string;
 }
 
 interface QuestionService {
@@ -163,12 +168,17 @@ export default function sessionBridge(pi: ExtensionAPI) {
 	function getState(reason?: string): InstanceInfo {
 		const ctx = currentCtx;
 		const model = ctx?.model;
+		const defaultId = callOptional(ctx?.sessionManager, "getSessionId");
+		// vstack#60: subagent panes inherit the parent session id from
+		// pi-core; synthesize a unique id when launched with the env vars
+		// pi-agents-tmux sets on subagent spawn.
+		const resolvedSession = resolveSessionId({ defaultId, pid: process.pid });
 		return {
 			protocol: PROTOCOL,
 			pid: process.pid,
 			hostname: os.hostname(),
 			cwd: ctx?.cwd ?? process.cwd(),
-			sessionId: callOptional(ctx?.sessionManager, "getSessionId"),
+			sessionId: resolvedSession.sessionId,
 			sessionFile: callOptional(ctx?.sessionManager, "getSessionFile"),
 			sessionName: callOptional(ctx?.sessionManager, "getSessionName") ?? pi.getSessionName?.(),
 			model: model ? { provider: model.provider, id: model.id, name: model.name } : undefined,
@@ -180,6 +190,8 @@ export default function sessionBridge(pi: ExtensionAPI) {
 			startedAt,
 			updatedAt: new Date().toISOString(),
 			lastReason: reason,
+			parentSessionId: resolvedSession.parentSessionId,
+			childRole: resolvedSession.childRole,
 		};
 	}
 

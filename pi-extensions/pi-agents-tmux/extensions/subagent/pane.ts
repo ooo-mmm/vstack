@@ -379,6 +379,11 @@ cd ${shellQuote(cwd)}
 export PI_SUBAGENT_CHILD_AGENT=${shellQuote(agent.name)}
 ${agent.color ? `export PI_SUBAGENT_CHILD_COLOR=${shellQuote(agent.color)}` : "unset PI_SUBAGENT_CHILD_COLOR"}
 export PI_SUBAGENT_PARENT_SESSION_ID=${shellQuote(parentSessionId)}
+# vstack#60 workaround: pi-session-bridge reads these on startup and
+# synthesizes a unique <parent>:c<pid> session id so 'pi-bridge state
+# --session <id>' no longer matches the parent's bridge too.
+export PI_BRIDGE_PARENT_SESSION_ID=${shellQuote(parentSessionId)}
+export PI_BRIDGE_CHILD_ROLE=subagent
 # Inherit cached 1Password service-account token if available so the child
 # pi can read op:// refs without triggering the desktop CLI integration
 # prompt. No-op for users who don't use 1Password (file won't exist).
