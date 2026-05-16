@@ -12,12 +12,19 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { decidePiAdhocWake } from "../../src/daemon/pi-adhoc-wake.ts";
+import {
+	ADHOC_PI_IDLE_HASH_TAG,
+	decidePiAdhocWake,
+	piAdhocWakeHash,
+} from "../../src/daemon/pi-adhoc-wake.ts";
+import { createHash } from "node:crypto";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const BASH_SUBSCRIBERS = resolve(HERE, "../../../../scripts/lib/subscribers.bash");
 
 const FIXED_NOW = () => new Date("2026-05-15T12:00:00.000Z");
+
+const TEXT_HASH = "abcd1234ef56";
 
 describe("decidePiAdhocWake (vstack#61)", () => {
 	test("adhoc pi idle transition with no pending messages -> wake row terminal-state-reached", () => {
@@ -26,6 +33,7 @@ describe("decidePiAdhocWake (vstack#61)", () => {
 			entryKind: "adhoc",
 			entryHarness: "pi",
 			bridgeState: { isIdle: true, hasPendingMessages: false },
+			assistantTextHash: TEXT_HASH,
 			now: FIXED_NOW,
 		});
 		expect(outcome.emit).toBe(true);
@@ -44,6 +52,7 @@ describe("decidePiAdhocWake (vstack#61)", () => {
 			entryKind: "issue",
 			entryHarness: "pi",
 			bridgeState: { isIdle: true, hasPendingMessages: false },
+			assistantTextHash: TEXT_HASH,
 		});
 		expect(outcome.emit).toBe(false);
 	});
@@ -54,6 +63,7 @@ describe("decidePiAdhocWake (vstack#61)", () => {
 			entryKind: "adhoc",
 			entryHarness: "claude",
 			bridgeState: { isIdle: true, hasPendingMessages: false },
+			assistantTextHash: TEXT_HASH,
 		});
 		expect(outcome.emit).toBe(false);
 	});
@@ -64,6 +74,7 @@ describe("decidePiAdhocWake (vstack#61)", () => {
 			entryKind: "adhoc",
 			entryHarness: "pi",
 			bridgeState: { isIdle: true, hasPendingMessages: true },
+			assistantTextHash: TEXT_HASH,
 		});
 		expect(outcome.emit).toBe(false);
 	});
@@ -74,6 +85,7 @@ describe("decidePiAdhocWake (vstack#61)", () => {
 			entryKind: "adhoc",
 			entryHarness: "pi",
 			bridgeState: { isIdle: false, hasPendingMessages: false },
+			assistantTextHash: TEXT_HASH,
 		});
 		expect(outcome.emit).toBe(false);
 	});
@@ -84,6 +96,7 @@ describe("decidePiAdhocWake (vstack#61)", () => {
 			entryKind: "adhoc",
 			entryHarness: "pi",
 			bridgeState: { isIdle: true, hasPendingMessages: false },
+			assistantTextHash: TEXT_HASH,
 		});
 		expect(outcome.emit).toBe(false);
 		if (outcome.emit) throw new Error("expected emit=false");
@@ -91,15 +104,42 @@ describe("decidePiAdhocWake (vstack#61)", () => {
 	});
 
 	test("missing/empty bridge state -> no wake", () => {
-		expect(decidePiAdhocWake({ paneId: "%10", entryKind: "adhoc", entryHarness: "pi", bridgeState: null }).emit).toBe(false);
-		expect(decidePiAdhocWake({ paneId: "%10", entryKind: "adhoc", entryHarness: "pi", bridgeState: {} }).emit).toBe(false);
+		expect(decidePiAdhocWake({ paneId: "%10", entryKind: "adhoc", entryHarness: "pi", bridgeState: null, assistantTextHash: TEXT_HASH }).emit).toBe(false);
+		expect(decidePiAdhocWake({ paneId: "%10", entryKind: "adhoc", entryHarness: "pi", bridgeState: {}, assistantTextHash: TEXT_HASH }).emit).toBe(false);
 	});
 
-	test("wake row hash differs between two distinct pane ids", () => {
-		const a = decidePiAdhocWake({ paneId: "%10", entryKind: "adhoc", entryHarness: "pi", bridgeState: { isIdle: true, hasPendingMessages: false }, now: FIXED_NOW });
-		const b = decidePiAdhocWake({ paneId: "%20", entryKind: "adhoc", entryHarness: "pi", bridgeState: { isIdle: true, hasPendingMessages: false }, now: FIXED_NOW });
+	test("wake row hash differs between two distinct pane ids (same assistant text)", () => {
+		const a = decidePiAdhocWake({ paneId: "%10", entryKind: "adhoc", entryHarness: "pi", bridgeState: { isIdle: true, hasPendingMessages: false }, assistantTextHash: TEXT_HASH, now: FIXED_NOW });
+		const b = decidePiAdhocWake({ paneId: "%20", entryKind: "adhoc", entryHarness: "pi", bridgeState: { isIdle: true, hasPendingMessages: false }, assistantTextHash: TEXT_HASH, now: FIXED_NOW });
 		expect(a.emit && b.emit).toBe(true);
 		if (a.emit && b.emit) expect(a.row.hash).not.toBe(b.row.hash);
+	});
+
+	test("wake row hash differs between two distinct assistant text hashes (same pane)", () => {
+		const a = decidePiAdhocWake({ paneId: "%10", entryKind: "adhoc", entryHarness: "pi", bridgeState: { isIdle: true, hasPendingMessages: false }, assistantTextHash: "hash-A", now: FIXED_NOW });
+		const b = decidePiAdhocWake({ paneId: "%10", entryKind: "adhoc", entryHarness: "pi", bridgeState: { isIdle: true, hasPendingMessages: false }, assistantTextHash: "hash-B", now: FIXED_NOW });
+		expect(a.emit && b.emit).toBe(true);
+		if (a.emit && b.emit) expect(a.row.hash).not.toBe(b.row.hash);
+	});
+
+	test("wake row hash is stable across now() variations (parity with bash: ts not in hash)", () => {
+		const a = decidePiAdhocWake({ paneId: "%10", entryKind: "adhoc", entryHarness: "pi", bridgeState: { isIdle: true, hasPendingMessages: false }, assistantTextHash: TEXT_HASH, now: () => new Date("2026-05-15T12:00:00.000Z") });
+		const b = decidePiAdhocWake({ paneId: "%10", entryKind: "adhoc", entryHarness: "pi", bridgeState: { isIdle: true, hasPendingMessages: false }, assistantTextHash: TEXT_HASH, now: () => new Date("2027-01-01T00:00:00.000Z") });
+		expect(a.emit && b.emit).toBe(true);
+		if (a.emit && b.emit) expect(a.row.hash).toBe(b.row.hash);
+	});
+});
+
+describe("piAdhocWakeHash bash parity (vstack#61 B5)", () => {
+	test("TS computes the same hash bash would produce: sha256(<pane>|adhoc-pi-idle|<text-hash>) prefix 12", () => {
+		const paneId = "%42";
+		const textHash = "deadbeefcafe";
+		const manual = createHash("sha256").update(`${paneId}|${ADHOC_PI_IDLE_HASH_TAG}|${textHash}`).digest("hex").slice(0, 12);
+		expect(piAdhocWakeHash(paneId, textHash)).toBe(manual);
+	});
+
+	test("ADHOC_PI_IDLE_HASH_TAG matches the literal in subscribers.bash", () => {
+		expect(ADHOC_PI_IDLE_HASH_TAG).toBe("adhoc-pi-idle");
 	});
 });
 

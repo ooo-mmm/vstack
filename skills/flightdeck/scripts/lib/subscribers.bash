@@ -285,6 +285,19 @@ pi_subscriber_loop() {
   # the jq filter lets the while loop fire one re-drain on the very
   # first emitted message. seen_qids is shared into the pipe
   # subshell, so prior drain ids dedupe automatically.
+  # vstack#67 workaround: edit-loop detector state. Mirrors the canonical
+  # decision in src/daemon/edit-loop-detector.ts evaluateEditLoop(); the TS
+  # function is the source of truth and tests (edit-loop-detector.test.ts +
+  # edit-loop-wiring.test.ts) assert this bash stays in lock step.
+  local edit_loop_enabled="${VSTACK_EDIT_LOOP_DETECTOR:-1}"
+  case "$edit_loop_enabled" in 0|false|FALSE|off|OFF) edit_loop_enabled=0 ;; *) edit_loop_enabled=1 ;; esac
+  local edit_loop_threshold="${VSTACK_EDIT_LOOP_THRESHOLD_N:-5}"
+  local edit_loop_window="${VSTACK_EDIT_LOOP_WINDOW_SEC:-120}"
+  [[ "$edit_loop_threshold" =~ ^[1-9][0-9]*$ ]] || edit_loop_threshold=5
+  [[ "$edit_loop_window" =~ ^[1-9][0-9]*$ ]] || edit_loop_window=120
+  local edit_loop_fired=0
+  local -a edit_loop_ts=()
+
   "$pi_bin" stream "${pi_target_args[@]}" 2>/dev/null \
     | jq --unbuffered -c 'select(
         (.type == "bridge_hello")
@@ -296,6 +309,8 @@ pi_subscriber_loop() {
         (.type == "event" and .event == "message_end" and ((.data.message.customType // "") == "subagent-completion"))
         or
         (.type == "event" and .event == "message_end" and ((.data.message.customType // "") == "vstack-background-tasks:event"))
+        or
+        (.type == "event" and .event == "tool_execution_end" and ((.data.toolName // "") == "edit") and (.data.isError == true))
         or
         (.type == "event" and .data.message.role == "assistant" and (.data.message.stopReason // "") != "")
       )' \
@@ -315,6 +330,62 @@ pi_subscriber_loop() {
 
       local event_name
       event_name=$(jq -r '.event // ""' <<< "$line" 2>/dev/null)
+
+      # vstack#67 workaround: tool_execution_end with toolName=edit + error.
+      # Inline threshold-window check mirrors evaluateEditLoop() in
+      # src/daemon/edit-loop-detector.ts. On fire, emits a wake-event row
+      # with classifier_tag=pi-edit-tool-loop so the daemon wakes master.
+      if [[ "$event_name" == "tool_execution_end" && "$edit_loop_enabled" == "1" && "$edit_loop_fired" == "0" ]]; then
+        # vstack#67 wiring fix: upstream ToolExecutionEndEvent exposes
+        # error state via .data.isError (boolean) and tool name via
+        # .data.toolName. Earlier filters guessed at .data.error /
+        # .data.success / .data.result.error which never match the real
+        # event shape (pi-coding-agent dist/core/extensions/types.d.ts).
+        local tool_name tool_error
+        tool_name=$(jq -r '.data.toolName // ""' <<< "$line" 2>/dev/null)
+        tool_error=$(jq -r '.data.isError == true' <<< "$line" 2>/dev/null)
+        if [[ "$tool_name" == "edit" && "$tool_error" == "true" ]]; then
+          local edit_now edit_cutoff edit_count edit_fire edit_oldest
+          edit_now=$(date +%s)
+          edit_cutoff=$((edit_now - edit_loop_window))
+          local -a edit_pruned=()
+          for ts in "${edit_loop_ts[@]}"; do
+            (( ts >= edit_cutoff )) && edit_pruned+=("$ts")
+          done
+          edit_pruned+=("$edit_now")
+          # Trim to most recent threshold entries so memory stays bounded.
+          while (( ${#edit_pruned[@]} > edit_loop_threshold )); do
+            edit_pruned=("${edit_pruned[@]:1}")
+          done
+          edit_loop_ts=("${edit_pruned[@]}")
+          edit_count=${#edit_loop_ts[@]}
+          edit_oldest=${edit_loop_ts[0]:-$edit_now}
+          edit_fire=0
+          if (( edit_count >= edit_loop_threshold && edit_oldest >= edit_cutoff )); then edit_fire=1; fi
+          printf '%s [pi-edit-loop-tick] pane=%s count=%s threshold=%s window=%s fire=%s\n' \
+            "$(date -Iseconds)" "$pane_id" "$edit_count" "$edit_loop_threshold" "$edit_loop_window" "$edit_fire" \
+            >> "$sub_log" 2>/dev/null || true
+          if [[ "$edit_fire" == "1" ]]; then
+            edit_loop_fired=1
+            local edit_hash
+            edit_hash=$(printf '%s|edit-loop|%s' "$pane_id" "$edit_now" | sha256sum | awk '{print substr($1,1,12)}')
+            ( exec 218>"$SESSION_LOCK"
+              flock 218
+              jq -nc --arg ts "$(date -Iseconds)" \
+                     --arg pid "$pane_id" \
+                     --arg harness "pi" \
+                     --arg tag "pi-edit-tool-loop" \
+                     --arg h "$edit_hash" \
+                     --argjson failures "$edit_count" \
+                     --argjson window "$edit_loop_window" \
+                     '{ts:$ts, pane_id:$pid, harness:$harness, event_type:"tool_execution_error", tool_name:"edit", consecutive_failures:$failures, window_sec:$window, classifier_tag:$tag, hash:$h}' \
+                     >> "$WAKE_EVENTS_LOG"
+            )
+          fi
+        fi
+        continue
+      fi
+
       if [[ "$event_name" == "vstack_activity" ]]; then
         [[ "${FLIGHTDECK_PI_ACTIVITY_BROKER:-1}" == "0" ]] && continue
         local activity_payload activity_type activity_hash

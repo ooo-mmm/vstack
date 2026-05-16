@@ -54,13 +54,21 @@ emit_linear_issue_activity() {
     summary="$type"
     [ -n "$identifier" ] && summary="$identifier ${type#linear.}"
     details=$(jq -cn --arg title "$title" --arg state "$state" --arg state_type "$state_type" '{title: $title, state: $state, state_type: $state_type}')
-    bash "$SCRIPT_DIR/../_activity-emit.sh" "$type" \
-        --severity "$severity" \
-        --importance normal \
-        --summary "$summary" \
-        --issue-id "$identifier" \
-        --linear-id "$identifier" \
-        --details-json "$details" || true
+    # vstack#71 W4 Phase 7 follow-up: --linear-id always carries the Linear
+    # identifier; --issue-id only when an external Flightdeck entry id is
+    # in scope. Aliasing both to the Linear id diverges once non-Linear
+    # issue sources exist.
+    local emit_args=(
+        --severity "$severity"
+        --importance normal
+        --summary "$summary"
+        --linear-id "$identifier"
+        --details-json "$details"
+    )
+    if [ -n "${FLIGHTDECK_ENTRY_ID:-}" ]; then
+        emit_args+=(--issue-id "$FLIGHTDECK_ENTRY_ID")
+    fi
+    bash "$SCRIPT_DIR/../_activity-emit.sh" "$type" "${emit_args[@]}" || true
 }
 
 emit_linear_relation_activity() {
@@ -74,13 +82,19 @@ emit_linear_relation_activity() {
     summary="Linear relation created"
     [ -n "$issue" ] && [ -n "$related" ] && summary="Linear relation created: $issue → $related"
     details=$(jq -cn --arg relation_id "$relation_id" --arg relation_type "$relation_type" --arg issue "$issue" --arg related "$related" '{relation_id: $relation_id, relation_type: $relation_type, issue: $issue, related_issue: $related}')
-    bash "$SCRIPT_DIR/../_activity-emit.sh" linear.relation_created \
-        --severity info \
-        --importance normal \
-        --summary "$summary" \
-        --issue-id "$issue" \
-        --linear-id "$issue" \
-        --details-json "$details" || true
+    # vstack#71 W4 Phase 7 follow-up: --linear-id always; --issue-id only
+    # when Flightdeck binds an external entry id.
+    local rel_args=(
+        --severity info
+        --importance normal
+        --summary "$summary"
+        --linear-id "$issue"
+        --details-json "$details"
+    )
+    if [ -n "${FLIGHTDECK_ENTRY_ID:-}" ]; then
+        rel_args+=(--issue-id "$FLIGHTDECK_ENTRY_ID")
+    fi
+    bash "$SCRIPT_DIR/../_activity-emit.sh" linear.relation_created "${rel_args[@]}" || true
 }
 
 linear_update_activity_type() {

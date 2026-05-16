@@ -18,6 +18,19 @@ import {
 	paneSessionPath,
 } from "./paths.js";
 import { randomHex } from "./random.js";
+
+// vstack#60 workaround: env var names the pi-session-bridge child reads
+// on startup. The canonical home is
+// pi-extensions/pi-session-bridge/extensions/child-session-id.ts
+// (PARENT_SESSION_ENV + CHILD_ROLE_ENV). Mirrored here as constants so
+// the launcher script doesn't carry magic strings; the bridge package
+// is a sibling so we can't import directly without coupling the two
+// extension packages. A parity test in
+// tests/subagent-bridge-id.test.ts asserts these values match the
+// bridge's exported constants.
+const PI_BRIDGE_PARENT_SESSION_ENV = "PI_BRIDGE_PARENT_SESSION_ID";
+const PI_BRIDGE_CHILD_ROLE_ENV = "PI_BRIDGE_CHILD_ROLE";
+const PI_BRIDGE_SUBAGENT_ROLE = "subagent";
 import {
 	legacyPackageSessionRuntimeDir,
 	piUserDir,
@@ -379,6 +392,11 @@ cd ${shellQuote(cwd)}
 export PI_SUBAGENT_CHILD_AGENT=${shellQuote(agent.name)}
 ${agent.color ? `export PI_SUBAGENT_CHILD_COLOR=${shellQuote(agent.color)}` : "unset PI_SUBAGENT_CHILD_COLOR"}
 export PI_SUBAGENT_PARENT_SESSION_ID=${shellQuote(parentSessionId)}
+# vstack#60 workaround: pi-session-bridge reads these on startup and
+# synthesizes a unique <parent>:c<pid> session id so 'pi-bridge state
+# --session <id>' no longer matches the parent's bridge too.
+export ${PI_BRIDGE_PARENT_SESSION_ENV}=${shellQuote(parentSessionId)}
+export ${PI_BRIDGE_CHILD_ROLE_ENV}=${shellQuote(PI_BRIDGE_SUBAGENT_ROLE)}
 # Inherit cached 1Password service-account token if available so the child
 # pi can read op:// refs without triggering the desktop CLI integration
 # prompt. No-op for users who don't use 1Password (file won't exist).

@@ -46,11 +46,35 @@ export interface PiAdhocWakeInput {
 	entryKind: string;
 	entryHarness: string;
 	bridgeState: PiBridgeStateLike | null | undefined;
+	/**
+	 * Hash of the last assistant text in the same encoding the bash
+	 * subscriber uses (sha256 of the assistant text, first 12 hex chars).
+	 * Required by the parity hash format `<paneId>|adhoc-pi-idle|<hash>`
+	 * — the bash mirror produces this same dedup key, so the TS canonical
+	 * reference must compute identically.
+	 */
+	assistantTextHash: string;
 	now?: () => Date;
 }
 
+/** Stable middle segment of the dedup hash key; matches bash literal. */
+export const ADHOC_PI_IDLE_HASH_TAG = "adhoc-pi-idle" as const;
+
 function shortHash(parts: readonly string[]): string {
 	return createHash("sha256").update(parts.join("|")).digest("hex").slice(0, 12);
+}
+
+/**
+ * Compute the dedup hash that the bash subscriber would produce given
+ * the same pane id and assistant-text hash. Exported so tests can
+ * assert parity directly.
+ *
+ * Bash mirror (scripts/lib/subscribers.bash::pi_subscriber_loop):
+ *   term_hash=$(printf '%s|adhoc-pi-idle|%s' "$pane_id" "$hash" \
+ *                | sha256sum | awk '{print substr($1,1,12)}')
+ */
+export function piAdhocWakeHash(paneId: string, assistantTextHash: string): string {
+	return shortHash([paneId, ADHOC_PI_IDLE_HASH_TAG, assistantTextHash]);
 }
 
 export function decidePiAdhocWake(input: PiAdhocWakeInput): PiAdhocWakeOutcome {
@@ -63,7 +87,7 @@ export function decidePiAdhocWake(input: PiAdhocWakeInput): PiAdhocWakeOutcome {
 		return { emit: false, reason: classification.matched || classification.tag };
 	}
 	const ts = (input.now?.() ?? new Date()).toISOString();
-	const hash = shortHash([input.paneId, "adhoc-pi-idle", ts.slice(0, 19)]);
+	const hash = piAdhocWakeHash(input.paneId, input.assistantTextHash);
 	return {
 		emit: true,
 		row: {
