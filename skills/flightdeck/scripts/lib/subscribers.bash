@@ -248,6 +248,7 @@ pi_subscriber_loop() {
   exec 200<&- 2>/dev/null || true
   local pane_id="$1" pi_pid="$2" pi_socket="${3:-}" parent_pid="${4:-}"
   local last_hash=""
+  local last_activity_hash=""
   local seen_qids=","
   local sub_log; sub_log="${LOG}.pi-sub-$(pi_pane_id_safe "$pane_id")"
   printf '%s [pi-sub-start] pane=%s pi_pid=%s socket=%s parent=%s\n' \
@@ -288,6 +289,8 @@ pi_subscriber_loop() {
     | jq --unbuffered -c 'select(
         (.type == "bridge_hello")
         or
+        (.type == "event" and .event == "vstack_activity")
+        or
         (.type == "event" and .event == "question" and (.data.action // "") == "opened")
         or
         (.type == "event" and .event == "message_end" and ((.data.message.customType // "") == "subagent-completion"))
@@ -312,6 +315,33 @@ pi_subscriber_loop() {
 
       local event_name
       event_name=$(jq -r '.event // ""' <<< "$line" 2>/dev/null)
+      if [[ "$event_name" == "vstack_activity" ]]; then
+        [[ "${FLIGHTDECK_PI_ACTIVITY_BROKER:-1}" == "0" ]] && continue
+        local activity_payload activity_type activity_hash
+        activity_payload=$(jq -c '.data // {}' <<< "$line" 2>/dev/null)
+        [[ -z "$activity_payload" || "$activity_payload" == "null" ]] && continue
+        activity_type=$(jq -r '.type // ""' <<< "$activity_payload" 2>/dev/null)
+        [[ -z "$activity_type" || "$activity_type" == "null" ]] && continue
+        activity_hash=$(printf '%s' "$activity_payload" | sha256sum | awk '{print substr($1,1,12)}')
+        [[ "$activity_hash" == "$last_activity_hash" ]] && continue
+        printf '%s [pi-activity-broker] pane=%s type=%s hash=%s\n' \
+          "$(date -Iseconds)" "$pane_id" "$activity_type" "$activity_hash" \
+          >> "$sub_log" 2>/dev/null || true
+        ( exec 218>"$SESSION_LOCK"
+          flock 218
+          jq -nc --arg ts "$(date -Iseconds)" \
+                 --arg pid "$pane_id" \
+                 --arg harness "pi" \
+                 --arg tag "pi-activity-broker" \
+                 --arg h "$activity_hash" \
+                 --argjson activity "$activity_payload" \
+                 '{ts:$ts, pane_id:$pid, harness:$harness, event_type:"vstack_activity", activity:$activity, classifier_tag:$tag, hash:$h}' \
+                 >> "$WAKE_EVENTS_LOG"
+        )
+        last_activity_hash="$activity_hash"
+        continue
+      fi
+
       if [[ "$event_name" == "question" ]]; then
         local qid
         qid=$(jq -r '.data.requestId // .data.request.id // ""' <<< "$line" 2>/dev/null)

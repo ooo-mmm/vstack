@@ -219,6 +219,96 @@ sleep 30
 			await sleep(50);
 		}
 	});
+
+	test("vstack_activity stream event emits activity-only wake row", async () => {
+		const stateDir = mkdtempSync(join(tmpdir(), "fd-pi-activity-"));
+		stateDirs.push(stateDir);
+		const wakeLog = join(stateDir, "wake-events.log");
+		const bridgeDir = join(stateDir, "bin");
+		mkdirSync(bridgeDir, { recursive: true });
+		const bridgeBin = join(bridgeDir, "pi-bridge");
+		const bridgeScript = `#!/usr/bin/env bash
+if [[ "\${1:-}" != "stream" ]]; then exit 0; fi
+cat <<'JSON'
+{"type":"event","event":"vstack_activity","data":{"type":"agent.task_completed","source":"pi-agents","severity":"success","importance":"normal","summary":"agent task completed","refs":{"task_id":"task-7","agent":"rust"},"details":{"status":"completed"},"ts":"2026-05-16T00:00:00.000Z"}}
+JSON
+sleep 30
+`;
+		writeFileSync(bridgeBin, bridgeScript);
+		chmodSync(bridgeBin, 0o755);
+
+		const fakeParent = spawn("sleep", ["30"], { stdio: "ignore" });
+		const parentPid = fakeParent.pid!;
+		try {
+			const env = subscriberEnv(bridgeDir, stateDir);
+			const sub = spawn("bash", [SUBSCRIBERS_BASH, "pi", "%19", "1184234", "", String(parentPid)], {
+				env,
+				stdio: "ignore",
+				detached: true,
+			});
+			const subPid = sub.pid!;
+			const deadline = Date.now() + 3000;
+			let lines: string[] = [];
+			while (Date.now() < deadline) {
+				if (existsSync(wakeLog)) {
+					lines = readFileSync(wakeLog, "utf8").split("\n").filter(Boolean);
+					if (lines.some((raw) => raw.includes("pi-activity-broker"))) break;
+				}
+				await sleep(50);
+			}
+
+			try { process.kill(-subPid, "SIGTERM"); } catch { /* */ }
+			try { process.kill(subPid, "SIGTERM"); } catch { /* */ }
+
+			expect(lines).toHaveLength(1);
+			const ev = JSON.parse(lines[0]!);
+			expect(ev.classifier_tag).toBe("pi-activity-broker");
+			expect(ev.event_type).toBe("vstack_activity");
+			expect(ev.pane_id).toBe("%19");
+			expect(ev.activity).toMatchObject({ source: "pi-agents", type: "agent.task_completed", refs: { task_id: "task-7", agent: "rust" } });
+			expect(ev.hash).toMatch(/^[0-9a-f]{12}$/);
+		} finally {
+			try { fakeParent.kill("SIGKILL"); } catch { /* */ }
+			await sleep(50);
+		}
+	});
+
+	test("vstack_activity broker consumption can be disabled", async () => {
+		const stateDir = mkdtempSync(join(tmpdir(), "fd-pi-activity-off-"));
+		stateDirs.push(stateDir);
+		const wakeLog = join(stateDir, "wake-events.log");
+		const bridgeDir = join(stateDir, "bin");
+		mkdirSync(bridgeDir, { recursive: true });
+		const bridgeBin = join(bridgeDir, "pi-bridge");
+		const bridgeScript = `#!/usr/bin/env bash
+if [[ "\${1:-}" != "stream" ]]; then exit 0; fi
+cat <<'JSON'
+{"type":"event","event":"vstack_activity","data":{"type":"agent.task_completed","source":"pi-agents","severity":"success","importance":"normal","summary":"agent task completed"}}
+JSON
+sleep 30
+`;
+		writeFileSync(bridgeBin, bridgeScript);
+		chmodSync(bridgeBin, 0o755);
+
+		const fakeParent = spawn("sleep", ["30"], { stdio: "ignore" });
+		const parentPid = fakeParent.pid!;
+		try {
+			const env = subscriberEnv(bridgeDir, stateDir, { FLIGHTDECK_PI_ACTIVITY_BROKER: "0" });
+			const sub = spawn("bash", [SUBSCRIBERS_BASH, "pi", "%20", "1184234", "", String(parentPid)], {
+				env,
+				stdio: "ignore",
+				detached: true,
+			});
+			const subPid = sub.pid!;
+			await sleep(500);
+			try { process.kill(-subPid, "SIGTERM"); } catch { /* */ }
+			try { process.kill(subPid, "SIGTERM"); } catch { /* */ }
+			expect(existsSync(wakeLog) ? readFileSync(wakeLog, "utf8").trim() : "").toBe("");
+		} finally {
+			try { fakeParent.kill("SIGKILL"); } catch { /* */ }
+			await sleep(50);
+		}
+	});
 });
 
 describe("Pi subscriber question drain on attach (#37 D)", () => {

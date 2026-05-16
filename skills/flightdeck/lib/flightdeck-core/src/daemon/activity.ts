@@ -23,9 +23,11 @@ export interface WakeEventRow {
 	question?: unknown;
 	completion?: unknown;
 	task?: unknown;
+	activity?: unknown;
 	activity_event_type?: unknown;
 	sequence?: unknown;
 	details?: unknown;
+	entry_id?: unknown;
 	reason?: unknown;
 	master_id?: unknown;
 	pid?: unknown;
@@ -175,6 +177,7 @@ export function activityInputsForWakeRow(row: WakeEventRow): ActivityEventInput[
 	if (tag === "oc-question" || tag === "pi-question") return [questionActivity(row, tag)];
 	if (tag === "pi-subagent-completion" || tag === "pi-subagent-completion-ok") return subagentActivities(row);
 	if (tag === BG_TASK_EXIT_CLASSIFIER_TAG || tag === "pi-bg-task-activity") return bgTaskActivities(row);
+	if (tag === "pi-activity-broker") return brokerActivities(row);
 	if (tag === "domain-mismatch") return [domainMismatchActivity(row)];
 	if (tag === "daemon-exited") return [daemonExitedActivity(row)];
 	if (isPromptTag(tag)) return [promptActivity(row, tag)];
@@ -229,6 +232,38 @@ function subagentActivities(row: WakeEventRow): ActivityEventInput[] {
 			type,
 		};
 	});
+}
+
+function brokerActivities(row: WakeEventRow): ActivityEventInput[] {
+	const activity = record(row.activity);
+	if (!activity) return [];
+	const type = str(activity.type);
+	const source = str(activity.source);
+	const summary = str(activity.summary);
+	if (!type || !source || !summary) return [];
+	const paneId = str(row.pane_id);
+	const details = record(activity.details) ?? {};
+	const dedup = firstString(details.dedup_key, row.hash, activity.ts, row.ts) ?? `${paneId || "pane"}:${type}:${summary}`;
+	return [{
+		body: str(activity.body),
+		details: {
+			...details,
+			broker_hash: str(row.hash) ?? null,
+			dedup_key: `${paneId || "pane"}:${type}:${dedup}`,
+			event_type: "vstack_activity",
+		},
+		entry_id: str(row.entry_id) ?? str(activity.entry_id),
+		harness: str(row.harness) || "pi",
+		importance: str(activity.importance),
+		natural_key: `${paneId || "pane"}:${type}:${dedup}`,
+		pane_id: paneId,
+		refs: record(activity.refs) ?? undefined,
+		severity: str(activity.severity),
+		source,
+		summary,
+		ts: str(activity.ts) ?? str(row.ts),
+		type,
+	}];
 }
 
 function bgTaskActivities(row: WakeEventRow): ActivityEventInput[] {

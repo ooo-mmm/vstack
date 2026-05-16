@@ -22,6 +22,7 @@ interface ActivityRow {
 	severity: string;
 	importance: string;
 	summary: string;
+	source?: string;
 	pane_id?: string;
 	harness?: string;
 	refs?: Record<string, unknown>;
@@ -221,6 +222,30 @@ describe("subscriber wake row activity mapping", () => {
 		const rows = activityRows();
 		expect(rows[0]).toMatchObject({ importance: "important", severity: "warning", type: "question.opened" });
 		expect(rows[0]?.refs).toMatchObject({ question_id: "que_1" });
+	});
+
+	test("Pi broker activity maps directly to activity JSONL", () => {
+		emitActivityForWakeRow(ctx(), {
+			activity: {
+				details: { sequence: 7 },
+				importance: "noisy",
+				refs: { bg_task_id: "bg-7" },
+				severity: "info",
+				source: "pi-bg-task",
+				summary: "background task bg-7 matched output",
+				ts: "2026-05-16T00:00:00.000Z",
+				type: "bg_task.output_matched",
+			},
+			classifier_tag: "pi-activity-broker",
+			event_type: "vstack_activity",
+			harness: "pi",
+			hash: "activityhash",
+			pane_id: "%26",
+		});
+		const rows = activityRows();
+		expect(rows[0]).toMatchObject({ harness: "pi", importance: "noisy", pane_id: "%26", severity: "info", source: "pi-bg-task", type: "bg_task.output_matched" });
+		expect(rows[0]?.refs).toMatchObject({ bg_task_id: "bg-7" });
+		expect(rows[0]?.details).toMatchObject({ broker_hash: "activityhash", event_type: "vstack_activity", sequence: 7 });
 	});
 });
 
