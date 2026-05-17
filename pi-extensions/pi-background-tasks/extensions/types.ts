@@ -1,6 +1,36 @@
 import type { ChildProcess } from "node:child_process";
 
 export type BackgroundTaskStatus = "running" | "completed" | "failed" | "stopped" | "timed_out";
+
+/**
+ * Why a tracked task left the running state. Surfaced on `bg_status list`,
+ * the wake-event payload, and persisted snapshots so callers can distinguish
+ * a clean self-exit from an external kill (vstack#97).
+ *
+ * - `self-exit`: child closed on its own with no stop request. Reserved for
+ *   `completed` (exitCode 0) and `failed` (non-zero exitCode). `external` is
+ *   the same close path with `exitCode === null`, which means the child was
+ *   killed by a signal we did not issue.
+ * - `extension-stop`: this extension issued the kill via `bg_status stop`.
+ * - `session-shutdown`: this extension issued the kill on `session_shutdown`.
+ * - `timeout`: the task's `timeoutSeconds` budget elapsed.
+ * - `reconcile-on-restart`: a Pi restart probed the recorded pid and found
+ *   it gone; the task was coerced running -> stopped in
+ *   `restoredTaskFromSnapshot`. The actual cause of death is unknown to us
+ *   (Pi may have crashed mid-bg_task, the OS may have OOM-killed the child,
+ *   or an unrelated session-leader cascade may have hit it).
+ * - `orphaned-pid-gone` / `orphaned-pid-reused`: the orphan-watcher polled
+ *   a previously-restored alive task and found the pid gone or recycled.
+ */
+export type BackgroundTaskTerminationReason =
+	| "self-exit"
+	| "extension-stop"
+	| "session-shutdown"
+	| "timeout"
+	| "external"
+	| "reconcile-on-restart"
+	| "orphaned-pid-gone"
+	| "orphaned-pid-reused";
 export type TaskEventType = "output" | "exit";
 export type NotifyMode = "always" | "transition" | "first-match-only";
 
@@ -116,6 +146,13 @@ export interface BackgroundTaskSnapshot {
 	// checks on restore + orphan polls. Absent on pre-1.2.2 snapshots;
 	// identity check degrades to PID-only for those.
 	procIdent?: ProcessIdentity;
+	/**
+	 * Why this task left the running state. Optional so snapshots persisted
+	 * before vstack#97 still load (treated as undefined). Set on every
+	 * terminal transition through finalizeTaskLifecycle, the
+	 * restoredTaskFromSnapshot coercion path, and the orphan watcher.
+	 */
+	terminationReason?: BackgroundTaskTerminationReason;
 }
 
 export type ManagedTask = BackgroundTaskSnapshot & {

@@ -56,6 +56,10 @@ export function buildBackgroundTaskActivity(eventType: TaskEventType | "start", 
 			output_bytes: task.outputBytes,
 			sequence,
 			status: task.status,
+			// vstack#97: carry the termination annotation on the broker event
+			// so dashboards / loggers can distinguish self-exit, extension-stop,
+			// reconcile-on-restart, and orphan-watcher finalizes.
+			termination_reason: task.terminationReason,
 		},
 		importance: backgroundTaskImportance(type),
 		refs: { bg_task_id: task.id },

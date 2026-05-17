@@ -75,7 +75,17 @@ export function createOrphanWatcher(deps: OrphanWatcherDeps): OrphanWatcher {
 			// 'failed' (no stopReason, non-zero exit). The canonical exit
 			// event fires here, and the subscriber/daemon routes the
 			// resulting pi-bg-task-exit wake to master.
-			finalizeTaskLifecycle(task, null, deps.hooks);
+			//
+			// vstack#97: stamp terminationReason so callers can distinguish
+			// an orphan-watcher finalize from an explicit extension-stop or
+			// reconcile-on-restart.
+			finalizeTaskLifecycle(
+				task,
+				null,
+				deps.hooks,
+				undefined,
+				reason === "pid-gone" ? "orphaned-pid-gone" : "orphaned-pid-reused",
+			);
 			deps.onFinalize?.(task, reason);
 			finalized += 1;
 		}

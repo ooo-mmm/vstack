@@ -8,7 +8,13 @@
 // record the calls.
 
 import { selectMissedExits } from "./snapshot.js";
-import type { BackgroundTaskSnapshot, BackgroundTaskStatus, ManagedTask, TaskEventType } from "./types.js";
+import type {
+	BackgroundTaskSnapshot,
+	BackgroundTaskStatus,
+	BackgroundTaskTerminationReason,
+	ManagedTask,
+	TaskEventType,
+} from "./types.js";
 
 export interface LifecycleHooks {
 	rememberSnapshot: (task: ManagedTask) => BackgroundTaskSnapshot;
@@ -22,6 +28,12 @@ export interface LifecycleHooks {
 //   - first close wins (closed=true gate is idempotent)
 //   - status derives from stopReason / statusOverride / exitCode
 //   - exitNotified flips to true only after a successful sendTaskEvent
+//   - terminationReason is set on every terminal transition so callers
+//     can distinguish self-exit from extension-stop, session-shutdown,
+//     external kill, reconcile-on-restart, and orphan-watcher finalizes
+//     (vstack#97). An explicit `terminationReason` argument wins over
+//     whatever the caller pre-stamped on `task.terminationReason`; the
+//     default falls back to a derivation from stopReason and exitCode.
 //
 // Returns the same task instance so callers can chain.
 export function finalizeTaskLifecycle(
@@ -29,6 +41,7 @@ export function finalizeTaskLifecycle(
 	exitCode: number | null,
 	hooks: LifecycleHooks,
 	statusOverride?: BackgroundTaskStatus,
+	terminationReason?: BackgroundTaskTerminationReason,
 ): ManagedTask {
 	if (task.closed) return task;
 	task.closed = true;
@@ -45,6 +58,7 @@ export function finalizeTaskLifecycle(
 	} else {
 		task.status = exitCode === 0 ? "completed" : "failed";
 	}
+	task.terminationReason = resolveTerminationReason(task, exitCode, terminationReason);
 	hooks.rememberSnapshot(task);
 	hooks.persistSnapshots();
 
@@ -56,6 +70,29 @@ export function finalizeTaskLifecycle(
 	}
 	hooks.refreshUi();
 	return task;
+}
+
+// Resolve the terminationReason for a finalize call. Precedence:
+//   1. Explicit argument from the caller (e.g. orphan-watcher passes
+//      "orphaned-pid-gone", session_shutdown passes "session-shutdown").
+//   2. A reason the caller pre-stamped on task.terminationReason
+//      (requestStop sets "extension-stop" before invoking the SIGTERM
+//      cascade so the eventual child.on("close") finalize picks it up).
+//   3. Derived from the resolved status + exitCode: completed
+//      (exit 0) and failed (non-zero) self-exit; null exitCode with no
+//      stopReason is treated as external (signal we did not issue).
+function resolveTerminationReason(
+	task: ManagedTask,
+	exitCode: number | null,
+	explicit: BackgroundTaskTerminationReason | undefined,
+): BackgroundTaskTerminationReason {
+	if (explicit !== undefined) return explicit;
+	if (task.terminationReason !== undefined) return task.terminationReason;
+	if (task.stopReason === "timeout") return "timeout";
+	if (task.stopReason === "user") return "extension-stop";
+	if (task.stopReason === "shutdown") return "session-shutdown";
+	if (exitCode === null) return "external";
+	return "self-exit";
 }
 
 // Replay 'exit' wakeups for any restored task that hit terminal state

@@ -254,7 +254,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 			const activityAt = task.lastOutputAt ?? task.updatedAt;
 			lines.push(`${bgTree(theme, isLast ? "└" : "├", activeCtx?.cwd)}${bgStatusIcon(task.status, theme)} ${theme.fg("accent", task.id)} ${theme.fg(
 				"dim",
-				`${summarizeTaskStatus(task.status, task.exitCode)} · ${compactText(taskDisplayName(task), 72)} · ${formatRelativeTime(activityAt)}`,
+				`${summarizeTaskStatus(task.status, task.exitCode, task.terminationReason)} · ${compactText(taskDisplayName(task), 72)} · ${formatRelativeTime(activityAt)}`,
 			)}`);
 		});
 		const hidden = display.length - shown.length;
@@ -516,10 +516,17 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 	): { ok: boolean; message: string } => {
 		if (!task) return { ok: false, message: "No background task matched that id or pid." };
 		if (task.status !== "running") {
-			return { ok: true, message: `${task.id} is already ${summarizeTaskStatus(task.status, task.exitCode)}.` };
+			return { ok: true, message: `${task.id} is already ${summarizeTaskStatus(task.status, task.exitCode, task.terminationReason)}.` };
 		}
 
 		task.stopReason = reason;
+		// vstack#97: stamp terminationReason eagerly so when the child's
+		// close handler later calls finalizeTaskLifecycle the annotation
+		// is already in place. session_shutdown calls requestStop with
+		// reason="shutdown" so the two paths land on distinct values.
+		if (reason === "user") task.terminationReason = "extension-stop";
+		else if (reason === "shutdown") task.terminationReason = "session-shutdown";
+		else if (reason === "timeout") task.terminationReason = "timeout";
 		task.updatedAt = Date.now();
 		voidPendingTaskWakes(task, reason === "shutdown" ? "shutdown" : "stop", logWakeDiagnostic);
 		rememberSnapshot(task);
@@ -603,6 +610,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 			startedAt: now,
 			status: "running",
 			stopReason: null,
+			terminationReason: undefined,
 			timeoutTimer: null,
 			title: options.title?.trim() || command,
 			updatedAt: now,
@@ -744,6 +752,10 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		for (const task of tasks.values()) {
 			if (task.status === "running") {
 				task.stopReason = "shutdown";
+				// vstack#97: explicit annotation for the session_shutdown
+				// kill path so a later restore can tell shutdown-kills from
+				// reconcile-on-restart coercion.
+				task.terminationReason = "session-shutdown";
 				voidPendingTaskWakes(task, "shutdown", logWakeDiagnostic);
 				task.status = "stopped";
 				task.updatedAt = Date.now();
