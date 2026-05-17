@@ -59,7 +59,7 @@ describe("shouldEmitBellWake (vstack#68)", () => {
 		const state = makeBellWakeState();
 		const t1 = shouldEmitBellWake(state, { paneId: "%1", tag: "merge-now", isCanonical: true, intervalSec: 60, nowSec: 0 });
 		expect(t1.emit).toBe(true);
-		recordBellWake(state, "%1", 0);
+		recordBellWake(state, "%1", "merge-now", 0);
 
 		const t2 = shouldEmitBellWake(state, { paneId: "%1", tag: "merge-now", isCanonical: true, intervalSec: 60, nowSec: 5 });
 		expect(t2.emit).toBe(false);
@@ -74,14 +74,32 @@ describe("shouldEmitBellWake (vstack#68)", () => {
 
 	test("rate limit is per-pane (a different pane's bell at 5s still fires)", () => {
 		const state = makeBellWakeState();
-		recordBellWake(state, "%1", 0);
+		recordBellWake(state, "%1", "merge-now", 0);
 		const otherPane = shouldEmitBellWake(state, { paneId: "%2", tag: "merge-now", isCanonical: true, intervalSec: 60, nowSec: 5 });
 		expect(otherPane.emit).toBe(true);
 	});
 
+	test("rate limit is per-tag (two distinct canonical tags on the same pane both fire inside the window)", () => {
+		const state = makeBellWakeState();
+		const mergeNow = shouldEmitBellWake(state, { paneId: "%1", tag: "merge-now", isCanonical: true, intervalSec: 60, nowSec: 0 });
+		expect(mergeNow.emit).toBe(true);
+		recordBellWake(state, "%1", "merge-now", 0);
+
+		const questionOpened = shouldEmitBellWake(state, { paneId: "%1", tag: "question.opened", isCanonical: true, intervalSec: 60, nowSec: 5 });
+		expect(questionOpened.emit).toBe(true);
+		recordBellWake(state, "%1", "question.opened", 5);
+
+		const mergeAgain = shouldEmitBellWake(state, { paneId: "%1", tag: "merge-now", isCanonical: true, intervalSec: 60, nowSec: 10 });
+		expect(mergeAgain.emit).toBe(false);
+		if (!mergeAgain.emit) expect(mergeAgain.reason).toBe(BELL_RATE_LIMIT_DROP_REASON);
+
+		const questionAgain = shouldEmitBellWake(state, { paneId: "%1", tag: "question.opened", isCanonical: true, intervalSec: 60, nowSec: 10 });
+		expect(questionAgain.emit).toBe(false);
+	});
+
 	test("interval=0 disables rate limiting", () => {
 		const state = makeBellWakeState();
-		recordBellWake(state, "%1", 0);
+		recordBellWake(state, "%1", "merge-now", 0);
 		const decision = shouldEmitBellWake(state, { paneId: "%1", tag: "merge-now", isCanonical: true, intervalSec: 0, nowSec: 1 });
 		expect(decision.emit).toBe(true);
 	});

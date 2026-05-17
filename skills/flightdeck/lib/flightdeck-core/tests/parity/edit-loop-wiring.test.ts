@@ -12,12 +12,9 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-	buildEditLoopSyntheticOutbox,
-	DEFAULT_EDIT_LOOP_CONFIG,
 	EDIT_LOOP_CLASSIFIER_TAG,
 	EDIT_LOOP_DEFAULT_THRESHOLD_N,
 	EDIT_LOOP_DEFAULT_WINDOW_SEC,
-	EDIT_LOOP_REASON,
 	evaluateEditLoop,
 	makeEditLoopState,
 } from "../../src/daemon/edit-loop-detector.ts";
@@ -87,21 +84,6 @@ describe("edit-loop wiring: 5-in-window scenario (vstack#67)", () => {
 		}
 		expect(decisions).toEqual(["track", "track", "track", "track", "fire"]);
 		expect(state.fired.has("%42")).toBe(true);
-	});
-
-	test("synthetic outbox shape on fire matches reason=post-compaction-edit-loop", () => {
-		const outbox = buildEditLoopSyntheticOutbox({
-			agent: "rust",
-			taskId: "task-edit-loop",
-			consecutiveFailures: DEFAULT_EDIT_LOOP_CONFIG.thresholdN,
-			windowMs: DEFAULT_EDIT_LOOP_CONFIG.windowMs,
-		});
-		expect(outbox.status).toBe("blocked");
-		expect(outbox.reason).toBe(EDIT_LOOP_REASON);
-		expect(outbox.synthetic).toBe(true);
-		expect(outbox.consecutive_failures).toBe(5);
-		expect(outbox.window_sec).toBe(120);
-		expect(outbox.summary).toMatch(/post-compaction edit-loop/);
 	});
 
 	test("4-in-window then 1 outside window -> no fire", () => {

@@ -36,7 +36,7 @@ export type BellWakeDecision =
 	| { emit: false; reason: string; suppressedUntil?: number };
 
 export interface BellWakeState {
-	/** Map of paneId -> epoch seconds of most recent bell wake. */
+	/** Map of `${paneId}:${tag}` -> epoch seconds of most recent bell wake. */
 	lastBellWakeAt: Map<string, number>;
 }
 
@@ -44,18 +44,18 @@ export function makeBellWakeState(): BellWakeState {
 	return { lastBellWakeAt: new Map() };
 }
 
-// Rate-limit is keyed per-pane, not per-tag. Two distinct canonical bell-tagged
-// events on the same pane inside FD_BELL_WAKE_INTERVAL_SEC collapse to one wake.
-// The stable-age classifier still picks up new state on the next tick within
-// `stab` seconds, so events are delayed rather than lost. If per-tag granularity
-// becomes important, key lastBellWakeAt by `${paneId}:${tag}` instead.
+// Rate-limit is keyed by `${paneId}:${tag}` so distinct canonical bell-tagged
+// events on the same pane (e.g. merge-now vs question.opened) get independent
+// windows and both fire within FD_BELL_WAKE_INTERVAL_SEC. Storms on a single
+// tag are still capped at one wake per interval; the stable-age classifier
+// picks up the next observation on the next tick within `stab` seconds.
 export function shouldEmitBellWake(state: BellWakeState, opts: BellWakeOptions): BellWakeDecision {
 	if (!opts.isCanonical) {
 		return { emit: false, reason: BELL_NON_CANONICAL_DROP_REASON };
 	}
 	const interval = Math.max(0, Math.floor(opts.intervalSec ?? BELL_WAKE_INTERVAL_DEFAULT_SEC));
 	if (interval > 0) {
-		const last = state.lastBellWakeAt.get(opts.paneId);
+		const last = state.lastBellWakeAt.get(bellWakeKey(opts.paneId, opts.tag));
 		if (last !== undefined && opts.nowSec - last < interval) {
 			return {
 				emit: false,
@@ -67,8 +67,12 @@ export function shouldEmitBellWake(state: BellWakeState, opts: BellWakeOptions):
 	return { emit: true };
 }
 
-export function recordBellWake(state: BellWakeState, paneId: string, nowSec: number): void {
-	state.lastBellWakeAt.set(paneId, nowSec);
+export function recordBellWake(state: BellWakeState, paneId: string, tag: string, nowSec: number): void {
+	state.lastBellWakeAt.set(bellWakeKey(paneId, tag), nowSec);
+}
+
+function bellWakeKey(paneId: string, tag: string): string {
+	return `${paneId}:${tag}`;
 }
 
 export function bellWakeIntervalFromEnv(env: NodeJS.ProcessEnv = process.env): number {

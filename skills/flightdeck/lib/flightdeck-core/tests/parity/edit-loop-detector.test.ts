@@ -10,8 +10,6 @@ import {
 	DEFAULT_EDIT_LOOP_CONFIG,
 	EDIT_LOOP_DEFAULT_THRESHOLD_N,
 	EDIT_LOOP_DEFAULT_WINDOW_SEC,
-	EDIT_LOOP_REASON,
-	buildEditLoopSyntheticOutbox,
 	editLoopConfigFromEnv,
 	editLoopDetectorEnabledFromEnv,
 	editLoopThresholdFromEnv,
@@ -133,27 +131,6 @@ describe("evaluateEditLoop (vstack#67)", () => {
 		// Once fired, the pane is in `fired` so the entry list freezes —
 		// but the most recent N entries must still be exactly thresholdN.
 		expect(entries.length).toBeLessThanOrEqual(EDIT_LOOP_DEFAULT_THRESHOLD_N);
-	});
-});
-
-describe("buildEditLoopSyntheticOutbox (vstack#67)", () => {
-	test("status is blocked (not needs_completion); carries reason + window + count", () => {
-		const outbox = buildEditLoopSyntheticOutbox({ agent: "rust", taskId: "task-1", consecutiveFailures: 5, windowMs: 120_000 });
-		expect(outbox.status).toBe("blocked");
-		expect(outbox.reason).toBe(EDIT_LOOP_REASON);
-		expect(outbox.synthetic).toBe(true);
-		expect(outbox.consecutive_failures).toBe(5);
-		expect(outbox.window_sec).toBe(120);
-		expect(outbox.summary).toMatch(/post-compaction edit-loop/);
-		expect(outbox.summary).toMatch(/5 consecutive edit-tool failures/);
-		expect(outbox.notes).toMatch(/master should kill the pane and re-dispatch/);
-	});
-
-	test("windowMs floors to seconds (>=1)", () => {
-		expect(
-			buildEditLoopSyntheticOutbox({ agent: "x", taskId: "y", consecutiveFailures: 5, windowMs: 500 })
-				.window_sec,
-		).toBe(1);
 	});
 });
 

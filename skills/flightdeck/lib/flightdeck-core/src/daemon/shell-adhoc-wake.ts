@@ -36,6 +36,14 @@ export interface ShellAdhocWakeInput {
 	state: string;
 	/** True iff the registered `pane_id` is still in `tmux list-panes -a`. */
 	paneAlive: boolean;
+	/**
+	 * `.entries[].terminal_emitted_at` — ISO8601 marker recorded on the
+	 * first synthetic terminal-state transition. Suppresses re-emission
+	 * when an operator resets state back from a terminal value
+	 * (vstack#95C); operators wanting a fresh emit must clear the marker
+	 * explicitly.
+	 */
+	terminalEmittedAt?: string | null;
 }
 
 export interface ShellAdhocWakeSkip {
@@ -44,7 +52,8 @@ export interface ShellAdhocWakeSkip {
 		| "pane-alive"
 		| "not-adhoc"
 		| "not-shell"
-		| "already-terminal";
+		| "already-terminal"
+		| "marker-present";
 }
 
 export interface ShellAdhocWakeTransition {
@@ -62,8 +71,13 @@ export type ShellAdhocWakeOutcome = ShellAdhocWakeSkip | ShellAdhocWakeTransitio
  *   - pane is gone (`paneAlive === false`)
  *   - kind is exactly "adhoc" (case-insensitive)
  *   - harness is exactly "shell" (case-insensitive)
- *   - current state is not already terminal (idempotency — don't re-emit
- *     entry.completed every reconcile tick for the same entry)
+ *   - current state is not already terminal (idempotency for the
+ *     normal terminal-state path)
+ *   - `terminal_emitted_at` marker is absent (vstack#95C idempotency:
+ *     if a prior tick already emitted entry.completed for this entry,
+ *     a manual reset to a non-terminal state must NOT re-trigger the
+ *     synthetic emit. Operator surgery wanting a fresh emit can clear
+ *     the marker explicitly.)
  *
  * All other cases skip with a reason string for diagnostics.
  */
@@ -75,5 +89,8 @@ export function decideShellAdhocWake(input: ShellAdhocWakeInput): ShellAdhocWake
 	if (kind !== "adhoc") return { transition: false, reason: "not-adhoc" };
 	if (harness !== "shell") return { transition: false, reason: "not-shell" };
 	if (TERMINAL_STATES.has(state)) return { transition: false, reason: "already-terminal" };
+	if (typeof input.terminalEmittedAt === "string" && input.terminalEmittedAt.trim()) {
+		return { transition: false, reason: "marker-present" };
+	}
 	return { transition: true, nextState: "complete" };
 }

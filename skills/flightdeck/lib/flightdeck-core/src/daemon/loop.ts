@@ -659,7 +659,7 @@ export async function runLoop(opts: RunLoopOpts): Promise<void> {
 					sessionLock, eventsFile, wakePending, lastEventKey,
 				});
 				if (appended) {
-					recordBellWake(bellWakeState, innerId, now);
+					recordBellWake(bellWakeState, innerId, tag, now);
 					tickActivity.push({ classifier_tag: tag, event_type: tag, hash, harness, pane_id: innerId });
 					tickReasons.push(`bell:${innerId}:${tag}`);
 					tickPending.push({ paneId: innerId, hash, tag, isBell: true });

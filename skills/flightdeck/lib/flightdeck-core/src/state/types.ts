@@ -82,6 +82,13 @@ export interface TrackedEntry {
 	decisions_log?: DecisionLogEntry[];
 	unknown_since?: string | null;
 	merge_commit?: string | null;
+	/**
+	 * ISO8601 timestamp recorded when a synthetic terminal-state
+	 * transition fires (vstack#95C). Suppresses re-emission when an
+	 * operator manually resets state back from a terminal value;
+	 * clearing the marker explicitly re-enables a fresh emit.
+	 */
+	terminal_emitted_at?: string | null;
 	[key: string]: unknown;
 }
 

@@ -981,15 +981,25 @@ function cmdReconcile(): void {
 			// pane-gone IS their terminal signal. Transition state to
 			// `complete` and emit `entry.completed` instead of dropping +
 			// `entry.dead`. Non-shell-adhoc entries keep the legacy drop.
+			const terminalEmittedAt = typeof rec.terminal_emitted_at === "string"
+				? rec.terminal_emitted_at
+				: null;
 			const wake = decideShellAdhocWake({
 				kind: String(rec.kind ?? ""),
 				harness: String(rec.harness ?? ""),
 				state: stateStr,
 				paneAlive: false,
+				terminalEmittedAt,
 			});
 			if (wake.transition) {
 				const idJson = JSON.stringify(issue);
 				fdStateOrDie(["set", `.entries[${idJson}].state`, JSON.stringify(wake.nextState)]);
+				const emittedAt = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+				fdStateOrDie([
+					"set",
+					`.entries[${idJson}].terminal_emitted_at`,
+					JSON.stringify(emittedAt),
+				]);
 				emitReconcileShellComplete(droppedEntry);
 				completed.push(issue);
 				continue;

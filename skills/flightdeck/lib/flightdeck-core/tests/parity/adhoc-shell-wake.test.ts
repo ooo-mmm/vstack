@@ -140,4 +140,45 @@ describe("decideShellAdhocWake (vstack#85 Fix A)", () => {
 	test("TERMINAL_STATES export matches the documented vocabulary", () => {
 		expect([...TERMINAL_STATES].sort()).toEqual(["aborted", "cancelled", "complete", "dead", "merged"]);
 	});
+
+	test("vstack#95C: terminal_emitted_at marker suppresses re-emit after manual state reset", () => {
+		const outcome = decideShellAdhocWake({
+			kind: "adhoc",
+			harness: "shell",
+			state: "waiting",
+			paneAlive: false,
+			terminalEmittedAt: "2026-05-15T10:10:00Z",
+		});
+		expect(outcome.transition).toBe(false);
+		if (outcome.transition) throw new Error("expected transition=false");
+		expect(outcome.reason).toBe("marker-present");
+	});
+
+	test("vstack#95C: cleared marker re-enables a fresh emit (operator override path)", () => {
+		for (const marker of [null, undefined, "", "   "]) {
+			const outcome = decideShellAdhocWake({
+				kind: "adhoc",
+				harness: "shell",
+				state: "waiting",
+				paneAlive: false,
+				terminalEmittedAt: marker,
+			});
+			expect(outcome.transition).toBe(true);
+			if (!outcome.transition) throw new Error(`expected transition=true for marker=${String(marker)}`);
+			expect(outcome.nextState).toBe("complete");
+		}
+	});
+
+	test("vstack#95C: marker on already-terminal state still skips with already-terminal precedence", () => {
+		const outcome = decideShellAdhocWake({
+			kind: "adhoc",
+			harness: "shell",
+			state: "complete",
+			paneAlive: false,
+			terminalEmittedAt: "2026-05-15T10:10:00Z",
+		});
+		expect(outcome.transition).toBe(false);
+		if (outcome.transition) throw new Error("expected transition=false");
+		expect(outcome.reason).toBe("already-terminal");
+	});
 });
