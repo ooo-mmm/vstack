@@ -23,6 +23,19 @@ There are two modes per tracked entry:
 
 When all tracked entries are terminal, flightdeck writes a summary and hands control back.
 
+## Reliability
+
+Four watchdogs sit between the daemon and the spawned agents and recover from the most common failure modes without waking you:
+
+- **agent-end watchdog** — if a subagent emits its end-of-turn event but never writes a completion outbox (an `agent_end` race), flightdeck synthesizes a `needs_completion` outbox after a short grace window so the parent agent is never left hanging on a phantom child.
+- **idle-stall watchdog** — if a subagent has been bridge-idle for several minutes without producing an outbox, flightdeck synthesizes a `blocked` outbox so the parent agent moves on instead of polling forever.
+- **edit-loop detector** — if a child agent fails the same edit tool repeatedly within a short window (default 5 failures in 120s), flightdeck synthesizes a `blocked` outbox so a stuck retry loop surfaces as an explicit failure.
+- **rate-limit watchdog** — if the upstream Claude API rate-limits a child agent, flightdeck steers it to retry with exponential backoff (default ladder `60s → 120s → 300s → 600s → 1800s`, up to 5 attempts). Each retry surfaces as a `rate_limit_retry` activity row; an exhausted retry budget shows as `rate_limit_exhausted`.
+
+Each watchdog is independently toggleable via its `VSTACK_*` env var. Daemon hygiene knobs (`FD_BELL_WAKE_INTERVAL_SEC`, `FD_RECONCILE_INTERVAL_SEC`, `FD_HEARTBEAT_OWNER_CGROUP`) similarly default to safe values and only need tuning in unusual setups. See `SKILL.md` for the full table and `DEVELOPMENT.md` for canonical decision modules and parity rules.
+
+If the daemon's master pane disappears (master agent crash, accidental window kill), the daemon writes a structured `fd-daemon-recovery-<session>.json` breadcrumb under `FD_STATE_DIR` before exiting. Re-launch the master from the same cwd and run `flightdeck session watch` to resume; `flightdeck-state archive` rolls the state file if you want to abandon the session instead.
+
 ## Activation and termination
 
 - **Activates** on `flightdeck session start|attach` for generic tracked sessions, or `flightdeck start` for issue workflows, from inside tmux.
@@ -36,6 +49,10 @@ Ask the agent to track an ad-hoc tmux window (a scratch Pi pane, a log tail, an 
 ## Issue workflows
 
 Issue orchestration remains first-class when the session is tied to a Linear/GitHub/worktree domain. Ask the agent to start an issue, check a parallel group for safety, launch the group, watch the session, recompute merge order, or close out the session — it routes to the right flightdeck command for you.
+
+The `github` skill ships `label-add` and `label-remove` wrappers around `gh pr edit` / `gh issue edit`. When flightdeck spawns a managed pane, those wrappers emit `pr.labeled` / `pr.unlabeled` / `issue.labeled` / `issue.unlabeled` activity rows alongside the existing `pr.*` events, so label-driven gates (`defer-ci`, custom workflow labels) show up in the activity sidecar and Rust dashboard.
+
+The spawn path also auto-exports `FLIGHTDECK_ENTRY_ID` into every child pane and captures the worktree's current git branch as `entry.branch` (via `git rev-parse --abbrev-ref HEAD`). The Rust dashboard renders branch info in the right rail and Sessions table PR/worktree column (`<branch> · PR #N` for non-default branches), and `pr.*` activity rows are enriched with `refs.branch` via `gh pr view --json headRefName`. Child Pi sessions also advertise a unique `<parent>:c<pid>` session id (via `PI_BRIDGE_PARENT_SESSION_ID`) so cross-session activity does not collide with the parent.
 
 ## Install
 
@@ -70,7 +87,9 @@ The Rust dashboard binary lives at `skills/flightdeck/lib/flightdeck-dashboard/`
 | `TMUX_PROBE_TTL` | Cached `tmux list-panes` stale-row probe TTL, default `5` seconds. |
 | `FLIGHTDECK_DASHBOARD_STALE_WARN_SECS` / `FLIGHTDECK_DASHBOARD_STALE_DEAD_SECS` | Tune stale-chip thresholds. |
 
-`flightdeck-dashboard tui --demo[=NAME]` runs compiled demo fixtures (`empty`, `one-adhoc`, `one-issue`, `mixed`, `terminated`, `paused`, `observer`, `conversations`, `no-issue`, `decisions`). `tui --state-file <path>` reads a concrete master-state JSON file, and `tui --session <name>` resolves `<project-root>/<FLIGHTDECK_STATE_DIR>/flightdeck-state-<name>.json` (default state dir `tmp/`) with terminated-archive fallback. With neither flag inside tmux, the dashboard uses the current tmux session. Use `--theme moon|dawn|pantera|system` to select Rose Pine Moon, Rose Pine Dawn, Pantera neon, or terminal-system colors. `?` opens Help with the legend, `T` opens the theme picker, `/` opens the filter popup, `Enter` opens the selected session/decision/event detail popup, `g` confirms focus for the selected pane, and `D` confirms prune for stale rows.
+`flightdeck-dashboard tui --demo[=NAME]` runs compiled demo fixtures (`empty`, `one-adhoc`, `one-issue`, `mixed`, `terminated`, `paused`, `observer`, `conversations`, `no-issue`, `decisions`, `stale-mixed`). `tui --state-file <path>` reads a concrete master-state JSON file, and `tui --session <name>` resolves `<project-root>/<FLIGHTDECK_STATE_DIR>/flightdeck-state-<name>.json` (default state dir `tmp/`) with terminated-archive fallback. With neither flag inside tmux, the dashboard uses the current tmux session. Use `--theme moon|dawn|pantera|system` to select Rose Pine Moon, Rose Pine Dawn, Pantera neon, or terminal-system colors. `?` opens Help with the legend, `T` opens the theme picker (with `█bg █surface █accent █error` swatch slot labels), `/` opens the filter popup, `Enter` opens the selected session/decision/event detail popup, `p` opens the pricing-source detail popup from the Costs tab, `g` confirms focus for the selected pane, `D` confirms prune for stale rows, and `Alt+M` toggles compact mode. The tabs row collapses responsively at 140- and 110-column thresholds (full → shortened → narrow labels), and the base header drops `kind counts → uptime → cwd → daemon → master` in priority order before any mid-text clip. Stale rows render with a `(stale)` annotation when tmux reports the pane id is gone, and the right rail adds a `branch <name>` row plus a "Recent activity" panel for adhoc/workflow entries. File-mode (no live tmux session) populates the Conversations tab from activity events instead of leaving dead space, and Unicode display-width is honored across every view module so CJK and emoji rows align.
+
+`flightdeck-state activity export --session <name> [--state-file <path>]` mirrors the existing `path` / `tail` / `append` source-of-truth resolution so post-mortem exports work without an active tmux session.
 
 The legacy in-Pi dashboard extension remains documented in [`pi-extensions/pi-flightdeck/README.md`](../../pi-extensions/pi-flightdeck/README.md), but it is deprecated for new sessions. Prefer the Rust dashboard for new Flightdeck runs.
 
@@ -115,6 +134,11 @@ Most users never touch these. The ones that occasionally matter:
 | `FLIGHTDECK_DASHBOARD_STALE_WARN_SECS` | Rust dashboard stale-warning threshold in seconds (default `30`). |
 | `FLIGHTDECK_DASHBOARD_STALE_DEAD_SECS` | Rust dashboard stale/dead threshold in seconds (default `300`). |
 | `FLIGHTDECK_PI_ACTIVITY_BROKER` | Set to `0` to disable `pi-session-bridge` `vstack_activity` broker consumption and rely on legacy Pi wake messages only. Default `1`. |
+| `VSTACK_AGENT_END_WATCHDOG` / `VSTACK_STALL_WATCHDOG` / `VSTACK_EDIT_LOOP_DETECTOR` / `VSTACK_RATE_LIMIT_WATCHDOG` | Set any to `0` to disable that watchdog. Defaults are `1`. Tuning knobs (`*_GRACE_SEC`, `*_THRESHOLD_SEC`, `*_THRESHOLD_N`, `*_WINDOW_SEC`, `*_MAX_ATTEMPTS`, `*_BACKOFF_LADDER`) live in `SKILL.md`. |
+| `FD_BELL_WAKE_INTERVAL_SEC` | Per-pane-per-tag bell-wake rate-limit window (default `60`). Lower it only if you genuinely want more bells per minute. |
+| `FD_RECONCILE_INTERVAL_SEC` | Mid-session reconcile cadence in seconds (default `5`). The daemon spawns subscribers for newly tracked panes and reaps subscribers for departed panes on this interval. |
+| `FD_HEARTBEAT_OWNER_CGROUP` | Set to `0` to skip the optional `MemoryCurrent`/`MemoryPeak` cgroup probe in heartbeat events. Default `1`. |
+| `FLIGHTDECK_ENTRY_ID` | Auto-exported by `flightdeck-session start` to spawned panes; binds `refs.entry_id` on github/linear/label activity rows. Do not set by hand. |
 
 Activity history lives beside the master state as `<FLIGHTDECK_STATE_DIR>/flightdeck-activity-<session>.jsonl`. `flightdeck-state activity path|append|tail|export` exposes the path, writes normalized activity rows, tails recent rows, or exports JSONL/Markdown. Event families include tracked entries (`entry.*`), agents (`agent.*`), background tasks (`bg_task.*`), PRs (`pr.*`), Linear writes (`linear.*`), questions, and daemon/subscriber lifecycle rows. Pi sessions also append activity-only rows from the `pi-session-bridge` activity broker (`vstack_activity`) when enabled. `flightdeck-state archive` archives the activity JSONL next to the master-state archive.
 

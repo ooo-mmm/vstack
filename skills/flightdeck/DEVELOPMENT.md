@@ -6,6 +6,53 @@ This file is for agents and humans hacking on flightdeck itself. End users shoul
 
 Most scripts under `scripts/` are bash trampolines that exec the TypeScript implementation under `lib/flightdeck-core/src/bin/`. `flightdeck-dashboard` is the Rust/ratatui trampoline under `lib/flightdeck-dashboard/`: it prefers a prebuilt release binary and falls back to `cargo run --release`. `bun` is a hard runtime dependency for the TypeScript scripts. Functional + integration tests live under `lib/flightdeck-core/tests/`. The live-wake suite (`tests/live-wake.sh`) is the smoke test for the daemon `start` run-loop.
 
+## Reliability watchdogs
+
+Four watchdogs sit between the daemon, the canonical TS subscriber, and the `pi-agents-tmux` extension. SKILL.md and README.md describe behavior and env vars; this section is the parity contract.
+
+| Watchdog | Canonical decision module | Activity types | Parity rule |
+| --- | --- | --- | --- |
+| agent-end | `pi-extensions/pi-agents-tmux/extensions/subagent/agent-end-watchdog.ts` | `agent.needs_completion` | Synthesizes a `needs_completion` outbox when `agent_end` fires without `complete_subagent` within `VSTACK_AGENT_END_WATCHDOG_GRACE_SEC`. The synthetic outbox is byte-equivalent to a legitimate outbox so parents cannot tell them apart. |
+| idle-stall | `pi-extensions/pi-agents-tmux/extensions/subagent/idle-stall-watchdog.ts` | `agent.idle_stalled` | Polls bridge-idle subagent panes on `VSTACK_STALL_WATCHDOG_INTERVAL_SEC` and synthesizes a `blocked` outbox after `VSTACK_STALL_WATCHDOG_THRESHOLD_SEC`. Bridge-idle is the canonical signal; never substitute pane bell or tmux capture. |
+| edit-loop | `skills/flightdeck/lib/flightdeck-core/src/daemon/edit-loop-detector.ts` | `agent.edit_loop_blocked` | Counts edit-tool failures within `VSTACK_EDIT_LOOP_WINDOW_SEC`; trips on `VSTACK_EDIT_LOOP_THRESHOLD_N`. Failure classification uses the tool-renderer's structured error path — never substring matches against assistant text. |
+| rate-limit | `skills/flightdeck/lib/flightdeck-core/src/daemon/rate-limit-watchdog.ts` plus `pi-extensions/pi-agents-tmux/extensions/subagent/rate-limit-decision.ts` + `rate-limit-watchdog.ts` | `agent.rate_limit_detected`, `agent.rate_limit_retry`, `agent.rate_limit_exhausted` | Decision module is the source of truth. The Pi subscriber routes rate-limit events through it (`flightdeck-core/src/daemon/rate-limit-watchdog.ts` for the in-daemon path; the `subagent/` siblings for the inline subagent path). Backoff ladder is `VSTACK_RATE_LIMIT_BACKOFF_LADDER`, clamped to `VSTACK_RATE_LIMIT_MAX_ATTEMPTS`. Any change to the decision module must keep both sides in lock-step. |
+
+All four emit activity-only rows for soft signals (detection, retry) and wake master only when they synthesize a terminal outbox or exhaust their budget.
+
+## Daemon hygiene
+
+- **Bell wake per-tag rate-limit** (`FD_BELL_WAKE_INTERVAL_SEC`, default `60`). Implemented in `src/daemon/wake-filter.ts`. Suppresses successive bell wakes for the same `(pane_id, classifier_tag)` within the window. Storms on a single tag therefore collapse to one wake; multiple distinct tags still wake independently.
+- **Mid-session reconcile** (`FD_RECONCILE_INTERVAL_SEC`, default `5`). Implemented in `src/daemon/reconcile.ts` (called from `src/daemon/loop.ts`). Each tick: spawn subscribers for tracked entries whose pane is alive but missing a subscriber, reap subscribers whose pane is gone, and drop stale `.entries` rows whose pane id is no longer in `tmux list-panes`. The reap is conservative — it never removes a tracked entry while its pane is alive even if the subscriber is dead, since master may still want to receive a follow-up wake.
+- **Heartbeat cgroup memory probe** (`FD_HEARTBEAT_OWNER_CGROUP`, default `1`). Implemented in `src/daemon/owner-cgroup-mem.ts`. Reads `MemoryCurrent` and `MemoryPeak` from the owner harness's cgroup when available; failures are silent so the probe never blocks a heartbeat. Set the env var to `0` to skip the probe entirely (containers / non-systemd hosts).
+- **Master-gone recovery hint**. Implemented in `src/daemon/recovery-hint.ts`. On `master-gone` exit the daemon writes `fd-daemon-recovery-<SESSION_KEY>.json` under `FD_STATE_DIR` with `{reason, session_id, owner_pid, owner_pane_id, exited_at, next_steps[], state_file, events_file}`. Write failure is warn-logged and must NEVER block the master-gone exit — the file is a breadcrumb, not a barrier.
+
+## Cross-source activity binding
+
+The spawn path and tool wrappers cooperate to thread a stable identity through every activity row originated by a tracked pane.
+
+- `flightdeck-session start` exports `FLIGHTDECK_ENTRY_ID=<id>` into the child environment so subsequent `github.sh` / `linear.sh` / `label-*` wrappers can attach `refs.entry_id` without further plumbing. The wrappers fall back to legacy `FLIGHTDECK_ISSUE_ID` for issue-mode panes when the entry id is not available.
+- `entry.branch` is captured at spawn via `git rev-parse --abbrev-ref HEAD` against the worktree cwd. Stored on `entries[id].branch` and surfaced in the Rust dashboard right rail and the Sessions table PR/worktree column (`<branch> · PR #N` for non-default branches).
+- `refs.branch` is enriched on `pr.*` activity rows by querying `gh pr view --json headRefName` in `workflow-emit.ts`. Failures degrade silently — the row still emits without `refs.branch`.
+- Child Pi sessions advertise a unique `<parent>:c<pid>` session id (see `pi-extensions/pi-session-bridge/extensions/child-session-id.ts`) by exporting `PI_BRIDGE_PARENT_SESSION_ID` and `PI_BRIDGE_CHILD_ROLE` into the child environment before spawn. Activity rows from the child therefore disambiguate from the parent in dashboards and post-mortems.
+
+## bg-task lifecycle accounting
+
+`BackgroundTaskSnapshot.terminationReason` is the canonical post-mortem hint for any terminated bg-task. The enum is defined in `pi-extensions/pi-background-tasks/extensions/types.ts`:
+
+- `self-exit` — child exited under its own steam.
+- `extension-stop` — `bg_task action: "stop"`.
+- `session-shutdown` — Pi session unloaded.
+- `timeout` — `timeoutSeconds` elapsed.
+- `external` — unexpected exit (OOM, external SIGKILL, etc.).
+- `reconcile-on-restart` — task finalized at session restore because the recorded pid was gone or recycled.
+- `orphaned-pid-gone` / `orphaned-pid-reused` — the orphan-watcher polled a previously-restored alive task and found the pid gone or recycled (kernel start-time mismatch).
+
+The reason flows through `lifecycle.ts` into the snapshot consumed by `bg_status list`, the dashboard widget, and wake payloads. Wake suppression honors `notifyOnExit: false` and `notifyMode: "first-match-only"` against the same enum; suppressed wakes carry a `WakeDropReason` so post-mortems can tell genuine drops from races.
+
+## tool_batch hardening
+
+`pi-extensions/pi-tool-renderer/extensions/tool-renderer/batch.ts` exposes the `batchCallTimeoutMs` setting (default `120000`). Each inner tool call inside a `tool_batch` is wrapped in a per-call timeout; on timeout the inner result reports `tool_batch inner call <tool> timed out after <ms>ms` instead of hanging the outer batch. Set the value in extension settings to tune for long-running inner tools.
+
 ## Session model and schema boundary
 
 Flightdeck core is the generic tmux-session manager. It owns `TrackedEntry` lifecycle, owner metadata, daemon wake routing, generic prompt handling, and stable pane/window ids for any harness session. Issue orchestration is a domain layer on top: it adds GitHub/Linear/worktree metadata under `entry.domain.issue`, issue-specific lifecycle states (`merge-ready` / `merged` / `aborted`), PR conflict graphs, merge queues, and next-cycle recommendations.
@@ -26,6 +73,8 @@ Pi broker contract: `pi-session-bridge` installs `globalThis[Symbol.for("vstack.
 
 Dashboard activity: the Rust dashboard reads structured JSONL through `JsonlActivitySource`, not the legacy daemon/wake sources. It validates `schema_version: 1`, skips malformed lines with diagnostics, tracks device/inode for same-path rotation, falls back to newest archive filename when the live file is gone, and file-watches the activity sidecar for debounced reloads.
 
+Conversations file-mode rendering: when the dashboard runs without a live tmux session (`tui --state-file` / `tui --session <name>` from a foreign shell), the Conversations tab is populated from activity events instead of from live tmux capture. The render path joins `entry.message_appended` and `entry.tool_call` rows by `entry_id`, formats them through the same view module as live mode, and trims each pane's history to `dashboardConversationTurns`-equivalent depth so file-mode output stays comparable to live captures.
+
 Workflow emitter table:
 
 | Seam | Event types |
@@ -36,6 +85,7 @@ Workflow emitter table:
 | `pane-registry set-state merge-ready/merged/aborted` | `pr.merge_queued`, `pr.merged`, `pr.merge_blocked` |
 | `pane-registry teardown-entry` | `entry.completed`, `entry.cancelled`, `entry.dead` |
 | `github.sh` wrappers | `pr.comments_left`, `pr.merged`, `pr.merge_queued`, `pr.merge_blocked`, `pr.checks_passed`, `pr.checks_failed` |
+| `label-add` / `label-remove` wrappers | `pr.labeled`, `pr.unlabeled`, `issue.labeled`, `issue.unlabeled` |
 | `linear.sh` wrappers | `linear.issue_created`, `linear.issue_updated`, `linear.issue_finished`, `linear.issue_cancelled`, `linear.relation_created` |
 
 `workflow-emit.ts` resolves `FLIGHTDECK_ACTIVITY_FILE` first. Without it, it emits only when `FLIGHTDECK_MANAGED=1` and a state or explicit activity path resolves. Appends use `nonblocking: true`; failures warn once per `(file,type,reason)` and never fail the workflow mutation.
@@ -123,6 +173,8 @@ Snapshot tests use `ratatui::backend::TestBackend::new(200, 60)`. The shared con
 When adding a tab, wire the enum/state in `app/model.rs`, key handling in `app/keymap.rs`, update logic in `app/update.rs`, and render code under `app/view/<tab>.rs` plus `app/view/mod.rs`. Keep view modules render-only: write paths must become `Cmd::Spawn` effects that shell to existing Flightdeck helpers, not direct mutations from the TUI. Mouse targets come from the per-frame `app/hitmap.rs` registry; never store absolute coordinates in `Model`.
 
 Popup chrome lives in `app/view/popup.rs`; individual popups live in `app/view/modals.rs`. Keep popups one-at-a-time and closeable via Esc, `[ ✕ ]`, or the backdrop. Confirm popups are the only write affordance; the pending action must be data (`actions::WriteAction`), not a closure hidden inside view code. Base-layer click zones must remain masked while a popup is open.
+
+Display-width helpers live in `src/util/display_width.rs`. Every view module that lays out tabular content (Sessions table, right rail, popups, conversations) routes through these helpers so CJK and emoji rows align correctly. Never call `.chars().count()` or `len()` for visible width; use the helper and let it consult `unicode-width` for the right answer.
 
 `app/theme.rs` is the single source of truth for colors and styles. Views must consume `Palette` style helpers (`theme.ok()`, `theme.warning()`, `theme.error()`, etc.) and never hard-code raw colors. The frame renderer paints `Palette::bg` once for non-system themes, panels use `Palette::surface`, and popups use `Palette::overlay`; keep System background reset so terminal palettes still win. Motion effects live in `app/view/fx.rs` and `app/motion.rs`; add new effects to the catalog, respect `MotionLevel::Off`, and keep semantic information visible without animation.
 
