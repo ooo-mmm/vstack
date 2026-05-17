@@ -565,6 +565,28 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		writeFileSync(logFile, "");
 
 		const { shell, args } = getShellConfig();
+		// vstack#97 hardening: spawn the child in its own session / process
+		// group via `detached: true` (Node calls setsid() on POSIX before
+		// exec). This addresses two of the issue's hypotheses:
+		//
+		//   H1 (process-group / parent-death cascade): when Pi exits or is
+		//   restarted, the kernel does NOT propagate SIGHUP / SIGTERM to
+		//   the child because it lives in a separate pgid that is not tied
+		//   to Pi's controlling terminal or session. PR_SET_PDEATHSIG is 0
+		//   by default on Linux for non-prctl'd children, so the child is
+		//   not signaled on parent death even without setsid — setsid is
+		//   the belt-and-braces protection that also covers macOS / BSD.
+		//
+		//   H3 (session-leader cascade): if Pi was attached to a tmux pane
+		//   that subsequently died, SIGHUP would propagate through Pi's
+		//   session leader to every process group in the same session.
+		//   detached: true makes the child its own session leader so the
+		//   cascade stops at Pi's pgid.
+		//
+		// We do NOT call child.unref() here because we still rely on the
+		// child handle for stdout/stderr piping and close-event delivery;
+		// the detached flag only affects session/pgid membership, not
+		// whether the parent waits for the child during normal operation.
 		const child = spawn(shell, [...args, command], {
 			cwd,
 			detached: process.platform !== "win32",

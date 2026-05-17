@@ -9,6 +9,17 @@
 // canonical exit wake (and pi-bg-task-exit daemon path) fires that
 // would have fired if Pi had stayed alive.
 //
+// vstack#97 hardening (H2 — snapshot reconciliation kill): this module
+// is METADATA-ONLY. It MUST NOT call process.kill() / child.kill() on
+// the tracked pid under any reconcile or polling path. The only
+// observation it makes is the identity probe (defaultReadProcessIdentity
+// reads /proc or shells out to `ps`, neither of which signals); the
+// only mutation it makes is finalizeTaskLifecycle, which updates the
+// in-memory + persisted snapshot and emits the canonical exit wake.
+// If a future change adds a real kill here it would resurrect the H2
+// failure mode where a tracked pid + start-time pair flickering across
+// snapshot writes could be proactively terminated.
+//
 // Pure logic; tests inject deterministic `isProcessAlive` + clock.
 
 import { finalizeTaskLifecycle, type LifecycleHooks } from "./lifecycle.js";
