@@ -254,7 +254,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 			const activityAt = task.lastOutputAt ?? task.updatedAt;
 			lines.push(`${bgTree(theme, isLast ? "└" : "├", activeCtx?.cwd)}${bgStatusIcon(task.status, theme)} ${theme.fg("accent", task.id)} ${theme.fg(
 				"dim",
-				`${summarizeTaskStatus(task.status, task.exitCode)} · ${compactText(taskDisplayName(task), 72)} · ${formatRelativeTime(activityAt)}`,
+				`${summarizeTaskStatus(task.status, task.exitCode, task.terminationReason)} · ${compactText(taskDisplayName(task), 72)} · ${formatRelativeTime(activityAt)}`,
 			)}`);
 		});
 		const hidden = display.length - shown.length;
@@ -516,10 +516,17 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 	): { ok: boolean; message: string } => {
 		if (!task) return { ok: false, message: "No background task matched that id or pid." };
 		if (task.status !== "running") {
-			return { ok: true, message: `${task.id} is already ${summarizeTaskStatus(task.status, task.exitCode)}.` };
+			return { ok: true, message: `${task.id} is already ${summarizeTaskStatus(task.status, task.exitCode, task.terminationReason)}.` };
 		}
 
 		task.stopReason = reason;
+		// vstack#97: stamp terminationReason eagerly so when the child's
+		// close handler later calls finalizeTaskLifecycle the annotation
+		// is already in place. session_shutdown calls requestStop with
+		// reason="shutdown" so the two paths land on distinct values.
+		if (reason === "user") task.terminationReason = "extension-stop";
+		else if (reason === "shutdown") task.terminationReason = "session-shutdown";
+		else if (reason === "timeout") task.terminationReason = "timeout";
 		task.updatedAt = Date.now();
 		voidPendingTaskWakes(task, reason === "shutdown" ? "shutdown" : "stop", logWakeDiagnostic);
 		rememberSnapshot(task);
@@ -558,6 +565,28 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		writeFileSync(logFile, "");
 
 		const { shell, args } = getShellConfig();
+		// vstack#97 hardening: spawn the child in its own session / process
+		// group via `detached: true` (Node calls setsid() on POSIX before
+		// exec). This addresses two of the issue's hypotheses:
+		//
+		//   H1 (process-group / parent-death cascade): when Pi exits or is
+		//   restarted, the kernel does NOT propagate SIGHUP / SIGTERM to
+		//   the child because it lives in a separate pgid that is not tied
+		//   to Pi's controlling terminal or session. PR_SET_PDEATHSIG is 0
+		//   by default on Linux for non-prctl'd children, so the child is
+		//   not signaled on parent death even without setsid — setsid is
+		//   the belt-and-braces protection that also covers macOS / BSD.
+		//
+		//   H3 (session-leader cascade): if Pi was attached to a tmux pane
+		//   that subsequently died, SIGHUP would propagate through Pi's
+		//   session leader to every process group in the same session.
+		//   detached: true makes the child its own session leader so the
+		//   cascade stops at Pi's pgid.
+		//
+		// We do NOT call child.unref() here because we still rely on the
+		// child handle for stdout/stderr piping and close-event delivery;
+		// the detached flag only affects session/pgid membership, not
+		// whether the parent waits for the child during normal operation.
 		const child = spawn(shell, [...args, command], {
 			cwd,
 			detached: process.platform !== "win32",
@@ -603,6 +632,7 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 			startedAt: now,
 			status: "running",
 			stopReason: null,
+			terminationReason: undefined,
 			timeoutTimer: null,
 			title: options.title?.trim() || command,
 			updatedAt: now,
@@ -744,6 +774,10 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		for (const task of tasks.values()) {
 			if (task.status === "running") {
 				task.stopReason = "shutdown";
+				// vstack#97: explicit annotation for the session_shutdown
+				// kill path so a later restore can tell shutdown-kills from
+				// reconcile-on-restart coercion.
+				task.terminationReason = "session-shutdown";
 				voidPendingTaskWakes(task, "shutdown", logWakeDiagnostic);
 				task.status = "stopped";
 				task.updatedAt = Date.now();

@@ -194,7 +194,7 @@ export async function openDashboard(
 						const isSelected = task.id === selected?.id;
 						const row = ` ${bgStatusIcon(task.status, theme)} ${theme.fg("accent", task.id)} ${theme.fg(
 							isSelected ? "text" : "dim",
-							`${summarizeTaskStatus(task.status, task.exitCode)} · ${compactText(taskDisplayName(task), Math.max(12, taskPaneWidth - 24))}`,
+							`${summarizeTaskStatus(task.status, task.exitCode, task.terminationReason)} · ${compactText(taskDisplayName(task), Math.max(12, taskPaneWidth - 24))}`,
 						)}`;
 						left.push(isSelected ? theme.bg("selectedBg", padAnsi(row, taskPaneWidth)) : row);
 					}

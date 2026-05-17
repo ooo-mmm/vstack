@@ -9,6 +9,17 @@
 // canonical exit wake (and pi-bg-task-exit daemon path) fires that
 // would have fired if Pi had stayed alive.
 //
+// vstack#97 hardening (H2 — snapshot reconciliation kill): this module
+// is METADATA-ONLY. It MUST NOT call process.kill() / child.kill() on
+// the tracked pid under any reconcile or polling path. The only
+// observation it makes is the identity probe (defaultReadProcessIdentity
+// reads /proc or shells out to `ps`, neither of which signals); the
+// only mutation it makes is finalizeTaskLifecycle, which updates the
+// in-memory + persisted snapshot and emits the canonical exit wake.
+// If a future change adds a real kill here it would resurrect the H2
+// failure mode where a tracked pid + start-time pair flickering across
+// snapshot writes could be proactively terminated.
+//
 // Pure logic; tests inject deterministic `isProcessAlive` + clock.
 
 import { finalizeTaskLifecycle, type LifecycleHooks } from "./lifecycle.js";
@@ -75,7 +86,17 @@ export function createOrphanWatcher(deps: OrphanWatcherDeps): OrphanWatcher {
 			// 'failed' (no stopReason, non-zero exit). The canonical exit
 			// event fires here, and the subscriber/daemon routes the
 			// resulting pi-bg-task-exit wake to master.
-			finalizeTaskLifecycle(task, null, deps.hooks);
+			//
+			// vstack#97: stamp terminationReason so callers can distinguish
+			// an orphan-watcher finalize from an explicit extension-stop or
+			// reconcile-on-restart.
+			finalizeTaskLifecycle(
+				task,
+				null,
+				deps.hooks,
+				undefined,
+				reason === "pid-gone" ? "orphaned-pid-gone" : "orphaned-pid-reused",
+			);
 			deps.onFinalize?.(task, reason);
 			finalized += 1;
 		}

@@ -168,7 +168,7 @@ function registerCommands(pi: ExtensionAPI, deps: RegistrationDeps): void {
 		const items = deps.sortedTasks()
 			.filter((task) => !query || task.id.toLowerCase().startsWith(query) || String(task.pid).startsWith(query))
 			.map((task) => ({
-				description: `${summarizeTaskStatus(task.status, task.exitCode)} · ${task.command}`,
+				description: `${summarizeTaskStatus(task.status, task.exitCode, task.terminationReason)} · ${task.command}`,
 				label: task.id,
 				value: task.id,
 			}));
@@ -198,7 +198,7 @@ function registerCommands(pi: ExtensionAPI, deps: RegistrationDeps): void {
 			const taskItems = deps.sortedTasks()
 				.filter((task) => !taskQuery || task.id.toLowerCase().startsWith(taskQuery) || String(task.pid).startsWith(taskQuery))
 				.map((task) => ({
-					description: `${summarizeTaskStatus(task.status, task.exitCode)} · ${task.command}`,
+					description: `${summarizeTaskStatus(task.status, task.exitCode, task.terminationReason)} · ${task.command}`,
 					label: task.id,
 					value: `${subcommand} ${task.id}`,
 				}));

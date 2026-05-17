@@ -37,6 +37,7 @@ export function taskSnapshot(task: ManagedTask): BackgroundTaskSnapshot {
 		sessionId: task.sessionId,
 		startedAt: task.startedAt,
 		status: task.status,
+		terminationReason: task.terminationReason,
 		title: task.title,
 		updatedAt: task.updatedAt,
 	};
@@ -222,6 +223,15 @@ export function restoredTaskFromSnapshot(snapshot: BackgroundTaskSnapshot, optio
 		exitNotified = snapshot.exitNotified === undefined ? true : snapshot.exitNotified;
 	}
 
+	// vstack#97: annotate the running -> stopped coercion so callers can
+	// distinguish a Pi-restart reconcile from a clean self-exit or an
+	// explicit extension stop. Pre-existing termination reasons (e.g. a
+	// snapshot persisted at extension-stop time) are preserved.
+	let terminationReason = snapshot.terminationReason;
+	if (coercedFromRunning && terminationReason === undefined) {
+		terminationReason = "reconcile-on-restart";
+	}
+
 	return {
 		...snapshot,
 		child: null,
@@ -239,6 +249,7 @@ export function restoredTaskFromSnapshot(snapshot: BackgroundTaskSnapshot, optio
 		pendingWakes: [],
 		status: pidStillAlive ? "running" : (wasRunning ? "stopped" : snapshot.status),
 		stopReason: pidStillAlive ? null : (coercedFromRunning ? "shutdown" : null),
+		terminationReason,
 		timeoutTimer: null,
 		voidedWakeSequences: snapshot.voidedWakeSequences ?? [],
 		voidedWakes: new Set(snapshot.voidedWakeSequences ?? []),

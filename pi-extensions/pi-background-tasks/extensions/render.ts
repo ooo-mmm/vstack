@@ -173,7 +173,7 @@ export function bgStatusIcon(status: BackgroundTaskStatus, theme: Theme): string
 }
 
 export function bgStatusText(task: Pick<BackgroundTaskSnapshot, "status" | "exitCode">, theme: Theme): string {
-	return theme.fg(bgStatusColor(task.status), summarizeTaskStatus(task.status, task.exitCode));
+	return theme.fg(bgStatusColor(task.status), summarizeTaskStatus(task.status, task.exitCode, task.terminationReason));
 }
 
 function renderToolTaskRow(task: BackgroundTaskSnapshot, theme: Theme, branch: TreeBranch, cwd?: string): string {

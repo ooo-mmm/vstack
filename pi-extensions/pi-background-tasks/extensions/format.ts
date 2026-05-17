@@ -79,7 +79,21 @@ export function parseOutputMatcher(pattern: string | undefined): ((text: string)
 	return (text: string) => text.toLowerCase().includes(lower);
 }
 
-export function summarizeTaskStatus(status: BackgroundTaskStatus, exitCode: number | null): string {
+export function summarizeTaskStatus(
+	status: BackgroundTaskStatus,
+	exitCode: number | null,
+	terminationReason?: string,
+): string {
+	const base = baseStatusLabel(status, exitCode);
+	if (!terminationReason || terminationReason === "self-exit") return base;
+	// vstack#97: surface the non-self-exit cause inline so operators reading
+	// `bg_status list` can tell extension-stop from session-shutdown from a
+	// reconcile-on-restart coercion. Self-exit termination matches the
+	// historical wording so unchanged completed/failed rows stay terse.
+	return `${base} (${terminationReason})`;
+}
+
+function baseStatusLabel(status: BackgroundTaskStatus, exitCode: number | null): string {
 	switch (status) {
 		case "running":
 			return "running";
@@ -100,7 +114,7 @@ export function taskDisplayName(task: Pick<BackgroundTaskSnapshot, "title" | "co
 
 export function buildTaskSummaryLine(task: BackgroundTaskSnapshot, now: number = Date.now()): string {
 	const activityAt = task.lastOutputAt ?? task.updatedAt;
-	return `${task.id} · ${summarizeTaskStatus(task.status, task.exitCode)} · pid ${task.pid} · ${taskDisplayName(
+	return `${task.id} · ${summarizeTaskStatus(task.status, task.exitCode, task.terminationReason)} · pid ${task.pid} · ${taskDisplayName(
 		task,
 	)} · ${formatRelativeTime(activityAt, now)}`;
 }
