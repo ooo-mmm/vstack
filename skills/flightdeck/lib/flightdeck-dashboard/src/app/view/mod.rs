@@ -34,6 +34,45 @@ struct OptionalChip {
     priority: u8,
 }
 
+struct BaseSegment {
+    spans: Vec<Span<'static>>,
+    drop_priority: Option<u8>,
+    requires: Option<usize>,
+}
+
+impl BaseSegment {
+    fn pinned(spans: Vec<Span<'static>>) -> Self {
+        Self {
+            spans,
+            drop_priority: None,
+            requires: None,
+        }
+    }
+
+    fn droppable(spans: Vec<Span<'static>>, priority: u8) -> Self {
+        Self {
+            spans,
+            drop_priority: Some(priority),
+            requires: None,
+        }
+    }
+
+    fn droppable_requires(spans: Vec<Span<'static>>, priority: u8, parent: usize) -> Self {
+        Self {
+            spans,
+            drop_priority: Some(priority),
+            requires: Some(parent),
+        }
+    }
+
+    fn width(&self) -> usize {
+        self.spans
+            .iter()
+            .map(|span| span.content.chars().count())
+            .sum()
+    }
+}
+
 pub fn render(frame: &mut Frame<'_>, model: &Model) {
     let mut hitmap = HitMap::default();
     render_with_hitmap(frame, model, &mut hitmap);
@@ -87,6 +126,9 @@ pub fn render_with_hitmap(frame: &mut Frame<'_>, model: &Model, hitmap: &mut Hit
         crate::app::model::ModalState::ConfirmAction => {
             modals::render_confirm(frame, area, model, theme, hitmap);
         }
+        crate::app::model::ModalState::PricingDetail => {
+            modals::render_pricing_detail(frame, area, model, theme, hitmap);
+        }
         crate::app::model::ModalState::None => {}
     }
 }
@@ -108,7 +150,7 @@ fn render_status(
 ) {
     let snapshot = &model.snapshot;
     let compact = area.width < HEADER_COMPACT_WIDTH;
-    let owner = owner_label(model, compact);
+    let (master_label, master_cwd) = owner_parts(model, compact);
     let elapsed = snapshot
         .started_at
         .map(|started| human_duration(started, model.now))
@@ -128,21 +170,47 @@ fn render_status(
     };
     let theme_chip = format!("{} ▾", model.theme.as_str());
 
-    let base_spans: Vec<Span<'static>> = vec![
-        Span::styled(" Flightdeck ", theme.title()),
+    let mut base_segments: Vec<BaseSegment> = Vec::with_capacity(7);
+    base_segments.push(BaseSegment::pinned(vec![Span::styled(
+        " Flightdeck ",
+        theme.title(),
+    )]));
+    base_segments.push(BaseSegment::pinned(vec![
         Span::raw("  "),
         Span::styled("session ", theme.status_label()),
         Span::raw(snapshot.session_id.clone()),
-        Span::raw("  ·  "),
-        Span::raw(owner),
-        Span::raw("  ·  "),
-        Span::styled(daemon.clone(), theme.muted()),
-        Span::raw("  ·  "),
-        Span::styled("uptime ", theme.status_label()),
-        Span::raw(elapsed),
-        Span::raw("  ·  "),
-        Span::styled(kind_counts, theme.info()),
-    ];
+    ]));
+    let master_idx = base_segments.len();
+    base_segments.push(BaseSegment::droppable(
+        vec![Span::raw(format!("  ·  {master_label}"))],
+        50,
+    ));
+    if let Some(cwd) = master_cwd {
+        base_segments.push(BaseSegment::droppable_requires(
+            vec![Span::raw(format!(" at {cwd}"))],
+            30,
+            master_idx,
+        ));
+    }
+    base_segments.push(BaseSegment::droppable(
+        vec![
+            Span::raw("  ·  "),
+            Span::styled(daemon.clone(), theme.muted()),
+        ],
+        40,
+    ));
+    base_segments.push(BaseSegment::droppable(
+        vec![
+            Span::raw("  ·  "),
+            Span::styled("uptime ", theme.status_label()),
+            Span::raw(elapsed),
+        ],
+        20,
+    ));
+    base_segments.push(BaseSegment::droppable(
+        vec![Span::raw("  ·  "), Span::styled(kind_counts, theme.info())],
+        10,
+    ));
 
     let mut chips: Vec<OptionalChip> = Vec::new();
     if !snapshot.terminated {
@@ -247,7 +315,7 @@ fn render_status(
         .min(status_area.width);
     let status_rect = Rect::new(status_area.x, status_area.y, status_width, 1);
 
-    let spans = assemble_header_spans(base_spans, chips, status_width);
+    let spans = assemble_header_spans(base_segments, chips, status_width);
 
     if let Some(daemon_x) = header_chip_x(&spans, &daemon) {
         hitmap.push(
@@ -324,7 +392,7 @@ fn render_tabs(
     let labels = model
         .tabs_enabled
         .iter()
-        .map(|tab| Line::from(Span::raw(model.tab_label(*tab))))
+        .map(|tab| Line::from(Span::raw(model.tab_label_for_width(*tab, area.width))))
         .collect::<Vec<_>>();
     let fx_hint = fx::tab_switch_hint(model);
     let title = if fx_hint.is_empty() {
@@ -335,7 +403,8 @@ fn render_tabs(
     let mut x = area.x.saturating_add(2);
     let y = area.y.saturating_add(1);
     for tab in &model.tabs_enabled {
-        let width = u16::try_from(model.tab_label(*tab).chars().count()).unwrap_or(u16::MAX);
+        let width = u16::try_from(model.tab_label_for_width(*tab, area.width).chars().count())
+            .unwrap_or(u16::MAX);
         hitmap.push(Rect::new(x, y, width, 1), ClickAction::SelectTab(*tab), 0);
         x = x.saturating_add(width.saturating_add(3));
     }
@@ -472,54 +541,101 @@ fn staleness_label(staleness: Staleness) -> String {
 }
 
 fn assemble_header_spans(
-    base_spans: Vec<Span<'static>>,
+    base_segments: Vec<BaseSegment>,
     mut chips: Vec<OptionalChip>,
     status_width: u16,
 ) -> Vec<Span<'static>> {
     let available = status_width as usize;
-    let base_width: usize = base_spans
-        .iter()
-        .map(|span| span.content.chars().count())
-        .sum();
-    let mut kept: Vec<bool> = vec![true; chips.len()];
-    let total = |chips: &[OptionalChip], kept: &[bool]| -> usize {
-        base_width
-            + chips
-                .iter()
-                .enumerate()
-                .filter(|(idx, _)| kept[*idx])
-                .map(|(_, chip)| chip.separator.chars().count() + chip.text.chars().count())
-                .sum::<usize>()
+    let mut base_kept: Vec<bool> = vec![true; base_segments.len()];
+    let mut chip_kept: Vec<bool> = vec![true; chips.len()];
+
+    let base_width = |segments: &[BaseSegment], kept: &[bool]| -> usize {
+        segments
+            .iter()
+            .enumerate()
+            .filter(|(idx, _)| kept[*idx])
+            .map(|(_, seg)| seg.width())
+            .sum()
     };
+    let chips_width = |chips: &[OptionalChip], kept: &[bool]| -> usize {
+        chips
+            .iter()
+            .enumerate()
+            .filter(|(idx, _)| kept[*idx])
+            .map(|(_, chip)| chip.separator.chars().count() + chip.text.chars().count())
+            .sum()
+    };
+
     for idx in 0..chips.len() {
-        if total(&chips, &kept) <= available {
+        if base_width(&base_segments, &base_kept) + chips_width(&chips, &chip_kept) <= available {
             break;
         }
         if let Some(compact) = chips[idx].compact.take() {
             chips[idx].text = compact;
         }
     }
-    while total(&chips, &kept) > available {
+    loop {
+        if base_width(&base_segments, &base_kept) + chips_width(&chips, &chip_kept) <= available {
+            break;
+        }
         let candidate = chips
             .iter()
             .enumerate()
-            .filter(|(idx, _)| kept[*idx])
+            .filter(|(idx, _)| chip_kept[*idx])
             .min_by_key(|(_, chip)| chip.priority)
             .map(|(idx, _)| idx);
         match candidate {
-            Some(idx) => kept[idx] = false,
+            Some(idx) => chip_kept[idx] = false,
             None => break,
         }
     }
-    let mut spans = base_spans;
+    while base_width(&base_segments, &base_kept) > available {
+        let candidate = base_segments
+            .iter()
+            .enumerate()
+            .filter(|(idx, seg)| base_kept[*idx] && seg.drop_priority.is_some())
+            .min_by_key(|(_, seg)| seg.drop_priority.unwrap_or(u8::MAX))
+            .map(|(idx, _)| idx);
+        match candidate {
+            Some(idx) => {
+                base_kept[idx] = false;
+                propagate_base_drops(&base_segments, &mut base_kept);
+            }
+            None => break,
+        }
+    }
+
+    let mut spans = Vec::new();
+    for (idx, seg) in base_segments.into_iter().enumerate() {
+        if !base_kept[idx] {
+            continue;
+        }
+        spans.extend(seg.spans);
+    }
     for (idx, chip) in chips.into_iter().enumerate() {
-        if !kept[idx] {
+        if !chip_kept[idx] {
             continue;
         }
         spans.push(Span::raw(chip.separator));
         spans.push(Span::styled(chip.text, chip.style));
     }
     spans
+}
+
+fn propagate_base_drops(segments: &[BaseSegment], kept: &mut [bool]) {
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for (idx, seg) in segments.iter().enumerate() {
+            if !kept[idx] {
+                continue;
+            }
+            if seg.requires.is_some_and(|parent| !kept[parent]) {
+                kept[idx] = false;
+                changed = true;
+            }
+        }
+    }
 }
 
 fn header_chip_x(spans: &[Span<'_>], needle: &str) -> Option<u16> {
@@ -572,20 +688,20 @@ fn daemon_label(model: &Model, compact: bool) -> &str {
     }
 }
 
-fn owner_label(model: &Model, compact: bool) -> String {
+fn owner_parts(model: &Model, compact: bool) -> (String, Option<String>) {
     let Some(owner) = &model.snapshot.owner else {
-        return String::from("unknown");
+        return (String::from("unknown"), None);
     };
     let harness = owner.harness.as_deref().unwrap_or("unknown");
     if compact {
-        return format!("Master {harness}");
+        return (format!("Master {harness}"), None);
     }
     let cwd = owner
         .cwd
         .as_ref()
         .map(|path| path.display().to_string())
         .unwrap_or_else(|| String::from("cwd?"));
-    format!("Master {harness} at {cwd}")
+    (format!("Master {harness}"), Some(cwd))
 }
 
 fn trim_for_header(value: &str, max_chars: usize) -> String {

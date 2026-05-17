@@ -104,10 +104,28 @@ pub fn render(
         }
     }
     lines.push(Line::from(""));
-    lines.push(Line::from(format!(
-        "Pricing source: {}",
+    let pricing_line_text = format!(
+        "Pricing source: {}  ([ p ] open detail)",
         totals.pricing_source
+    );
+    let pricing_line_index = u16::try_from(lines.len()).unwrap_or(u16::MAX);
+    lines.push(Line::from(Span::styled(
+        pricing_line_text.clone(),
+        theme.status_label(),
     )));
+    let pricing_hit_y = area.y.saturating_add(1).saturating_add(pricing_line_index);
+    if pricing_hit_y < area.y.saturating_add(area.height) {
+        hitmap.push(
+            Rect::new(
+                area.x.saturating_add(1),
+                pricing_hit_y,
+                u16::try_from(pricing_line_text.chars().count()).unwrap_or(u16::MAX),
+                1,
+            ),
+            ClickAction::OpenPricingDetail,
+            1,
+        );
+    }
     if let Some(last_polled) = totals.last_polled {
         lines.push(Line::from(format!(
             "Last polled: {}",

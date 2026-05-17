@@ -9,6 +9,7 @@ const EMPTY: &str = include_str!("fixtures/empty.json");
 const ONE_ADHOC: &str = include_str!("fixtures/one-adhoc.json");
 const ONE_ISSUE: &str = include_str!("fixtures/one-issue.json");
 const MIXED: &str = include_str!("fixtures/mixed.json");
+const STALE_MIXED: &str = include_str!("fixtures/stale-mixed.json");
 const TERMINATED: &str = include_str!("fixtures/terminated.json");
 const PAUSED: &str = include_str!("fixtures/paused.json");
 const OBSERVER: &str = include_str!("fixtures/observer.json");
@@ -19,7 +20,7 @@ const ACTIVITY_MIXED: &str = include_str!("fixtures/activity-mixed.jsonl");
 
 #[derive(Debug, Error)]
 pub enum FixtureError {
-    #[error("unknown demo fixture {0:?}; available: empty, one-adhoc, one-issue, mixed, terminated, paused, observer, conversations, no-issue, decisions")]
+    #[error("unknown demo fixture {0:?}; available: empty, one-adhoc, one-issue, mixed, stale-mixed, terminated, paused, observer, conversations, no-issue, decisions")]
     UnknownFixture(String),
     #[error(transparent)]
     State(#[from] StateError),
@@ -32,6 +33,7 @@ pub fn available() -> &'static [&'static str] {
         "one-adhoc",
         "one-issue",
         "mixed",
+        "stale-mixed",
         "terminated",
         "paused",
         "observer",
@@ -47,6 +49,7 @@ pub fn canonical_name(name: &str) -> Result<&'static str, FixtureError> {
         "one-adhoc" => Ok("one-adhoc"),
         "one-issue" => Ok("one-issue"),
         "mixed" => Ok("mixed"),
+        "stale-mixed" => Ok("stale-mixed"),
         "terminated" => Ok("terminated"),
         "paused" => Ok("paused"),
         "observer" => Ok("observer"),
@@ -63,6 +66,7 @@ pub fn fixture_source(name: &str) -> Result<&'static str, FixtureError> {
         "one-adhoc" => Ok(ONE_ADHOC),
         "one-issue" => Ok(ONE_ISSUE),
         "mixed" => Ok(MIXED),
+        "stale-mixed" => Ok(STALE_MIXED),
         "terminated" => Ok(TERMINATED),
         "paused" => Ok(PAUSED),
         "observer" => Ok(OBSERVER),

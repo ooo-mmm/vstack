@@ -20,6 +20,7 @@ pub enum ClickAction {
     ClearFilter,
     OpenHelp,
     OpenThemePicker,
+    OpenPricingDetail,
     OpenLegend,
     SelectTheme(crate::app::theme::Theme),
     CloseOverlay,

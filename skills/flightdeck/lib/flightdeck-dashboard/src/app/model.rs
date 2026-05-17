@@ -15,7 +15,7 @@ use crate::app::command::SnapshotSource;
 use crate::app::motion::{EffectInstance, MotionLevel};
 use crate::app::reload::ReloadCoalescer;
 use crate::app::theme::{Palette, Theme};
-use crate::cost::{CostMetrics, SessionTotals};
+use crate::cost::{CostMetrics, PricingTable, SessionTotals};
 use crate::state::snapshot::{
     DashboardSnapshot, Event, EventImportance, SessionKind, SessionState, TrackedSession,
 };
@@ -25,6 +25,8 @@ use crate::tmux::panes::PaneSnapshot;
 pub type Clock = fn() -> DateTime<Utc>;
 
 pub const RECENT_EVENTS_CAP: usize = 500;
+pub const TABS_WIDE_THRESHOLD: u16 = 140;
+pub const TABS_MEDIUM_THRESHOLD: u16 = 110;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Tab {
@@ -64,6 +66,32 @@ impl Tab {
     #[must_use]
     pub const fn issue_mode_label(self) -> &'static str {
         self.label()
+    }
+
+    #[must_use]
+    pub const fn medium_label(self) -> &'static str {
+        match self {
+            Self::Overview => "Overview",
+            Self::Activity => "Activity",
+            Self::Conversations => "Convos",
+            Self::Merges => "Merges",
+            Self::Decisions => "Decisions",
+            Self::Costs => "Costs",
+            Self::Daemon => "Daemon",
+        }
+    }
+
+    #[must_use]
+    pub const fn narrow_label(self) -> &'static str {
+        match self {
+            Self::Overview => "Ov",
+            Self::Activity => "Act",
+            Self::Conversations => "Conv",
+            Self::Merges => "Merg",
+            Self::Decisions => "Dec",
+            Self::Costs => "Cost",
+            Self::Daemon => "Daem",
+        }
     }
 
     #[must_use]
@@ -435,6 +463,7 @@ pub enum ModalState {
     ActivityFilter,
     FilterInput,
     ConfirmAction,
+    PricingDetail,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -481,6 +510,7 @@ pub struct Model {
     pub current_pane_id: Option<String>,
     pub tmux_panes: PaneSnapshot,
     pub cost_totals: SessionTotals,
+    pub pricing_table: PricingTable,
     pub confirm: Option<ConfirmDialog>,
     pub status_message: Option<ActionStatus>,
     pub quit_requested: bool,
@@ -547,6 +577,7 @@ impl Model {
                 .filter(|pane| !pane.is_empty()),
             tmux_panes: PaneSnapshot::default(),
             cost_totals: SessionTotals::default(),
+            pricing_table: PricingTable::load(),
             confirm: None,
             status_message: None,
             quit_requested: false,
@@ -648,10 +679,21 @@ impl Model {
 
     #[must_use]
     pub fn tab_label(&self, tab: Tab) -> &'static str {
-        if tab == Tab::Merges && self.has_issue_sessions() {
-            return tab.issue_mode_label();
+        self.tab_label_for_width(tab, u16::MAX)
+    }
+
+    #[must_use]
+    pub fn tab_label_for_width(&self, tab: Tab, available_width: u16) -> &'static str {
+        if available_width >= TABS_WIDE_THRESHOLD {
+            if tab == Tab::Merges && self.has_issue_sessions() {
+                return tab.issue_mode_label();
+            }
+            tab.label()
+        } else if available_width >= TABS_MEDIUM_THRESHOLD {
+            tab.medium_label()
+        } else {
+            tab.narrow_label()
         }
-        tab.label()
     }
 
     #[must_use]

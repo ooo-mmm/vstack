@@ -23,6 +23,7 @@ pub enum Action {
     ToggleCompact,
     ToggleHelp,
     OpenThemePicker,
+    OpenPricingDetail,
     Quit,
     CloseModal,
 }
@@ -141,6 +142,11 @@ pub const BINDINGS: &[KeyBinding] = &[
         action: Action::OpenThemePicker,
     },
     KeyBinding {
+        keys: "p",
+        description: "Pricing detail (Costs tab)",
+        action: Action::OpenPricingDetail,
+    },
+    KeyBinding {
         keys: "q / Ctrl+C",
         description: "Quit",
         action: Action::Quit,
@@ -177,6 +183,7 @@ pub fn action_for(key: &KeyEvent) -> Option<Action> {
         }
         KeyCode::Char('?') => Some(Action::ToggleHelp),
         KeyCode::Char('t') | KeyCode::Char('T') => Some(Action::OpenThemePicker),
+        KeyCode::Char('p') if key.modifiers.is_empty() => Some(Action::OpenPricingDetail),
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => Some(Action::Quit),
         KeyCode::Char('q') => Some(Action::Quit),
         KeyCode::Esc => Some(Action::CloseModal),

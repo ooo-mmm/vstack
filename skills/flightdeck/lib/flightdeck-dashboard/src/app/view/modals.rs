@@ -93,7 +93,7 @@ pub fn render_theme_picker(
         title: "Choose theme",
         subtitle: Some("set FLIGHTDECK_DASHBOARD_THEME=pantera to persist"),
         footer_hints: &["↑/↓ select", "Enter pick", "Esc close"],
-        width: PopupWidth::Fixed(74),
+        width: PopupWidth::Fixed(86),
         height: PopupHeight::Fixed(13),
     };
     render_popup(frame, area, chrome, theme, hitmap, |frame, body, hitmap| {
@@ -123,13 +123,10 @@ pub fn render_theme_picker(
                     Cell::from((*name).to_owned()),
                     Cell::from(format!("({desc})")),
                     Cell::from(Line::from(vec![
-                        Span::styled("█", Style::new().fg(palette.accent).bg(palette.bg)),
-                        Span::raw(" "),
-                        Span::styled("█", Style::new().fg(palette.success).bg(palette.bg)),
-                        Span::raw(" "),
-                        Span::styled("█", Style::new().fg(palette.warning).bg(palette.bg)),
-                        Span::raw(" "),
-                        Span::styled("█", Style::new().fg(palette.error).bg(palette.bg)),
+                        Span::styled("█bg ", Style::new().fg(palette.bg).bg(palette.surface)),
+                        Span::styled("█surface ", Style::new().fg(palette.surface).bg(palette.bg)),
+                        Span::styled("█accent ", Style::new().fg(palette.accent).bg(palette.bg)),
+                        Span::styled("█error", Style::new().fg(palette.error).bg(palette.bg)),
                     ])),
                 ])
                 .style(if idx == model.theme_picker_index {
@@ -144,14 +141,77 @@ pub fn render_theme_picker(
                 rows,
                 [
                     Constraint::Length(3),
-                    Constraint::Length(20),
                     Constraint::Length(18),
-                    Constraint::Min(8),
+                    Constraint::Length(16),
+                    Constraint::Min(30),
                 ],
             ),
             body,
         );
     });
+}
+
+pub fn render_pricing_detail(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    model: &Model,
+    theme: &Palette,
+    hitmap: &mut HitMap,
+) {
+    let title = format!("Pricing source · {}", model.cost_totals.pricing_source);
+    let subtitle =
+        "Per-million-token rates in USD. Override via env FLIGHTDECK_DASHBOARD_PRICING_FILE.";
+    let chrome = PopupChrome {
+        title: &title,
+        subtitle: Some(subtitle),
+        footer_hints: &["Esc/p close", "↑/↓ scroll"],
+        width: PopupWidth::Fixed(96),
+        height: PopupHeight::PercentOfFrame(70),
+    };
+    render_popup(frame, area, chrome, theme, hitmap, |frame, body, _| {
+        let entries = model.pricing_table.entries();
+        let mut rows = Vec::with_capacity(entries.len());
+        for (name, rates) in &entries {
+            rows.push(Row::new([
+                Cell::from(name.clone()),
+                Cell::from(format_rate(rates.input_per_m)),
+                Cell::from(format_rate(rates.output_per_m)),
+                Cell::from(format_rate(rates.cache_creation_per_m)),
+                Cell::from(format_rate(rates.cache_read_per_m)),
+            ]));
+        }
+        let header = Row::new([
+            Cell::from("Model"),
+            Cell::from("in"),
+            Cell::from("out"),
+            Cell::from("cache write"),
+            Cell::from("cache read"),
+        ])
+        .style(theme.header());
+        let table = Table::new(
+            rows,
+            [
+                Constraint::Min(28),
+                Constraint::Length(10),
+                Constraint::Length(10),
+                Constraint::Length(12),
+                Constraint::Length(12),
+            ],
+        )
+        .header(header)
+        .column_spacing(1);
+        frame.render_widget(table, body);
+    });
+}
+
+fn format_rate(rate: f64) -> String {
+    if rate <= 0.0 {
+        String::from("—")
+    } else if rate >= 10.0 {
+        format!("${rate:.2}")
+    } else {
+        format!("${rate:.3}")
+    }
 }
 
 pub fn render_decision_detail(

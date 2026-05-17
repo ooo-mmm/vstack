@@ -68,6 +68,17 @@ impl PricingTable {
                 .find_map(|(known, rates)| key.contains(known).then_some(*rates))
         })
     }
+
+    #[must_use]
+    pub fn entries(&self) -> Vec<(String, ModelRates)> {
+        let mut entries: Vec<(String, ModelRates)> = self
+            .rates
+            .iter()
+            .map(|(name, rates)| (name.clone(), *rates))
+            .collect();
+        entries.sort_by(|left, right| left.0.cmp(&right.0));
+        entries
+    }
 }
 
 pub fn parse_pricing(text: &str, source_label: String) -> Result<PricingTable, CostError> {

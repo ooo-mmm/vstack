@@ -9,7 +9,31 @@ use flightdeck_dashboard::app::motion::MotionLevel;
 fn popup_theme_picker() {
     let mut model = common::model_for_fixture("mixed", MotionLevel::Off);
     model.modal = ModalState::ThemePicker;
-    insta::assert_snapshot!("popup_theme_picker", common::render_model(&model));
+    let rendered = common::render_model(&model);
+    for slot in ["bg", "surface", "accent", "error"] {
+        assert!(
+            rendered.contains(slot),
+            "theme picker missing slot label {slot}:\n{rendered}"
+        );
+    }
+    insta::assert_snapshot!("popup_theme_picker", rendered);
+}
+
+#[test]
+fn popup_pricing_detail() {
+    let mut model = common::model_for_tab(Tab::Costs);
+    model.cost_totals.pricing_source = String::from("bundled @ 2026-05-15");
+    model.modal = ModalState::PricingDetail;
+    let rendered = common::render_model(&model);
+    assert!(rendered.contains("Pricing source"));
+    assert!(rendered.contains("bundled @ 2026-05-15"));
+    assert!(rendered.contains("claude-opus-4-20250514"));
+    assert!(rendered.contains("gpt-5.5"));
+    assert!(
+        rendered.contains("FLIGHTDECK_DASHBOARD_PRICING_FILE"),
+        "override hint missing:\n{rendered}"
+    );
+    insta::assert_snapshot!("popup_pricing_detail", rendered);
 }
 
 #[test]

@@ -238,6 +238,7 @@ fn handle_key(model: &mut Model, key: &KeyEvent) -> Vec<Cmd> {
             vec![Cmd::Render]
         }
         Action::OpenThemePicker => open_theme_picker(model),
+        Action::OpenPricingDetail => open_pricing_detail(model),
         Action::Quit => {
             model.quit_requested = true;
             vec![Cmd::Render]
@@ -263,7 +264,42 @@ fn handle_popup_key(model: &mut Model, key: &KeyEvent) -> Vec<Cmd> {
         ModalState::ActivityFilter => handle_activity_filter_key(model, key),
         ModalState::FilterInput => handle_filter_key(model, key),
         ModalState::ConfirmAction => handle_confirm_key(model, key),
+        ModalState::PricingDetail => handle_pricing_detail_key(model, key),
         ModalState::None => Vec::new(),
+    }
+}
+
+fn handle_pricing_detail_key(model: &mut Model, key: &KeyEvent) -> Vec<Cmd> {
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('p') => {
+            close_overlay(model);
+            vec![Cmd::Render]
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            model.popup_scroll = model.popup_scroll.saturating_add(1);
+            vec![Cmd::Render]
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            model.popup_scroll = model.popup_scroll.saturating_sub(1);
+            vec![Cmd::Render]
+        }
+        KeyCode::PageDown => {
+            model.popup_scroll = model.popup_scroll.saturating_add(PAGE_STEP);
+            vec![Cmd::Render]
+        }
+        KeyCode::PageUp => {
+            model.popup_scroll = model.popup_scroll.saturating_sub(PAGE_STEP);
+            vec![Cmd::Render]
+        }
+        KeyCode::Home => {
+            model.popup_scroll = 0;
+            vec![Cmd::Render]
+        }
+        KeyCode::End => {
+            model.popup_scroll = usize::MAX / 2;
+            vec![Cmd::Render]
+        }
+        _ => Vec::new(),
     }
 }
 
@@ -438,6 +474,7 @@ fn handle_click(model: &mut Model, action: ClickAction) -> Vec<Cmd> {
             vec![Cmd::Render]
         }
         ClickAction::OpenThemePicker => open_theme_picker(model),
+        ClickAction::OpenPricingDetail => open_pricing_detail(model),
         ClickAction::SelectTheme(theme) => {
             model.theme = theme;
             model.theme_picker_index = theme.index();
@@ -594,6 +631,15 @@ fn open_theme_picker(model: &mut Model) -> Vec<Cmd> {
     model.theme_picker_index = model.theme.index();
     model.popup_scroll = 0;
     model.modal = ModalState::ThemePicker;
+    vec![Cmd::Render]
+}
+
+fn open_pricing_detail(model: &mut Model) -> Vec<Cmd> {
+    if model.current_tab != Tab::Costs {
+        return Vec::new();
+    }
+    model.popup_scroll = 0;
+    model.modal = ModalState::PricingDetail;
     vec![Cmd::Render]
 }
 

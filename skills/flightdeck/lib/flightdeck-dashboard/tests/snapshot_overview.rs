@@ -3,14 +3,18 @@ mod common;
 use std::fs;
 use std::path::PathBuf;
 
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use flightdeck_dashboard::app::command::SnapshotSource;
 use flightdeck_dashboard::app::model::{Model, ReadSourceState, Tab};
 use flightdeck_dashboard::app::motion::{self, MotionLevel};
+use flightdeck_dashboard::app::msg::Msg;
 use flightdeck_dashboard::app::theme::Theme;
+use flightdeck_dashboard::app::update;
 use flightdeck_dashboard::state::snapshot::{DashboardSnapshot, PauseInfo, SessionState};
 use flightdeck_dashboard::state::tracked_entries::{
     self, PRE_PURGE_BANNER, PRE_PURGE_STATE_MESSAGE,
 };
+use flightdeck_dashboard::tmux::panes::PaneSnapshot;
 
 fn render_fixture(name: &'static str) -> String {
     common::render_model(&common::model_for_fixture(name, MotionLevel::Off))
@@ -241,6 +245,160 @@ fn header_keeps_theme_visible_at_live_audit_widths() {
             "redundant paused chip at width {width}:\n{header}"
         );
     }
+}
+
+#[test]
+fn tabs_responsive_widths_render_progressive_labels() {
+    let model = common::model_for_fixture("mixed", MotionLevel::Off);
+    for (width, expectations) in [
+        (200u16, "wide"),
+        (140, "wide"),
+        (130, "medium"),
+        (110, "medium"),
+        (100, "narrow"),
+        (80, "narrow"),
+        (60, "narrow"),
+    ] {
+        let rendered = common::render_model_with_size(&model, width, common::SNAPSHOT_HEIGHT);
+        let tabs_line = rendered
+            .lines()
+            .nth(4)
+            .map(str::trim_end)
+            .unwrap_or_default();
+        match expectations {
+            "wide" => {
+                assert!(
+                    tabs_line.contains("Conversations"),
+                    "wide tabs at {width}: {tabs_line}"
+                );
+            }
+            "medium" => {
+                assert!(
+                    tabs_line.contains("Convos") && !tabs_line.contains("Conversations"),
+                    "medium tabs at {width}: {tabs_line}"
+                );
+            }
+            "narrow" => {
+                assert!(
+                    tabs_line.contains("Daem") && !tabs_line.contains("Daemon"),
+                    "narrow tabs at {width}: {tabs_line}"
+                );
+                assert!(
+                    tabs_line.contains("Cost") && !tabs_line.contains("Costs"),
+                    "narrow tabs at {width}: {tabs_line}"
+                );
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+#[test]
+fn tabs_narrow_snapshot() {
+    let model = common::model_for_fixture("mixed", MotionLevel::Off);
+    insta::assert_snapshot!(
+        "overview_tabs_narrow_80_cols",
+        common::render_model_with_size(&model, 80, common::SNAPSHOT_HEIGHT)
+    );
+}
+
+#[test]
+fn header_base_truncation_keeps_session_minimum() {
+    let model = common::model_for_fixture("mixed", MotionLevel::Off);
+    for width in [60u16, 80, 100, 140, 200] {
+        let rendered = common::render_model_with_size(&model, width, common::SNAPSHOT_HEIGHT);
+        let header_line = rendered.lines().nth(1).unwrap_or("");
+        assert!(
+            header_line.contains("Flightdeck") && header_line.contains("session"),
+            "base header missing session minimum at width {width}: {header_line}"
+        );
+        let visible = header_line.trim_end_matches([' ', '│']);
+        let session_pos = visible.find("demo-mixed").unwrap_or(usize::MAX);
+        let session_end = session_pos.saturating_add("demo-mixed".len());
+        assert!(
+            session_end <= visible.chars().count() + 8,
+            "session id appears truncated at width {width}: {visible}"
+        );
+    }
+}
+
+#[test]
+fn header_60_cols_drops_low_priority_base_segments() {
+    let rendered = common::render_model_with_size(
+        &common::model_for_fixture("mixed", MotionLevel::Off),
+        60,
+        common::SNAPSHOT_HEIGHT,
+    );
+    let header_line = rendered.lines().nth(1).unwrap_or("");
+    assert!(
+        !header_line.contains("Adhoc"),
+        "kind counts should drop first at 60 cols: {header_line}"
+    );
+    assert!(
+        !header_line.contains("uptime"),
+        "uptime should drop at 60 cols: {header_line}"
+    );
+    assert!(
+        header_line.contains("session demo-mixed"),
+        "session id must remain at 60 cols: {header_line}"
+    );
+    insta::assert_snapshot!("overview_header_60_cols", rendered);
+}
+
+#[test]
+fn header_80_cols_drops_chips_before_base() {
+    let rendered = common::render_model_with_size(
+        &common::model_for_fixture("mixed", MotionLevel::Off),
+        80,
+        common::SNAPSHOT_HEIGHT,
+    );
+    let header_line = rendered.lines().nth(1).unwrap_or("");
+    assert!(
+        header_line.contains("session demo-mixed"),
+        "session id must remain at 80 cols: {header_line}"
+    );
+    insta::assert_snapshot!("overview_header_80_cols", rendered);
+}
+
+#[test]
+fn stale_mixed_fixture_marks_row_stale() {
+    let mut model = common::model_for_fixture("stale-mixed", MotionLevel::Off);
+    model.set_tmux_panes(PaneSnapshot::from_panes([
+        String::from("%25"),
+        String::from("%41"),
+        String::from("%51"),
+    ]));
+    let rendered = common::render_model(&model);
+    assert!(
+        rendered.contains("(stale)"),
+        "stale-mixed fixture should render (stale) annotation:\n{rendered}"
+    );
+    insta::assert_snapshot!("overview_stale_mixed_fixture", rendered);
+}
+
+#[test]
+fn alt_m_keybind_toggles_compact_mode() {
+    let mut model = common::model_for_fixture("mixed", MotionLevel::Off);
+    assert!(!model.ui.compact, "compact starts off");
+    let key = KeyEvent::new(KeyCode::Char('m'), KeyModifiers::ALT);
+    let _commands = update::update(&mut model, Msg::KeyPressed(key));
+    assert!(model.ui.compact, "Alt+M should toggle compact ON");
+    let _commands = update::update(&mut model, Msg::KeyPressed(key));
+    assert!(!model.ui.compact, "Alt+M should toggle compact OFF");
+}
+
+#[test]
+fn alt_m_renders_compact_overview() {
+    let mut model = common::model_for_fixture("mixed", MotionLevel::Off);
+    let key = KeyEvent::new(KeyCode::Char('m'), KeyModifiers::ALT);
+    let _ = update::update(&mut model, Msg::KeyPressed(key));
+    assert!(model.ui.compact);
+    let rendered = common::render_model(&model);
+    assert!(
+        rendered.contains("AH:1") && rendered.contains("ISS:1"),
+        "compact mode summary missing:\n{rendered}"
+    );
+    insta::assert_snapshot!("overview_alt_m_compact", rendered);
 }
 
 #[test]
