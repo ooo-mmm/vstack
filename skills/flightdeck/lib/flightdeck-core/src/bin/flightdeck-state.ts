@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { appendActivityEvent } from "../activity/append.ts";
 import { emitActivity } from "../activity/emit.ts";
 import { formatActivityJsonl, formatActivityLine, formatActivityMarkdown } from "../activity/format.ts";
-import { activityPathForSession } from "../activity/paths.ts";
+import { activityPathForSession, activityPathFromStatePath } from "../activity/paths.ts";
 import { emitMergePlanUpdated, emitSessionCompleted, emitSessionStarted } from "../activity/workflow-emit.ts";
 import { ActivityFilterError, readActivityEvents, readActivityJsonlLines, tailActivityEvents } from "../activity/read.ts";
 import {
@@ -246,7 +246,9 @@ function dieActivityError(error: unknown): never {
 	die(`Error: ${String(error)}`, 1);
 }
 
-function activityFile(): string {
+function activityFile(overrides: { session?: string; stateFile?: string } = {}): string {
+	if (overrides.stateFile) return activityPathFromStatePath(overrides.stateFile);
+	if (overrides.session) return activityPathForSession(overrides.session, resolveStateBase());
 	const envActivity = process.env.FLIGHTDECK_ACTIVITY_FILE;
 	if (typeof envActivity === "string" && envActivity.trim()) return envActivity.trim();
 	return activityPathForSession(session, resolveStateBase());
@@ -255,14 +257,15 @@ function activityFile(): string {
 function runActivity(args: string[]): void {
 	const sub = args[0];
 	if (!sub) die("Usage: activity <path|append|tail|export> [args]");
-	const activity = activityFile();
 	switch (sub) {
 		case "path": {
-			process.stdout.write(`${activity}\n`);
+			const opts = parseActivityReadFlags(args.slice(1), { defaultFormat: "text" });
+			process.stdout.write(`${activityFile({ session: opts.session, stateFile: opts.stateFile })}\n`);
 			break;
 		}
 		case "append": {
-			const jsonText = args.length >= 2 ? args[1]! : readStdinOrDie("Usage: activity append <json-event>");
+			const { session: sessionOverride, stateFile: stateFileOverride, positionals } = parseActivityAppendArgs(args.slice(1));
+			const jsonText = positionals.length >= 1 ? positionals[0]! : readStdinOrDie("Usage: activity append <json-event>");
 			let payload: unknown;
 			try {
 				payload = JSON.parse(jsonText);
@@ -270,8 +273,9 @@ function runActivity(args: string[]): void {
 				die("Error: invalid json-event");
 			}
 			if (!payload || typeof payload !== "object" || Array.isArray(payload)) die("Error: json-event must be an object");
+			const activity = activityFile({ session: sessionOverride, stateFile: stateFileOverride });
 			try {
-				const result = appendActivityEvent(activity, payload, { sessionId: session });
+				const result = appendActivityEvent(activity, payload, { sessionId: sessionOverride || session });
 				const output: { id: string; deduped: boolean; archived?: true } = {
 					id: result.event.id,
 					deduped: !result.appended && !result.archived,
@@ -285,6 +289,7 @@ function runActivity(args: string[]): void {
 		}
 		case "tail": {
 			const opts = parseActivityReadFlags(args.slice(1), { defaultFormat: "text", defaultLimit: 300 });
+			const activity = activityFile({ session: opts.session, stateFile: opts.stateFile });
 			try {
 				const events = tailActivityEvents(activity, opts.limit, { filter: opts.filter, warn: warnLine });
 				if (opts.format === "json") process.stdout.write(formatActivityJsonl(events));
@@ -296,6 +301,7 @@ function runActivity(args: string[]): void {
 		}
 		case "export": {
 			const opts = parseActivityReadFlags(args.slice(1), { defaultFormat: "jsonl" });
+			const activity = activityFile({ session: opts.session, stateFile: opts.stateFile });
 			try {
 				if (opts.format === "markdown") {
 					const events = readActivityEvents(activity, { filter: opts.filter, warn: warnLine });
@@ -316,10 +322,27 @@ function runActivity(args: string[]): void {
 	}
 }
 
-function parseActivityReadFlags(args: string[], defaults: { defaultFormat: "text" | "json" | "jsonl" | "markdown"; defaultLimit?: number }): { filter?: string; format: "text" | "json" | "jsonl" | "markdown"; limit: number } {
+function parseActivityAppendArgs(args: string[]): { session?: string; stateFile?: string; positionals: string[] } {
+	let session: string | undefined;
+	let stateFile: string | undefined;
+	const positionals: string[] = [];
+	for (let i = 0; i < args.length; i += 1) {
+		const arg = args[i]!;
+		if (arg === "--session") { session = args[++i] ?? ""; continue; }
+		if (arg.startsWith("--session=")) { session = arg.slice("--session=".length); continue; }
+		if (arg === "--state-file") { stateFile = args[++i] ?? ""; continue; }
+		if (arg.startsWith("--state-file=")) { stateFile = arg.slice("--state-file=".length); continue; }
+		positionals.push(arg);
+	}
+	return { positionals, session: session || undefined, stateFile: stateFile || undefined };
+}
+
+function parseActivityReadFlags(args: string[], defaults: { defaultFormat: "text" | "json" | "jsonl" | "markdown"; defaultLimit?: number }): { filter?: string; format: "text" | "json" | "jsonl" | "markdown"; limit: number; session?: string; stateFile?: string } {
 	let format = defaults.defaultFormat;
 	let limit = defaults.defaultLimit ?? Number.MAX_SAFE_INTEGER;
 	let filter: string | undefined;
+	let session: string | undefined;
+	let stateFile: string | undefined;
 	for (let i = 0; i < args.length; i += 1) {
 		const arg = args[i]!;
 		if (arg === "--json") { format = "json"; continue; }
@@ -329,9 +352,13 @@ function parseActivityReadFlags(args: string[], defaults: { defaultFormat: "text
 		if (arg.startsWith("--format=")) { format = parseActivityFormat(arg.slice("--format=".length)); continue; }
 		if (arg === "--filter") { filter = args[++i] ?? ""; continue; }
 		if (arg.startsWith("--filter=")) { filter = arg.slice("--filter=".length); continue; }
+		if (arg === "--session") { session = args[++i] ?? ""; continue; }
+		if (arg.startsWith("--session=")) { session = arg.slice("--session=".length); continue; }
+		if (arg === "--state-file") { stateFile = args[++i] ?? ""; continue; }
+		if (arg.startsWith("--state-file=")) { stateFile = arg.slice("--state-file=".length); continue; }
 		die(`Unknown activity flag: ${arg}`);
 	}
-	return { filter, format, limit };
+	return { filter, format, limit, session: session || undefined, stateFile: stateFile || undefined };
 }
 
 function parseActivityFormat(value: string | undefined): "jsonl" | "markdown" {

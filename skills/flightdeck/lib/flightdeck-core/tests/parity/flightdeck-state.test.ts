@@ -383,6 +383,48 @@ describe("flightdeck-state CLI", () => {
 		expect(markdown.stdout).toContain("A1 registered");
 	});
 
+	test("activity export honors --session and --state-file overrides", () => {
+		run(repo, ["init"]);
+		run(repo, ["activity", "append", JSON.stringify({
+			entry_id: "PRIMARY",
+			natural_key: "PRIMARY:start",
+			source: "flightdeck",
+			summary: "primary session line",
+			type: "entry.registered",
+		})]);
+		const stateDir = join(repo, "tmp");
+		mkdirSync(stateDir, { recursive: true });
+		const altSession = "ALT";
+		const altActivity = join(stateDir, `flightdeck-activity-${altSession}.jsonl`);
+		const altEvent = {
+			entry_id: "ALT1",
+			id: "alt-1",
+			natural_key: "ALT1:start",
+			schema_version: 1,
+			session_id: altSession,
+			source: "flightdeck",
+			summary: "alt session line",
+			ts: "2026-05-15T10:00:00Z",
+			type: "entry.registered",
+		};
+		writeFileSync(altActivity, `${JSON.stringify(altEvent)}\n`, "utf8");
+
+		const exportedBySession = run(repo, ["activity", "export", "--session", altSession]);
+		expect(exportedBySession.status).toBe(0);
+		expect(exportedBySession.stdout).toBe(`${JSON.stringify(altEvent)}\n`);
+		expect(exportedBySession.stdout).not.toContain("primary session line");
+
+		const altStateFile = join(stateDir, `flightdeck-state-${altSession}.json`);
+		writeFileSync(altStateFile, JSON.stringify({ session_id: altSession }), "utf8");
+		const exportedByStateFile = run(repo, ["activity", "export", "--state-file", altStateFile]);
+		expect(exportedByStateFile.status).toBe(0);
+		expect(exportedByStateFile.stdout).toBe(`${JSON.stringify(altEvent)}\n`);
+
+		const defaultExport = run(repo, ["activity", "export", "--format", "jsonl"]);
+		expect(defaultExport.status).toBe(0);
+		expect(defaultExport.stdout).toContain("primary session line");
+	});
+
 	test("activity append and filters reject invalid input", () => {
 		const invalidSeverity = run(repo, ["activity", "append", JSON.stringify({
 			severity: "bad",
