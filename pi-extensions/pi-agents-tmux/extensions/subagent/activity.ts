@@ -68,6 +68,10 @@ function activityType(eventName: string, status?: string, reason?: string): stri
 	if (eventName === "subagents:steered") return "agent.steered";
 	if (eventName === "subagents:needs_completion" && reason === "compact-then-empty") return "agent.empty_after_compact";
 	if (eventName === "subagents:needs_completion") return "agent.needs_completion";
+	if (eventName === "subagents:rate_limited") return "agent.rate_limited";
+	if (eventName === "subagents:rate_limit_retry") return "agent.rate_limit_retry";
+	if (eventName === "subagents:rate_limit_resolved") return "agent.rate_limit_resolved";
+	if (eventName === "subagents:rate_limit_exhausted") return "agent.rate_limit_exhausted";
 	if (eventName === "subagents:completed" || status === "completed") return "agent.task_completed";
 	if (status === "blocked") return "agent.task_blocked";
 	if (eventName === "subagents:failed" || status === "failed" || status === "aborted") return "agent.task_failed";
@@ -75,14 +79,25 @@ function activityType(eventName: string, status?: string, reason?: string): stri
 }
 
 function severityFor(type: string): PiActivitySeverity {
-	if (type === "agent.task_completed") return "success";
-	if (type === "agent.task_failed") return "error";
-	if (type === "agent.spawned" || type === "agent.task_started" || type === "agent.task_queued" || type === "agent.steered") return "info";
+	if (type === "agent.task_completed" || type === "agent.rate_limit_resolved") return "success";
+	if (type === "agent.task_failed" || type === "agent.rate_limit_exhausted") return "error";
+	if (
+		type === "agent.spawned"
+		|| type === "agent.task_started"
+		|| type === "agent.task_queued"
+		|| type === "agent.steered"
+		|| type === "agent.rate_limit_retry"
+	) return "info";
 	return "warning";
 }
 
 function importanceFor(type: string): PiActivityImportance {
-	if (type === "agent.task_completed" || type === "agent.task_started" || type === "agent.task_queued") return "normal";
+	if (
+		type === "agent.task_completed"
+		|| type === "agent.task_started"
+		|| type === "agent.task_queued"
+		|| type === "agent.rate_limit_resolved"
+	) return "normal";
 	if (type === "agent.spawned" || type === "agent.steered") return "noisy";
 	return "important";
 }
@@ -101,6 +116,10 @@ function summaryFor(type: string, agent?: string, taskId?: string, payload: Reco
 		case "agent.needs_completion": return payloadSummary || `${who} task${suffix} needs completion`;
 		case "agent.empty_after_compact": return payloadSummary || `${who} task${suffix} empty after compact`;
 		case "agent.steered": return `${who} task${suffix} steered`;
+		case "agent.rate_limited": return payloadSummary || `${who} rate-limited`;
+		case "agent.rate_limit_retry": return payloadSummary || `${who} rate-limit retry`;
+		case "agent.rate_limit_resolved": return payloadSummary || `${who} rate-limit resolved`;
+		case "agent.rate_limit_exhausted": return payloadSummary || `${who} rate-limit exhausted`;
 		default: return payloadSummary || `${who} activity`;
 	}
 }

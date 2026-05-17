@@ -98,6 +98,13 @@ import {
 	watchdogGraceMsFromEnv,
 } from "./agent-end-watchdog.js";
 import {
+	backoffLadderSecFromEnv as rateLimitBackoffLadderSecFromEnv,
+	createSubagentRateLimitWatchdog,
+	defaultScheduleAfter as rateLimitDefaultScheduleAfter,
+	maxAttemptsFromEnv as rateLimitMaxAttemptsFromEnv,
+	watchdogEnabledFromEnv as rateLimitWatchdogEnabledFromEnv,
+} from "./rate-limit-watchdog.js";
+import {
 	createIdleStallWatchdog,
 	STALL_WATCHDOG_REASON,
 	stallWatchdogEnabledFromEnv,
@@ -403,9 +410,40 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
+	// Rate-limit watchdog (vstack#108): rides on `pi.on("message_end")` for
+	// the canonical Claude / pi-coding-agent rate-limit error shape.
+	// Schedules a retry-with-backoff steer via pi.sendUserMessage and
+	// gates the agent-end watchdog so its synthetic needs_completion
+	// outbox does not race the recovery.
+	const rateLimitWatchdog = createSubagentRateLimitWatchdog({
+		now: () => Date.now(),
+		scheduleAfter: rateLimitDefaultScheduleAfter,
+		isEnabled: () => rateLimitWatchdogEnabledFromEnv(),
+		maxAttempts: () => rateLimitMaxAttemptsFromEnv(),
+		backoffLadderSec: () => rateLimitBackoffLadderSecFromEnv(),
+		sendUserMessage: (message) => {
+			try {
+				pi.sendUserMessage(message);
+			} catch (error) {
+				console.warn(`rate-limit-watchdog: pi.sendUserMessage failed (${(error as Error)?.message ?? error})`);
+			}
+		},
+		emitActivity: (eventName, payload) => {
+			emitSubagentEvent(pi, eventName, payload);
+		},
+		onExhausted: (_paneId, attempt, reason) => {
+			// Fall through to the existing agent-end watchdog: clearing the
+			// retry state lets the next agent_end handler run the synthetic
+			// needs_completion outbox flow without further interference.
+			console.warn(`rate-limit-watchdog: exhausted after ${attempt} attempt(s) — falling back to needs_completion (${reason})`);
+		},
+		logWarn: (message) => console.warn(message),
+	});
+
 	// Idle-stall watchdog (vstack#63 workaround): polls active tasks for
 	// pi-core post-compaction stalls where agent_end never fires. Reuses
 	// the W5 O_EXCL writer so a racing real complete_subagent always wins.
+
 	let currentRuntimeRoot: string | undefined;
 	const idleStallWatchdog = createIdleStallWatchdog({
 		intervalMs: stallWatchdogIntervalMsFromEnv(),
@@ -1221,9 +1259,32 @@ export default function (pi: ExtensionAPI) {
 		idleStallWatchdog.start();
 	});
 
+	// vstack#108: rate-limit-watchdog rides on message_end so it can
+	// observe the canonical Claude rate-limit signature (assistant turn
+	// with stopReason==="error" + "temporarily limiting requests" prose)
+	// before agent_end fires its existing missing-completion path. The
+	// pane id passed downstream is the child agent name — each subagent
+	// pane runs its own Pi instance with a single in-pane child so a
+	// per-agent counter is the right granularity.
+	pi.on("message_end", async (event: any) => {
+		if (!childAgentName) return;
+		try {
+			const taskId = childCurrentTaskFile
+				? path.basename(childCurrentTaskFile, path.extname(childCurrentTaskFile))
+				: undefined;
+			rateLimitWatchdog.onMessageEnd(event, childAgentName, childAgentName, taskId);
+		} catch (error) {
+			console.warn(`rate-limit-watchdog: message_end handler failed (${(error as Error)?.message ?? error})`);
+		}
+	});
+
 	pi.on("agent_end", async (_event, ctx) => {
 		if (!childAgentName) return;
 		lastChildAgentEndCtx = ctx;
+		// vstack#108: when the rate-limit watchdog has a retry scheduled for
+		// this pane, skip the agent-end-watchdog's needs_completion path so
+		// the steer can race the synthetic outbox.
+		const rateLimitAwaitingRetry = rateLimitWatchdog.isAwaitingRetry(childAgentName);
 		if (childCurrentTaskFile) {
 			const runtimeRoot = runtimeDirForContext(ctx);
 			const activeTaskFile = childCurrentTaskFile;
@@ -1242,6 +1303,13 @@ export default function (pi: ExtensionAPI) {
 					const records = await readTaskRegistry(runtimeRoot);
 					if (isTerminalTaskStatus(records[taskId]?.status)) manualCompletionOk = true;
 				}
+			}
+
+			if (!pendingMatches && !manualCompletionOk && rateLimitAwaitingRetry) {
+				// vstack#108: rate-limit retry will reissue the steer; defer
+				// the immediate needs_completion mark + UI status until the
+				// retry either succeeds (rate_limit_resolved) or exhausts.
+				return;
 			}
 
 			if (!pendingMatches && !manualCompletionOk) {
@@ -1306,6 +1374,11 @@ export default function (pi: ExtensionAPI) {
 		// follow-ups, sessionless steers, etc.). If any task record for this
 		// agent is still active and has no outbox after the grace window, write
 		// a synthetic needs_completion outbox so the parent's wake handler runs.
+		//
+		// vstack#108: skip this scan when the rate-limit watchdog has a retry
+		// in flight for this pane — otherwise the synthetic outbox races the
+		// scheduled steer and the parent gets a misleading 'needs completion'.
+		if (rateLimitAwaitingRetry) return;
 		try {
 			const runtimeRoot = runtimeDirForContext(ctx);
 			const records = await readTaskRegistry(runtimeRoot);

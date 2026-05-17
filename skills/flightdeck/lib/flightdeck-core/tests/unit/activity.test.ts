@@ -96,6 +96,29 @@ describe("activity event normalization", () => {
 		expect(emptyBranch.refs?.branch).toBeUndefined();
 	});
 
+	test("accepts new agent.rate_limit_* types (vstack#108)", () => {
+		for (const type of [
+			"agent.rate_limited",
+			"agent.rate_limit_retry",
+			"agent.rate_limit_resolved",
+			"agent.rate_limit_exhausted",
+		]) {
+			const event = normalizeActivityEvent(
+				{
+					details: { attempt: 2, next_retry_at: 1_700_000_000_000 },
+					refs: { agent: "rust" },
+					source: "pi-agents-tmux",
+					summary: `rust ${type}`,
+					type,
+				},
+				{ naturalKey: `pane:%41:${type}`, sessionId: "S1" },
+			);
+			expect(event.type).toBe(type);
+			expect(event.refs?.agent).toBe("rust");
+			expect(event.details?.attempt).toBe(2);
+		}
+	});
+
 	test("accepts new pr/issue labeled and unlabeled types", () => {
 		for (const type of ["pr.labeled", "pr.unlabeled", "issue.labeled", "issue.unlabeled"]) {
 			const event = normalizeActivityEvent(
