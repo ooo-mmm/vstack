@@ -210,6 +210,55 @@ describe("subscriber wake row activity mapping", () => {
 		expect(rows[0]).toMatchObject({ importance: "important", pane_id: "%24", severity: "warning", type: "daemon.warning" });
 	});
 
+	test.each([
+		["pi-rate-limit-skipped", "rate_limit_skipped", "agent.rate_limit_skipped", "debug", "noisy", "rate-limit skipped: no-stopreason"],
+		["pi-rate-limit-retry", "rate_limit_retry", "agent.rate_limit_retry", "info", "important", "rate-limit retry scheduled: attempt 2"],
+		["pi-rate-limit-resolved", "rate_limit_resolved", "agent.rate_limit_resolved", "success", "normal", "rate-limit resolved after attempt 2"],
+		["pi-rate-limit-exhausted", "rate_limit_exhausted", "agent.rate_limit_exhausted", "error", "important", "rate-limit exhausted after attempt 2"],
+	] as const)("%s maps to activity", (tag, eventType, type, severity, importance, summary) => {
+		emitActivityForWakeRow(ctx(), {
+			attempt: 2,
+			classifier_tag: tag,
+			event_type: eventType,
+			harness: "pi",
+			hash: `${tag}-hash`,
+			next_retry_at: tag === "pi-rate-limit-retry" ? 1_700_000_000_000 : undefined,
+			pane_id: "%24",
+			reason: tag === "pi-rate-limit-skipped" ? "no-stopreason" : undefined,
+			ts: "2026-05-15T00:00:00Z",
+		});
+		expect(wakeRows()).toHaveLength(0);
+		const rows = activityRows();
+		expect(rows[0]).toMatchObject({
+			harness: "pi",
+			importance,
+			pane_id: "%24",
+			severity,
+			summary,
+			type,
+		});
+		expect(rows[0]?.details).toMatchObject({
+			event_type: eventType,
+			hash: `${tag}-hash`,
+		});
+	});
+
+	test("rate-limit decider error maps to daemon warning activity", () => {
+		emitActivityForWakeRow(ctx(), {
+			classifier_tag: "pi-rate-limit-decider-error",
+			error: "boom",
+			event_type: "rate_limit_decider_error",
+			exit_code: 2,
+			harness: "pi",
+			hash: "deciderhash",
+			pane_id: "%24",
+			reason: "decider-exit",
+		});
+		const rows = activityRows();
+		expect(rows[0]).toMatchObject({ importance: "important", severity: "warning", summary: "rate-limit decider error: decider-exit", type: "daemon.warning" });
+		expect(rows[0]?.details).toMatchObject({ error: "boom", event_type: "rate_limit_decider_error", exit_code: 2, reason: "decider-exit" });
+	});
+
 	test("question opened maps to question.opened", () => {
 		emitActivityForWakeRow(ctx(), {
 			classifier_tag: "pi-question",

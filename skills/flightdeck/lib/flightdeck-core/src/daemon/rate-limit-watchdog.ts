@@ -44,8 +44,14 @@ export interface RateLimitWatchdogInput {
 	now: number;
 }
 
+export type RateLimitSkipReason = "non-assistant" | "no-stopreason" | "stopreason-mismatch" | "no-prose";
+
+export type RateLimitEventClassification =
+	| { isRateLimitEvent: true }
+	| { isRateLimitEvent: false; reason: RateLimitSkipReason };
+
 export type RateLimitWatchdogDecision =
-	| { kind: "not-rate-limited" }
+	| { kind: "not-rate-limited"; reason: RateLimitSkipReason }
 	| {
 		kind: "retry-at";
 		at: number;
@@ -87,14 +93,19 @@ export function rateLimitBackoffLadderFromEnv(env: NodeJS.ProcessEnv = process.e
 	return parts.length > 0 ? parts : [...RATE_LIMIT_DEFAULT_BACKOFF_LADDER_SEC];
 }
 
-export function isRateLimitEvent(event: unknown): boolean {
+export function classifyRateLimitEvent(event: unknown): RateLimitEventClassification {
 	const message = readAssistantMessage(event);
-	if (!message) return false;
+	if (!message) return { isRateLimitEvent: false, reason: "non-assistant" };
 	const stopReason = readAssistantStopReason(message);
-	if (stopReason !== "error") return false;
+	if (!stopReason) return { isRateLimitEvent: false, reason: "no-stopreason" };
+	if (stopReason !== "error") return { isRateLimitEvent: false, reason: "stopreason-mismatch" };
 	const text = extractAssistantErrorText(message);
-	if (!text) return false;
-	return RATE_LIMIT_ERROR_REGEX.test(text);
+	if (!text || !RATE_LIMIT_ERROR_REGEX.test(text)) return { isRateLimitEvent: false, reason: "no-prose" };
+	return { isRateLimitEvent: true };
+}
+
+export function isRateLimitEvent(event: unknown): boolean {
+	return classifyRateLimitEvent(event).isRateLimitEvent;
 }
 
 export function isAssistantMessageEvent(event: unknown): boolean {
@@ -135,7 +146,8 @@ export function decideRateLimitRetry(
 	input: RateLimitWatchdogInput,
 	envOverride: RateLimitWatchdogEnv = {},
 ): RateLimitWatchdogDecision {
-	if (!isRateLimitEvent(input.event)) return { kind: "not-rate-limited" };
+	const classification = classifyRateLimitEvent(input.event);
+	if (!classification.isRateLimitEvent) return { kind: "not-rate-limited", reason: classification.reason };
 
 	const maxAttempts = envOverride.maxAttempts ?? rateLimitMaxAttemptsFromEnv();
 	if (input.attempt >= maxAttempts) {
@@ -198,17 +210,17 @@ function readAssistantStopReason(message: Record<string, unknown>): string | nul
 	return typeof value === "string" ? value : null;
 }
 
-// CLI entry: `bun rate-limit-watchdog.ts decide --event <json> --pane <id> --attempt <n> [--now <ms>]`
+// CLI entry: `printf '%s' "$event_json" | bun rate-limit-watchdog.ts decide --pane <id> --attempt <n> [--now <ms>]`
 // Used by the bash pi subscriber (Layer B) so it can route rate-limit
 // events through the same decision module without re-implementing the
 // ladder math. Outputs the decision as JSON on stdout, exits 0.
-// `--event` accepts a JSON-encoded event payload; if omitted, the event
-// is read from stdin.
+// `--event` remains accepted for manual debugging; production callers
+// should omit it so event JSON is read from stdin instead of process argv.
 if (import.meta.main) {
 	const args = process.argv.slice(2);
 	const action = args.shift();
 	if (action !== "decide") {
-		process.stderr.write("Usage: rate-limit-watchdog.ts decide --event <json> --pane <id> --attempt <n> [--now <ms>]\n");
+		process.stderr.write("Usage: rate-limit-watchdog.ts decide --pane <id> --attempt <n> [--now <ms>] < event.json\n");
 		process.exit(2);
 	}
 	let eventJson = "";
