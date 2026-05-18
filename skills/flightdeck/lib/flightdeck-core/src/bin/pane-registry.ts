@@ -146,6 +146,26 @@ function lookupId(raw: string): string {
 	}
 }
 
+function lookupIdOrPane(raw: string, requireLivePane = false): string {
+	const id = lookupId(raw);
+	if (!id) return id;
+	if (registryHasEntry(id)) return id;
+	const matches = Object.entries(trackedEntries()).filter(([, entry]) => entry.pane_id === id || entry.pane_target === id);
+	if (!matches.length) return id;
+	if (!requireLivePane) return matches[0]![0];
+	for (const [key, entry] of matches) {
+		const paneId = typeof entry.pane_id === "string" ? entry.pane_id : "";
+		const paneTarget = typeof entry.pane_target === "string" ? entry.pane_target : "";
+		if (paneMatchIsLive(paneId, paneTarget)) return key;
+	}
+	const [, firstEntry] = matches[0]!;
+	warnStalePaneMatch(
+		typeof firstEntry.pane_id === "string" ? firstEntry.pane_id : "",
+		typeof firstEntry.pane_target === "string" ? firstEntry.pane_target : "",
+	);
+	process.exit(1);
+}
+
 interface InitFields {
 	branch: string;
 	cc_port: string;
@@ -161,6 +181,15 @@ interface InitFields {
 	launch_cmd: string;
 	launch_effort: string;
 	launch_model: string;
+	launch_argv_json: string;
+	launch_effort_source: string;
+	launch_model_source: string;
+	launch_reasoning_status: string;
+	launch_requested_effort: string;
+	launch_requested_model: string;
+	launch_resolved_effort: string;
+	launch_resolved_model: string;
+	launch_unsupported_reason: string;
 	oc_port: string;
 	oc_session_id: string;
 	oc_url: string;
@@ -187,7 +216,10 @@ function defaultInitFields(entryId: string, kind = "adhoc"): InitFields {
 		discovery_error: "",
 		harness: "",
 		kind,
-		launch_cmd: "", launch_effort: "", launch_model: "",
+		launch_argv_json: "", launch_cmd: "", launch_effort: "", launch_effort_source: "",
+		launch_model: "", launch_model_source: "", launch_reasoning_status: "",
+		launch_requested_effort: "", launch_requested_model: "",
+		launch_resolved_effort: "", launch_resolved_model: "", launch_unsupported_reason: "",
 		oc_port: "", oc_session_id: "", oc_url: "",
 		pane_id: "", pane_index: tmuxBasePaneIndex() || "0", pane_target: "",
 		pi_bridge_pid: "", pi_bridge_socket: "", pi_session_id: "",
@@ -210,9 +242,18 @@ const INIT_FLAG_MAP: Record<string, keyof InitFields> = {
 	"--discovery-error": "discovery_error",
 	"--harness": "harness",
 	"--kind": "kind",
+	"--launch-argv-json": "launch_argv_json",
 	"--launch-cmd": "launch_cmd",
 	"--launch-effort": "launch_effort",
+	"--launch-effort-source": "launch_effort_source",
 	"--launch-model": "launch_model",
+	"--launch-model-source": "launch_model_source",
+	"--launch-reasoning-status": "launch_reasoning_status",
+	"--launch-requested-effort": "launch_requested_effort",
+	"--launch-requested-model": "launch_requested_model",
+	"--launch-resolved-effort": "launch_resolved_effort",
+	"--launch-resolved-model": "launch_resolved_model",
+	"--launch-unsupported-reason": "launch_unsupported_reason",
 	"--oc-port": "oc_port",
 	"--oc-session-id": "oc_session_id",
 	"--oc-url": "oc_url",
@@ -238,6 +279,31 @@ function parseInitFlags(fields: InitFields, args: string[]): void {
 	}
 }
 
+function hydrateLaunchFields(fields: InitFields, launch: Record<string, unknown> | undefined): void {
+	if (!launch) return;
+	if (!fields.launch_model) fields.launch_model = String(launch.model ?? "");
+	if (!fields.launch_effort) fields.launch_effort = String(launch.effort ?? "");
+	if (!fields.launch_requested_model) fields.launch_requested_model = String(launch.requested_model ?? "");
+	if (!fields.launch_requested_effort) fields.launch_requested_effort = String(launch.requested_effort ?? "");
+	if (!fields.launch_model_source) fields.launch_model_source = String(launch.model_source ?? launch.source ?? "");
+	if (!fields.launch_effort_source) fields.launch_effort_source = String(launch.effort_source ?? launch.source ?? "");
+	if (!fields.launch_resolved_model) fields.launch_resolved_model = String(launch.resolved_model ?? launch.model ?? "");
+	if (!fields.launch_resolved_effort) fields.launch_resolved_effort = String(launch.resolved_effort ?? launch.effort ?? "");
+	if (!fields.launch_reasoning_status) fields.launch_reasoning_status = String(launch.reasoning_status ?? "");
+	if (!fields.launch_unsupported_reason) fields.launch_unsupported_reason = String(launch.unsupported_reason ?? "");
+	if (!fields.launch_argv_json && Array.isArray(launch.argv)) fields.launch_argv_json = JSON.stringify(launch.argv);
+}
+
+function parseArgvJson(value: string): string[] | null {
+	if (!value) return null;
+	try {
+		const parsed = JSON.parse(value) as unknown;
+		return Array.isArray(parsed) && parsed.every((item) => typeof item === "string") ? parsed : null;
+	} catch {
+		return null;
+	}
+}
+
 function hydrateSpawnMetadata(entryId: string, fields: InitFields): void {
 	const harness = fields.harness;
 	if (harness === "opencode" && !fields.oc_url) {
@@ -247,8 +313,7 @@ function hydrateSpawnMetadata(entryId: string, fields: InitFields): void {
 			fields.oc_session_id = String(rec.session_id ?? "");
 			fields.oc_port = String(rec.port ?? "");
 			const launch = rec.launch as Record<string, unknown> | undefined;
-			if (!fields.launch_model) fields.launch_model = String(launch?.model ?? "");
-			if (!fields.launch_effort) fields.launch_effort = String(launch?.effort ?? "");
+			hydrateLaunchFields(fields, launch);
 		}
 	}
 	if (harness === "claude" && !fields.cc_url) {
@@ -259,8 +324,7 @@ function hydrateSpawnMetadata(entryId: string, fields: InitFields): void {
 			fields.cc_port = String(rec.port ?? "");
 			fields.cc_transcript = String(rec.transcript ?? "");
 			const launch = rec.launch as Record<string, unknown> | undefined;
-			if (!fields.launch_model) fields.launch_model = String(launch?.model ?? "");
-			if (!fields.launch_effort) fields.launch_effort = String(launch?.effort ?? "");
+			hydrateLaunchFields(fields, launch);
 		}
 	}
 	if (harness === "pi" && !fields.pi_bridge_pid) {
@@ -270,8 +334,7 @@ function hydrateSpawnMetadata(entryId: string, fields: InitFields): void {
 			fields.pi_bridge_socket = String(rec.socket ?? "");
 			fields.pi_session_id = String(rec.session_id ?? "");
 			const launch = rec.launch as Record<string, unknown> | undefined;
-			if (!fields.launch_model) fields.launch_model = String(launch?.model ?? "");
-			if (!fields.launch_effort) fields.launch_effort = String(launch?.effort ?? "");
+			hydrateLaunchFields(fields, launch);
 		}
 	}
 	if (harness === "codex" && !fields.cx_ws) {
@@ -280,8 +343,7 @@ function hydrateSpawnMetadata(entryId: string, fields: InitFields): void {
 			fields.cx_ws = String(rec.url ?? "");
 			fields.cx_thread_id = String(rec.thread_id ?? "");
 			const launch = rec.launch as Record<string, unknown> | undefined;
-			if (!fields.launch_model) fields.launch_model = String(launch?.model ?? "");
-			if (!fields.launch_effort) fields.launch_effort = String(launch?.effort ?? "");
+			hydrateLaunchFields(fields, launch);
 		}
 	}
 }
@@ -305,8 +367,22 @@ function cmdInitEntry(entryId: string, args: string[], mode: "entry" | "issue" =
 	let paneId = fields.pane_id;
 	if (!paneId && tmuxPaneExists(paneTarget)) paneId = tmuxField(paneTarget, "#{pane_id}");
 
-	const launch = (fields.launch_model || fields.launch_effort || fields.launch_cmd)
-		? { cmd: fields.launch_cmd || null, effort: fields.launch_effort || null, model: fields.launch_model || null }
+	const launchArgv = parseArgvJson(fields.launch_argv_json);
+	const launch = (fields.launch_model || fields.launch_effort || fields.launch_cmd || fields.launch_requested_model || fields.launch_requested_effort || fields.launch_resolved_model || fields.launch_resolved_effort || fields.launch_reasoning_status || fields.launch_unsupported_reason || launchArgv)
+		? {
+			argv: launchArgv,
+			cmd: fields.launch_cmd || null,
+			effort: fields.launch_effort || null,
+			effort_source: fields.launch_effort_source || null,
+			model: fields.launch_model || null,
+			model_source: fields.launch_model_source || null,
+			reasoning_status: fields.launch_reasoning_status || null,
+			requested_effort: fields.launch_requested_effort || null,
+			requested_model: fields.launch_requested_model || null,
+			resolved_effort: fields.launch_resolved_effort || fields.launch_effort || null,
+			resolved_model: fields.launch_resolved_model || fields.launch_model || null,
+			unsupported_reason: fields.launch_unsupported_reason || null,
+		}
 		: null;
 	const adapter = {
 		cc_port: numOrNull(fields.cc_port),
@@ -331,7 +407,7 @@ function cmdInitEntry(entryId: string, args: string[], mode: "entry" | "issue" =
 		worktree: strOrNull(fields.worktree),
 	} : undefined;
 	const ts = nowIso();
-	const entry = {
+	const entry: Record<string, unknown> = {
 		adapter,
 		branch: strOrNull(fields.branch),
 		cwd: fields.cwd,
@@ -361,6 +437,11 @@ function cmdInitEntry(entryId: string, args: string[], mode: "entry" | "issue" =
 		window_id: strOrNull(fields.window_id),
 		window_index: numOrNull(fields.window_index),
 	};
+	if (fields.kind !== "issue") {
+		const pr = numOrNull(fields.pr);
+		if (pr !== null) entry.pr_number = pr;
+		if (fields.worktree) entry.worktree = strOrNull(fields.worktree);
+	}
 
 	fdStateOrDie(["write-entry", entryId, JSON.stringify(entry)]);
 	emitEntryRegistered(entry);
@@ -451,7 +532,10 @@ function entryRefs(entry: EntryRecord): Record<string, unknown> | undefined {
 	if (taskId) refs.task_id = taskId;
 	const issueId = typeof issue.id === "string" && issue.id ? issue.id : undefined;
 	if (issueId) refs.issue_id = issueId;
-	if (typeof issue.pr_number === "number" && Number.isFinite(issue.pr_number)) refs.pr_number = Math.trunc(issue.pr_number);
+	const prNumber = typeof issue.pr_number === "number" && Number.isFinite(issue.pr_number)
+		? issue.pr_number
+		: typeof entry.pr_number === "number" && Number.isFinite(entry.pr_number) ? entry.pr_number : undefined;
+	if (typeof prNumber === "number") refs.pr_number = Math.trunc(prNumber);
 	return Object.keys(refs).length > 0 ? refs : undefined;
 }
 
@@ -603,7 +687,9 @@ const ISSUE_DOMAIN_FIELDS = new Set([
 function setEntryField(id: string, field: string, value: string): void {
 	if (!registryHasEntry(id)) die(`pane-registry: entry '${id}' not found in .entries`);
 	const idJson = JSON.stringify(id);
-	if (ISSUE_DOMAIN_FIELDS.has(field)) {
+	const entry = entryById(id);
+	const kind = typeof entry?.kind === "string" ? entry.kind : "";
+	if (ISSUE_DOMAIN_FIELDS.has(field) && kind === "issue") {
 		fdStateOrDie(["set", `.entries[${idJson}].domain.issue.${field}`, value]);
 		return;
 	}
@@ -621,6 +707,8 @@ function entryRows(): Record<string, unknown>[] {
 		const adapter = nestedRecord(entry, "adapter");
 		const domain = nestedRecord(entry, "domain");
 		const issue = nestedRecord(domain, "issue");
+		const topLevelPr = typeof entry.pr_number === "number" && Number.isFinite(entry.pr_number) ? Math.trunc(entry.pr_number) : null;
+		const topLevelWorktree = typeof entry.worktree === "string" && entry.worktree ? entry.worktree : null;
 		const id = typeof entry.id === "string" ? entry.id : key;
 		const kind = typeof entry.kind === "string" ? entry.kind : "issue";
 		return {
@@ -640,10 +728,10 @@ function entryRows(): Record<string, unknown>[] {
 			pi_bridge_pid: adapter.pi_bridge_pid ?? null,
 			pi_bridge_socket: adapter.pi_bridge_socket ?? null,
 			pi_session_id: adapter.pi_session_id ?? null,
-			pr_number: issue.pr_number ?? null,
+			pr_number: issue.pr_number ?? topLevelPr,
 			scope_files_actual: issue.scope_files_actual ?? null,
 			scope_files_declared: issue.scope_files_declared ?? null,
-			worktree: issue.worktree ?? entry.cwd ?? null,
+			worktree: issue.worktree ?? topLevelWorktree ?? entry.cwd ?? null,
 		};
 	});
 }
@@ -789,7 +877,7 @@ function safeUnlink(p: string): void {
 
 function cmdOcAttachArgs(issue: string): void {
 	if (!issue) die("Usage: oc-attach-args <ISSUE>");
-	issue = lookupId(issue);
+	issue = lookupIdOrPane(issue, true);
 	const url = readField(issue, "oc_url");
 	const sid = readField(issue, "oc_session_id");
 	if (url && sid && url !== "null" && sid !== "null") {
@@ -799,7 +887,7 @@ function cmdOcAttachArgs(issue: string): void {
 
 function cmdCcChannelArgs(issue: string): void {
 	if (!issue) die("Usage: cc-channel-args <ISSUE>");
-	issue = lookupId(issue);
+	issue = lookupIdOrPane(issue, true);
 	const url = readField(issue, "cc_url");
 	const transcript = readField(issue, "cc_transcript");
 	if (url && transcript && url !== "null" && transcript !== "null") {
@@ -809,7 +897,7 @@ function cmdCcChannelArgs(issue: string): void {
 
 function cmdPiBridgeArgs(issue: string): void {
 	if (!issue) die("Usage: pi-bridge-args <ISSUE>");
-	issue = lookupId(issue);
+	issue = lookupIdOrPane(issue, true);
 	const pid = readField(issue, "pi_bridge_pid");
 	const socket = readField(issue, "pi_bridge_socket");
 	if (pid && socket && pid !== "null" && socket !== "null") {
@@ -819,7 +907,7 @@ function cmdPiBridgeArgs(issue: string): void {
 
 function cmdCxBridgeArgs(issue: string): void {
 	if (!issue) die("Usage: cx-bridge-args <ISSUE>");
-	issue = lookupId(issue);
+	issue = lookupIdOrPane(issue, true);
 	const url = readField(issue, "cx_ws");
 	const thread = readField(issue, "cx_thread_id");
 	if (url && thread && url !== "null" && thread !== "null") {
@@ -831,16 +919,21 @@ function cmdCxBridgeArgs(issue: string): void {
 
 function cmdFindByPane(target: string): void {
 	if (!target) die("Usage: find-by-pane <pane-target-or-pane-id>");
-	const hit = Object.entries(trackedEntries()).find(([, entry]) => entry.pane_target === target || entry.pane_id === target);
-	if (!hit) process.exit(1);
-	const [key, entry] = hit;
-	const paneId = typeof entry.pane_id === "string" ? entry.pane_id : "";
-	const paneTarget = typeof entry.pane_target === "string" ? entry.pane_target : "";
-	if (!paneMatchIsLive(paneId, paneTarget)) {
-		warnStalePaneMatch(paneId, paneTarget);
-		process.exit(1);
+	const hits = Object.entries(trackedEntries()).filter(([, entry]) => entry.pane_target === target || entry.pane_id === target);
+	if (!hits.length) process.exit(1);
+	for (const [key, entry] of hits) {
+		const paneId = typeof entry.pane_id === "string" ? entry.pane_id : "";
+		const paneTarget = typeof entry.pane_target === "string" ? entry.pane_target : "";
+		if (!paneMatchIsLive(paneId, paneTarget)) continue;
+		process.stdout.write(`${JSON.stringify({ id: typeof entry.id === "string" ? entry.id : key, kind: typeof entry.kind === "string" ? entry.kind : "issue" })}\n`);
+		return;
 	}
-	process.stdout.write(`${JSON.stringify({ id: typeof entry.id === "string" ? entry.id : key, kind: typeof entry.kind === "string" ? entry.kind : "issue" })}\n`);
+	const [, entry] = hits[0]!;
+	warnStalePaneMatch(
+		typeof entry.pane_id === "string" ? entry.pane_id : "",
+		typeof entry.pane_target === "string" ? entry.pane_target : "",
+	);
+	process.exit(1);
 }
 
 // ----- reconcile / remove-merged -------------------------------------------

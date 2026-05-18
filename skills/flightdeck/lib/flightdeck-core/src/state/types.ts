@@ -58,6 +58,15 @@ export interface TrackedEntryLaunch {
 	model?: string | null;
 	effort?: string | null;
 	cmd?: string | null;
+	requested_model?: string | null;
+	requested_effort?: string | null;
+	resolved_model?: string | null;
+	resolved_effort?: string | null;
+	model_source?: string | null;
+	effort_source?: string | null;
+	argv?: string[] | null;
+	reasoning_status?: "configured" | "recorded" | "unsupported" | "not-applicable" | string | null;
+	unsupported_reason?: string | null;
 	[key: string]: unknown;
 }
 
@@ -82,6 +91,15 @@ export interface TrackedEntry {
 	decisions_log?: DecisionLogEntry[];
 	unknown_since?: string | null;
 	merge_commit?: string | null;
+	/**
+	 * PR number for generic ad-hoc/workflow entries that create a pull
+	 * request outside the issue-domain model. Issue-mode entries keep the
+	 * canonical value under `domain.issue.pr_number`; readers should prefer
+	 * that and fall back to this field for non-issue rows.
+	 */
+	pr_number?: number | null;
+	/** Optional worktree override for non-issue rows. */
+	worktree?: string | null;
 	/**
 	 * Git branch captured at spawn time by `flightdeck-session start`
 	 * via `git -C <cwd> rev-parse --abbrev-ref HEAD`. Null when the cwd

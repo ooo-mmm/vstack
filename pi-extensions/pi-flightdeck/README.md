@@ -1,10 +1,10 @@
 # pi-flightdeck
 
-> **DEPRECATED for new sessions.** A first-class Rust dashboard ships with the flightdeck skill at `skills/flightdeck/lib/flightdeck-dashboard/`. Run `flightdeck-dashboard tui` (auto-launched by `workflows/start.md`) for the same surfaces with native motion, file-watched live updates, and a daemon read-shim. This extension remains supported for sessions that prefer in-pi mission control until parity is verified across all installs.
+> **DEPRECATED for new sessions.** The Rust dashboard at `skills/flightdeck/lib/flightdeck-dashboard/` now has feature parity for everything this extension renders — structured activity rendering, rate-limit recovery surfacing, branch/entry binding, watchdog activity rows, the `(stale)` row annotation, responsive tabs, the Costs detail popup (`p`), Alt+M compact mode, theme picker swatch slots, conversations file-mode, and Unicode display-width — with native motion, file-watched live updates, and a daemon read-shim. Run `flightdeck-dashboard tui` (auto-launched by `workflows/start.md`) instead. This extension remains supported for sessions that prefer in-pi mission control until parity is verified across all installs.
 
 > ⚠️ **WIP — not production ready.** APIs, settings, and UI may change without notice.
 
-Read-only, sessions-first dashboard for the [`flightdeck`](../../skills/flightdeck) skill. When Pi runs as the Flightdeck master agent in a tmux session, this extension surfaces the same owner-scoped on-disk tracked-session state the daemon and master maintain — without ever mutating it. The Live feed tab still tails the daemon log; the structured `flightdeck-activity-<session>.jsonl` sidecar is consumed by the Rust dashboard, which new sessions should prefer.
+Read-only, sessions-first dashboard for the [`flightdeck`](../../skills/flightdeck) skill. When Pi runs as the Flightdeck master agent in a tmux session, this extension surfaces the same owner-scoped on-disk tracked-session state the daemon and master maintain — without ever mutating it. The Live feed tab still tails the daemon log; the structured `flightdeck-activity-<session>.jsonl` sidecar is consumed by the Rust dashboard, which new sessions should prefer for the watchdog/branch/entry/recovery surfaces.
 
 ## Highlights
 
