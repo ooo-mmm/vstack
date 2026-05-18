@@ -1,5 +1,46 @@
 # Flightdeck App, Run History, and Pi Status Plan
 
+## Pre-execution context (added 2026-05-18 after the flightdeck v2/v3 session)
+
+This plan was drafted before the flightdeck v2 architecture refactor and v3 plan-file orchestration lane landed in main. Most of the plan is still accurate; this section captures the deltas the executing agent must know.
+
+**Architecture state in main now:**
+
+- Flightdeck has four explicit lanes after PR #128 / #134 / #137 / #138 / #139:
+  - `flightdeck linear *` (Linear issue lifecycle, `workflows/linear/`)
+  - `flightdeck github *` (GitHub issue lifecycle, `workflows/github/`)
+  - `flightdeck session *` (generic, `workflows/shared/` + `flightdeck-session`)
+  - `flightdeck plan start <path>` (plan-file orchestration; `workflows/plan/`). This plan document is itself a valid plan file under the loose convention in `skills/flightdeck/PLAN-FILE.md`, so `flightdeck plan start docs/plans/flightdeck-app-run-history-and-pi-status-plan.md` is a viable execution path.
+- `entry.domain` is a mutually-exclusive union of `issue` (linear) / `github_issue` (github) / `plan_item` (plan). Validator at `skills/flightdeck/lib/flightdeck-core/src/state/tracked-entry.ts` rejects multi-domain entries on both `write-entry` and raw `setEntryField` / `flightdeck-state set` paths (per PR #139 hardening commit `517fd332`).
+- SKILL.md is now 237 lines (down from 453). Reference docs live in `skills/flightdeck/` siblings: `SCHEMA.md`, `SCRIPTS.md`, `ENV.md`, `WATCHDOGS.md`, `PROMPT-TAGS.md`, `PLAN-FILE.md`.
+
+**Filed issues that overlap with phases in this plan:**
+
+- **#140 (pi-flightdeck banner shows stale tracked sessions)** — directly addressed by Phase 6.5 "Startup stale-banner and prune policy" and Phase 6.6 "Trim @vanillagreen/pi-flightdeck to a status shell". Close #140 when Phase 6.5/6.6 land.
+- **#133 (pane/window name sync between registry, tmux, dashboard, master shorthand)** — NOT addressed by this plan. Independent UX fix. Track as separate work; the active handoff at `docs/plans/flightdeck-cleanup-and-dashboard-settings-handoff.md` already includes it.
+- **#126 (rate-limit watchdog observability), #129 (pi-session-bridge cache lifecycle), #130 (subagent stale-cwd), #135 (subscriber pi_pid miss-discovery), #136 (max-lifetime stale-pane respawn)** — unrelated to this plan; live in the cleanup-and-dashboard handoff bundle.
+
+**Standards from the v2/v3 session that this plan should follow (re-stated for clarity):**
+
+- **Use the worktree skill**: `.agents/skills/worktree/scripts/worktree create <id>`. Never `git worktree add`.
+- **Self-contained child prompts** when spawning panes (see PLAN-FILE.md and `workflows/plan/start.md`). No `/skill:flightdeck plan start`, `/skill:flightdeck linear start`, etc. as child prompts — those are master-side workflow names, not user-input commands.
+- **Spawned pi panes use `openai-codex/gpt-5.5` model + `xhigh` thinking** (user directive from the v2/v3 session).
+- **Backup wake timer is mandatory first action** when starting orchestration: `bg_task spawn command:'while true; do sleep 2700; echo "BACKUP-WAKE $(date -u +%FT%TZ)"; done' notifyOnOutput:true notifyPattern:'BACKUP-WAKE'`. The previous session hit two daemon misfires (#135, #136) where the backup timer was the only thing preventing silent stalls. Stop the timer in final cleanup.
+- **5-reviewer fan-out per substantive PR** (arch / test / doc / error / safety). Light scope (2 reviewers: doc + arch) for text-only or docs-only PRs. Reviewer prompts MUST include: "Do NOT act as flightdeck master. Do NOT produce session/cycle/dashboard status. JSON-only output."
+- **Recursion invariant for any new flightdeck lane/handler**: workflow files must NEVER emit `/skill:flightdeck <lane> (start|watch|close|terminate)` or `$flightdeck <lane> ...` or `/flightdeck <lane> ...` as a child-pane prompt. Add a parity test asserting zero hits (the v3 PR added `handler-guards.test.ts` lines 139-147 — use as template).
+- **CLEAN merge gate + `FLIGHTDECK_AUTO_MERGE=0` honored across ALL merge-answering handlers** (merge-now, merge-ready-but-unknown, force-merge-confirm). Authoritative `gh pr view --json state,mergeStateStatus,mergeCommit` verification before any close-item / close-issue cleanup. Strict force-merge predicate (APPROVED + green + disjoint + UNKNOWN-timer expired); not the weaker "approved or no pending reviewers".
+- **Docs ship with code in the same commit** (per CLAUDE.md): READMEs, SKILL.md, AGENTS.md, instruction payloads, `vstack.toml`, `.env.local.example`, `package.json` — every behavior change updates affected cross-referencing docs in the same commit.
+- **READMEs are user-facing only** (CLAUDE.md): no implementation jargon, schema details, internal env vars. Move tech detail to `DEVELOPMENT.md` or v2 reference doc siblings.
+- **No project-specific references** in `skills/`, `agents/`, `hooks/`, `pi-extensions/` shipped code/docs. Use `<N>`, `<REPO>`, `<ITEM_ID>` placeholders.
+- **Mirror dirs are never edited** (`.agents/`, `.pi/`, `.claude/`, `.opencode/`, `.codex/`). They regenerate via `vstack refresh`.
+- **Parity tests mandatory for `lib/flightdeck-core/`**: before commit, `cd skills/flightdeck/lib/flightdeck-core && bun test && bun run typecheck`. Both must pass.
+
+**Order-of-execution recommendation:**
+
+- Execute the active handoff at `docs/plans/flightdeck-cleanup-and-dashboard-settings-handoff.md` FIRST (it includes the 6 follow-up issues + README keyhint removal + dashboard settings popup + #140 pi-flightdeck banner fix). That handoff's #140 work makes Phase 6.5 mostly trivial (or already done) by the time this plan executes.
+- Then execute this plan. The state-mode and run-identity scaffolding (Phases 1-4) and History popup (Phase 5) are the load-bearing additions. Phase 6.5 may collapse to a small docs/cleanup task once #140 lands.
+- Phase 7 (post-merge main sync) is independent and could land any time.
+
 ## Problem
 
 Flightdeck currently treats the tmux session name as the primary live state key. When a Flightdeck session is terminated, the live state file (`tmp/flightdeck-state-<tmux-session>.json`) is archived. If the dashboard starts later and no live state file exists, it falls back to the newest archive and renders that completed snapshot.
@@ -102,7 +143,7 @@ Old archive files stay readable and can be lazily imported.
 
 ### Run creation
 
-When `flightdeck-session start` or issue `flightdeck start` begins:
+When `flightdeck-session start` or any issue-mode entry (`flightdeck linear start`, `flightdeck github start`) begins:
 
 1. Resolve project id.
 2. Load active pointer.
@@ -113,7 +154,7 @@ When `flightdeck-session start` or issue `flightdeck start` begins:
 
 ### Run termination
 
-When `flightdeck terminate` completes:
+When the lane-appropriate terminate completes (`flightdeck linear terminate`, `flightdeck github terminate`, `flightdeck plan terminate`, or generic session unwind via `flightdeck-state archive`):
 
 1. Mark active run `terminated: true`.
 2. Set `terminated_at`.
