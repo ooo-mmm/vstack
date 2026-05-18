@@ -13,8 +13,6 @@ const originalEnv = {
 
 const spawnSyncMock = mock(() => ({ status: 0, stdout: "", stderr: "", error: undefined, signal: null, output: [], pid: 0 }));
 
-mock.module("cross-spawn", () => ({ default: { sync: spawnSyncMock }, sync: spawnSyncMock }));
-
 function resetTmp(): void {
 	rmSync(rootTmp, { force: true, recursive: true });
 	mkdirSync(rootTmp, { recursive: true });
@@ -53,7 +51,9 @@ beforeEach(() => {
 	spawnSyncMock.mockClear();
 });
 
-afterEach(() => {
+afterEach(async () => {
+	const processModule = await import("../extensions/manager/process.ts");
+	processModule.__setSpawnSyncForTests(undefined);
 	if (originalEnv.HOME === undefined) delete process.env.HOME;
 	else process.env.HOME = originalEnv.HOME;
 	if (originalEnv.NPM_CONFIG_PREFIX === undefined) delete process.env.NPM_CONFIG_PREFIX;
@@ -66,8 +66,8 @@ afterEach(() => {
 });
 
 async function loadFreshModules() {
-	// Bun mock.module is hoisted before imports; re-importing returns the mocked
-	// versions for the duration of the test file.
+	const processModule = await import("../extensions/manager/process.ts");
+	processModule.__setSpawnSyncForTests(spawnSyncMock as never);
 	const inventory = await import("../extensions/manager/inventory.ts");
 	const versions = await import("../extensions/manager/versions.ts");
 	(versions as { __resetNpmRootCacheForTests: () => void }).__resetNpmRootCacheForTests();

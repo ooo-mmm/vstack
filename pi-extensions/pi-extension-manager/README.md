@@ -52,4 +52,4 @@ Open `/extensions:settings`; settings appear under the **Extension Manager** tab
 
 ## Notes
 
-Package enable/disable and updates take effect after `/reload` or restart — Pi doesn't currently support unloading already-loaded extensions. npm update/uninstall actions run inside Pi's scope-local npm directory (`<scope>/npm`), matching Pi 0.75+ user package installs under `~/.pi/agent/npm/`. Command execution uses `cross-spawn` so npm-family shims work on Windows.
+Package enable/disable and updates take effect after `/reload` or restart — Pi doesn't currently support unloading already-loaded extensions. npm update/uninstall actions run inside Pi's scope-local npm directory (`<scope>/npm`), matching Pi 0.75+ user package installs under `~/.pi/agent/npm/`. Command execution resolves Windows npm-family shims without requiring external runtime dependencies.

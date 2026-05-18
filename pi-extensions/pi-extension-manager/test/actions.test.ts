@@ -6,8 +6,6 @@ const rootTmp = join(import.meta.dir, "..", "tmp", "actions-test");
 const originalEnv = { PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR };
 const spawnSyncMock = mock(() => ({ status: 0, stdout: "", stderr: "", error: undefined, signal: null, output: [], pid: 0 }));
 
-mock.module("cross-spawn", () => ({ default: { sync: spawnSyncMock }, sync: spawnSyncMock }));
-
 function writeJson(path: string, value: unknown): void {
 	mkdirSync(dirname(path), { recursive: true });
 	writeFileSync(path, JSON.stringify(value, null, 2));
@@ -26,13 +24,21 @@ beforeEach(() => {
 	spawnSyncMock.mockClear();
 });
 
-afterEach(() => {
+afterEach(async () => {
+	const processModule = await import("../extensions/manager/process.ts");
+	processModule.__setSpawnSyncForTests(undefined);
 	rmSync(rootTmp, { recursive: true, force: true });
 	if (originalEnv.PI_CODING_AGENT_DIR === undefined) delete process.env.PI_CODING_AGENT_DIR;
 	else process.env.PI_CODING_AGENT_DIR = originalEnv.PI_CODING_AGENT_DIR;
 });
 
+async function useSpawnMock(): Promise<void> {
+	const processModule = await import("../extensions/manager/process.ts");
+	processModule.__setSpawnSyncForTests(spawnSyncMock as never);
+}
+
 test("npm update and uninstall execution use configured npmCommand and scope-local cwd", async () => {
+	await useSpawnMock();
 	const { buildInventory } = await import("../extensions/manager/inventory.ts");
 	const { planUninstall, planUpdate, runUninstall, runUpdate } = await import("../extensions/manager/actions.ts");
 	const project = join(rootTmp, "project");
@@ -63,6 +69,7 @@ test("npm update and uninstall execution use configured npmCommand and scope-loc
 });
 
 test("npm update reports cwd preparation failures", async () => {
+	await useSpawnMock();
 	const { runUpdate } = await import("../extensions/manager/actions.ts");
 	const badCwd = join(rootTmp, "not-a-directory");
 	writeFileSync(badCwd, "file blocks mkdir");
@@ -79,6 +86,7 @@ test("npm update reports cwd preparation failures", async () => {
 });
 
 test("invalid npmCommand is surfaced in npm action plans", async () => {
+	await useSpawnMock();
 	const { buildInventory } = await import("../extensions/manager/inventory.ts");
 	const { planUpdate } = await import("../extensions/manager/actions.ts");
 	const project = join(rootTmp, "project");
