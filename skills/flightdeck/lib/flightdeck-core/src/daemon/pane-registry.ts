@@ -52,6 +52,66 @@ export function paneRegistryRows(bin: string): Record<string, unknown>[] {
 	} catch { return []; }
 }
 
+export interface LiveInnerArgsForHandoff {
+	innerTargets: string[];
+	innerHarnesses: string[];
+	source: "live" | "fallback";
+	warnings: string[];
+}
+
+export interface FallbackInnerArgs {
+	innerTargets: string[];
+	innerHarnesses: string[];
+}
+
+interface LiveInnerRow {
+	pane_id?: unknown;
+	harness?: unknown;
+}
+
+function normalizeFallback(fallback: FallbackInnerArgs): FallbackInnerArgs {
+	return {
+		innerTargets: fallback.innerTargets.filter(Boolean),
+		innerHarnesses: fallback.innerHarnesses.length === fallback.innerTargets.length ? fallback.innerHarnesses : [],
+	};
+}
+
+function paneRegistryLiveInnerRows(bin: string): { ok: true; rows: LiveInnerRow[] } | { ok: false; error: string } {
+	if (!bin) return { ok: false, error: "pane-registry binary missing" };
+	const r = spawnSync(bin, ["list", "--format", "inner-live-json"], { encoding: "utf8" });
+	if (r.status !== 0 || r.error) {
+		const stderr = (r.stderr ?? "").trim();
+		const error = r.error ? r.error.message : `exit ${r.status ?? "unknown"}${stderr ? `: ${stderr}` : ""}`;
+		return { ok: false, error };
+	}
+	try {
+		const parsed = JSON.parse(r.stdout ?? "[]") as unknown;
+		if (!Array.isArray(parsed)) return { ok: false, error: "inner-live-json did not return an array" };
+		return { ok: true, rows: parsed.filter((row): row is LiveInnerRow => !!row && typeof row === "object" && !Array.isArray(row)) };
+	} catch (err) {
+		return { ok: false, error: `invalid inner-live-json: ${(err as Error)?.message ?? err}` };
+	}
+}
+
+export function liveInnerArgsForHandoff(bin: string, fallback: FallbackInnerArgs): LiveInnerArgsForHandoff {
+	const warnings: string[] = [];
+	const live = paneRegistryLiveInnerRows(bin);
+	if (!live.ok) {
+		warnings.push(`pane-registry list --format inner-live-json failed: ${live.error}; preserving current inner pane set`);
+		return { ...normalizeFallback(fallback), source: "fallback", warnings };
+	}
+
+	const innerTargets: string[] = [];
+	const innerHarnesses: string[] = [];
+	for (const row of live.rows) {
+		const paneId = typeof row.pane_id === "string" ? row.pane_id.trim() : "";
+		if (!paneId) continue;
+		innerTargets.push(paneId);
+		innerHarnesses.push(typeof row.harness === "string" ? row.harness.trim() : "");
+	}
+	return { innerTargets, innerHarnesses, source: "live", warnings };
+}
+
 export function resolvePaneTargetForEntry(bin: string, paneId: string): string {
 	if (!paneId) return "";
 	for (const row of paneRegistryRows(bin)) {
