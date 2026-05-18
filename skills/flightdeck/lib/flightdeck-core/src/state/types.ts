@@ -58,6 +58,15 @@ export interface TrackedEntryLaunch {
 	model?: string | null;
 	effort?: string | null;
 	cmd?: string | null;
+	requested_model?: string | null;
+	requested_effort?: string | null;
+	resolved_model?: string | null;
+	resolved_effort?: string | null;
+	model_source?: string | null;
+	effort_source?: string | null;
+	argv?: string[] | null;
+	reasoning_status?: "configured" | "recorded" | "unsupported" | "not-applicable" | string | null;
+	unsupported_reason?: string | null;
 	[key: string]: unknown;
 }
 
