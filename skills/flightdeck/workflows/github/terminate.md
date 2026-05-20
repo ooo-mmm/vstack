@@ -106,6 +106,9 @@ When GitHub entries exist, append:
 - Aborted: <N>
 - Dead: <N>
 - Follow-ups: <N>
+
+## Cleanup Results
+- <removed|kept|skipped|failed>: #<N> worktree=<path> local_branch=<branch> remote_branch=<branch> — <reason>
 ```
 
 When Linear entries exist too, append a handoff note that `workflows/linear/terminate.md` owns Linear issue/new-issue/next-cycle recommendation sections.
@@ -123,6 +126,14 @@ flightdeck-state set summary_path '"<tmp/flightdeck-summary-<SESSION>-<TS>.md>"'
 flightdeck-daemon stop --session "$SESSION"
 flightdeck-state archive
 ```
+
+Before archiving, offer cleanup for merged GitHub entries:
+
+- Candidate = entry-owned `domain.github_issue.worktree` + matching PR `headRefName`/local branch.
+- Require `gh pr view <PR> --json state,mergeCommit,headRefName` with `MERGED` + non-null merge commit. If the issue is still open, skip unless the user confirms delayed auto-close.
+- Ask with a concise list; default keep.
+- On confirm: remove the worktree; `git branch -D` only for squash-merged matching heads; delete matching remote heads only if they still exist.
+- Summarize `removed|kept|skipped|failed`. Never touch default branches, sibling/dirty worktrees, unmerged branches, or unowned `: gone` branches.
 
 Do not remove GitHub entries before archive. `archive` emits completion activity before syncing the final state/activity and summary into the durable run, clears the active pointer, leaves the project-local archive for compatibility, and preserves `decisions_log`, `pr_number`, `merge_commit`, `unknown_since`, and worktree history for dashboard/post-mortem inspection.
 
@@ -149,6 +160,13 @@ Emit generic block first when applicable, then GitHub block.
 - None recorded.
 
 **Counts**: [N] merged · [N] aborted · [N] dead · [N] follow-ups
+
+**Cleanup**
+[If cleanup ran or was offered:]
+- [removed|kept|skipped|failed] #[N] — [worktree/branch summary] — [reason]
+
+[If no cleanup candidates exist:]
+- No stale worktrees or branches owned by this session.
 
 Summary file: `tmp/flightdeck-summary-<SESSION>-<TS>.md`
 </github_output_format>

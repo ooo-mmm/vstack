@@ -131,6 +131,14 @@ flightdeck-daemon stop --session "$SESSION"
 flightdeck-state archive
 ```
 
+Before archiving, offer cleanup for merged plan entries that `plan/close-item.md` did not already remove:
+
+- Candidate = entry-owned `domain.plan_item.worktree` + matching PR `headRefName`/local branch.
+- Require `gh pr view <PR> --json state,mergeCommit,headRefName` with `MERGED` + non-null merge commit.
+- Ask with a concise list; default keep.
+- On confirm: remove the worktree; `git branch -D` only for squash-merged matching heads; delete matching remote heads only if they still exist.
+- Summarize `removed|kept|skipped|failed`. Never touch default branches, sibling/dirty worktrees, unmerged branches, or unowned `: gone` branches.
+
 Do not remove plan entries before archive. `archive` emits completion activity before syncing the final state/activity and summary into the durable run, clears the active pointer, leaves the project-local archive for compatibility, and preserves `decisions_log`, `pr_number`, `merge_commit`, `unknown_since`, dependencies, and worktree history for dashboard/post-mortem inspection.
 
 ---

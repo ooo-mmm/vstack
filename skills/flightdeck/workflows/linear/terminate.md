@@ -179,6 +179,9 @@ When issue entries exist, append the existing issue-mode sections after any gene
 - New issues (children): <N>
 - New issues (follow-ups): <N>
 - Recommended next: <N>
+
+## Cleanup Results
+- <removed|kept|skipped|failed>: <ISSUE_ID> worktree=<path> local_branch=<branch> remote_branch=<branch> — <reason>
 ```
 
 ---
@@ -192,6 +195,14 @@ flightdeck-state set summary_path "\"<tmp/flightdeck-summary-<SESSION>-<TS>.md>\
 flightdeck-daemon stop --session "$SESSION"
 flightdeck-state archive
 ```
+
+Before archiving, offer cleanup for merged issue entries:
+
+- Candidate = entry-owned `domain.issue.worktree` + matching PR `headRefName`/local branch.
+- Require `gh pr view <PR> --json state,mergeCommit,headRefName` with `MERGED` + non-null merge commit, plus terminal tracker state or explicit user confirmation.
+- Ask with a concise list; default keep.
+- On confirm: remove the worktree; `git branch -D` only for squash-merged matching heads; delete matching remote heads only if they still exist.
+- Summarize `removed|kept|skipped|failed`. Never touch default branches, sibling/dirty worktrees, unmerged branches, or unowned `: gone` branches.
 
 Do NOT call `pane-registry remove-merged` here. Earlier revisions did, but `close-issue.md § 4` has already killed every terminal-state issue's tmux window by the time terminate runs, so `remove-merged` would unconditionally delete every `merged|aborted|dead` issue's history — including `decisions_log`, `pr_number`, and `merge_commit` — from the file that is about to be archived. Dashboard renderers depend on those records to surface the post-completion Sessions / Decisions / Conflicts views; deleting them collapses the dashboard to an empty state immediately after a successful session. The archive's value is precisely the full session history (see [[issue-17]]).
 
@@ -263,6 +274,13 @@ Standalone follow-ups:
 - Stick with planned cycle — no created issues warrant precedence.
 
 **Counts**: [N] merged · [N] aborted · [N] children · [N] follow-ups · [N] recommended next
+
+**Cleanup**
+[If cleanup ran or was offered:]
+- [removed|kept|skipped|failed] [ISSUE_ID] — [worktree/branch summary] — [reason]
+
+[If no cleanup candidates exist:]
+- No stale worktrees or branches owned by this session.
 
 Summary file: `tmp/flightdeck-summary-<SESSION>-<TS>.md`
 </issue_output_format>
