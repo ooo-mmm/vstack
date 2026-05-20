@@ -120,18 +120,23 @@ different value.
 
 The terminal dashboard opens automatically when `FLIGHTDECK_DASHBOARD=1` (default). It shows tracked work items, current tmux tab names, state, harness, PR/path, branch, age, last decision, activity, conversations, merge planning, daemon health, token/cost totals, and pause-for-user banners. The dashboard's own tmux window is hidden from the work table so the view stays focused on child work. In tmux, `flightdeck-dashboard focus-or-launch` focuses an existing app window or launches one if missing.
 
-The header's `state: live file` chip means the dashboard is watching Flightdeck's state file directly. That is normal live mode and is separate from the supervisor daemon that wakes the master agent. Socket telemetry is optional extra dashboard-side telemetry, not required for work/status rendering. Pi session costs are read from `pi-bridge history` when bridge metadata is available.
+The dashboard treats active and archived runs separately. Live mode reads the canonical project-local state file for the requested tmux session; durable run metadata is used only to label/link that live run. If no matching active run exists, startup shows `No active Flightdeck run` instead of automatically rendering the newest terminated archive as if it were live. Press `H` to open the History popup, filter runs, expand snapshots inline, load an archived/imported snapshot read-only, import legacy project archives, or return to the active run with `A`. Read-only archive views disable stale-prune and tmux-focus actions.
+
+The header's `state: live file` chip means the dashboard is watching Flightdeck's state file directly. That is normal live mode and is separate from the supervisor daemon that wakes the master agent. History/archive chips (`state: history archive`, `state: imported archive`, `state: legacy archive`) are read-only views. Socket telemetry is optional extra dashboard-side telemetry, not required for work/status rendering. Pi session costs are read from `pi-bridge history` when bridge metadata is available.
 
 Useful commands:
 
 ```bash
 flightdeck-dashboard focus-or-launch      # focus existing app, or launch in tmux
 flightdeck-dashboard tui                  # current tmux session, live
-flightdeck-dashboard tui --session <name> # named live/legacy state file
-flightdeck-dashboard tui --demo           # demo data
+flightdeck-dashboard tui --session <name>           # active run or no-active landing
+flightdeck-dashboard tui --run-id <run-id>          # load durable run read-only
+flightdeck-dashboard tui --run-id <run-id> --snapshot <timestamp-or-file>
+flightdeck-dashboard tui --archive <path>           # load legacy project archive read-only
+flightdeck-dashboard tui --demo                     # demo data
 ```
 
-`flightdeck-dashboard tui --run-id <id>`, `tui --archive <path>`, and an in-app History UI are future work. For now, use `flightdeck-state run list/show` for durable run inspection and `tui --state-file <path>` for a concrete master-state JSON file.
+Use `flightdeck-state run list/show` for scriptable durable run inspection and `tui --state-file <path>` for a concrete master-state JSON file.
 
 For keyboard shortcuts and dashboard legends, press `?` in the dashboard.
 
@@ -150,7 +155,7 @@ flightdeck-state run terminate-active --project-root "$PWD" --tmux-session <name
 flightdeck-state run import-legacy --project-root "$PWD" --state-dir tmp
 ```
 
-Normal Flightdeck start/attach and terminate/archive flows call the lifecycle helpers for you. If `flightdeck-session start` / `attach` creates a fresh active run and aborts before registering an entry, it terminates that new run; reused active runs are preserved. Importing legacy archives copies them into durable history and leaves the original `tmp/flightdeck-state-*.json.archive` files in place.
+Normal Flightdeck start/attach and terminate/archive flows call the lifecycle helpers for you. If `flightdeck-session start` / `attach` creates a fresh active run and aborts before registering an entry, it terminates that new run; reused active runs are preserved. Importing legacy archives copies them into durable history and leaves the original `tmp/flightdeck-state-*.json.archive` files in place. Flightdeck does not delete durable runs or imported legacy archives by default; remove old `~/.vstack/flightdeck/projects/<project-id>/runs/<run-id>/` directories only as an explicit manual retention decision.
 
 ## High-level architecture
 

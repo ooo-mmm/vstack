@@ -17,6 +17,7 @@ use crate::app::reload::ReloadCoalescer;
 use crate::app::theme::{Palette, Theme};
 use crate::cost::{CostMetrics, PricingTable, SessionTotals};
 use crate::settings_catalog::SettingsState;
+use crate::state::run_history::HistoryRun;
 use crate::state::snapshot::{
     DashboardSnapshot, Event, EventImportance, SessionKind, SessionState, TrackedSession,
 };
@@ -301,6 +302,8 @@ pub struct ActivityView {
     pub filter: ActivityFilter,
     pub filter_cursor: usize,
     pub malformed_lines: u64,
+    pub source_error: Option<String>,
+    pub source_warning: Option<String>,
     source: Option<JsonlActivitySource>,
 }
 
@@ -316,6 +319,8 @@ impl ActivityView {
             filter: ActivityFilter::new(),
             filter_cursor: 0,
             malformed_lines: 0,
+            source_error: None,
+            source_warning: None,
             source: None,
         }
     }
@@ -324,10 +329,14 @@ impl ActivityView {
         self.source = source;
         self.events.clear();
         self.malformed_lines = 0;
+        self.source_error = None;
+        self.source_warning = None;
     }
 
     pub fn set_events(&mut self, events: Vec<ActivityEvent>) {
         self.events = events;
+        self.source_error = None;
+        self.source_warning = None;
     }
 
     pub fn poll_source(&mut self) -> Vec<ActivityEvent> {
@@ -336,6 +345,8 @@ impl ActivityView {
         };
         let events = crate::activity::ActivitySource::poll(source);
         self.malformed_lines = source.malformed_lines();
+        self.source_error = source.last_error().map(ToString::to_string);
+        self.source_warning = source.last_warning().map(str::to_owned);
         self.events.clone_from(&events);
         events
     }
@@ -428,22 +439,105 @@ impl Default for ActivityView {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReadSourceState {
-    Live,
-    Archive { archived_at: DateTime<Utc> },
-    Missing,
+    Demo,
+    LiveFile,
+    ActiveRun {
+        run_id: Option<String>,
+    },
+    NoActiveRun,
+    ArchivedRun {
+        run_id: String,
+        archived_at: DateTime<Utc>,
+    },
+    ImportedArchive {
+        run_id: String,
+        archived_at: DateTime<Utc>,
+    },
+    LegacyArchive {
+        archived_at: DateTime<Utc>,
+    },
 }
 
 impl ReadSourceState {
     #[must_use]
     pub fn from_snapshot(snapshot: &DashboardSnapshot) -> Self {
         if is_archive_path(&snapshot.master_state_path) {
-            return Self::Archive {
+            return Self::LegacyArchive {
                 archived_at: snapshot.terminated_at.unwrap_or(snapshot.updated_at),
             };
         }
-        Self::Live
+        Self::LiveFile
+    }
+
+    #[must_use]
+    pub const fn is_read_only(&self) -> bool {
+        matches!(
+            self,
+            Self::ArchivedRun { .. } | Self::ImportedArchive { .. } | Self::LegacyArchive { .. }
+        )
+    }
+
+    #[must_use]
+    pub const fn is_no_active(&self) -> bool {
+        matches!(self, Self::NoActiveRun)
+    }
+
+    #[must_use]
+    pub const fn blocks_write_actions(&self) -> bool {
+        self.is_read_only() || self.is_no_active()
+    }
+
+    #[must_use]
+    pub fn header_label(&self, session_id: &str) -> String {
+        match self {
+            Self::Demo => format!("session {session_id}"),
+            Self::LiveFile => format!("live state session {session_id}"),
+            Self::ActiveRun {
+                run_id: Some(run_id),
+            } => format!("live run {run_id}"),
+            Self::ActiveRun { run_id: None } => format!("live run {session_id}"),
+            Self::NoActiveRun => String::from("no active run"),
+            Self::ArchivedRun { run_id, .. } => format!("archived run · read-only · {run_id}"),
+            Self::ImportedArchive { run_id, .. } => {
+                format!("imported archive · read-only · {run_id}")
+            }
+            Self::LegacyArchive { .. } => format!("legacy archive · read-only · {session_id}"),
+        }
+    }
+
+    #[must_use]
+    pub fn banner(&self) -> Option<(&'static str, String)> {
+        match self {
+            Self::NoActiveRun => Some((
+                " no active run ",
+                String::from(
+                    "No active Flightdeck run · press H for History or start a new session.",
+                ),
+            )),
+            Self::ArchivedRun {
+                run_id,
+                archived_at,
+            } => Some((
+                " archived run ",
+                format!("Archived run · read-only · {run_id} · terminated {archived_at}."),
+            )),
+            Self::ImportedArchive {
+                run_id,
+                archived_at,
+            } => Some((
+                " imported archive ",
+                format!(
+                    "Imported legacy archive · read-only · {run_id} · terminated {archived_at}."
+                ),
+            )),
+            Self::LegacyArchive { archived_at } => Some((
+                " legacy archive ",
+                format!("Legacy project-local archive · read-only · terminated {archived_at}."),
+            )),
+            Self::Demo | Self::LiveFile | Self::ActiveRun { .. } => None,
+        }
     }
 }
 
@@ -457,6 +551,7 @@ fn is_archive_path(path: &Path) -> bool {
 pub enum ModalState {
     None,
     Help,
+    History,
     ThemePicker,
     DecisionDetail,
     SessionDetail,
@@ -482,6 +577,243 @@ pub struct ConfirmDialog {
 pub struct ActionStatus {
     pub message: String,
     pub success: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HistoryCursor {
+    Run(usize),
+    Snapshot {
+        run_index: usize,
+        snapshot_index: usize,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HistoryItem {
+    Run(usize),
+    Snapshot {
+        run_index: usize,
+        snapshot_index: usize,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HistoryState {
+    pub runs: Vec<HistoryRun>,
+    pub cursor: HistoryCursor,
+    pub scroll: usize,
+    pub filter: String,
+    pub input: String,
+    pub editing_filter: bool,
+    pub loading: bool,
+    pub error: Option<String>,
+    pub notice: Option<String>,
+}
+
+impl HistoryState {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            runs: Vec::new(),
+            cursor: HistoryCursor::Run(0),
+            scroll: 0,
+            filter: String::new(),
+            input: String::new(),
+            editing_filter: false,
+            loading: false,
+            error: None,
+            notice: None,
+        }
+    }
+
+    pub fn begin_filter(&mut self) {
+        self.input.clone_from(&self.filter);
+        self.editing_filter = true;
+    }
+
+    pub fn commit_filter(&mut self) {
+        self.filter = self.input.trim().to_owned();
+        self.editing_filter = false;
+        self.cursor = self
+            .visible_items()
+            .first()
+            .copied()
+            .map(history_item_to_cursor)
+            .unwrap_or(HistoryCursor::Run(0));
+        self.scroll = 0;
+    }
+
+    pub fn cancel_filter(&mut self) {
+        self.input.clear();
+        self.editing_filter = false;
+    }
+
+    pub fn clear_filter(&mut self) {
+        self.filter.clear();
+        self.input.clear();
+        self.editing_filter = false;
+        self.cursor = HistoryCursor::Run(0);
+        self.scroll = 0;
+    }
+
+    pub fn set_runs(&mut self, runs: Vec<HistoryRun>) {
+        self.runs = runs;
+        self.loading = false;
+        self.error = None;
+        self.notice = None;
+        self.cursor = self
+            .visible_items()
+            .first()
+            .copied()
+            .map(history_item_to_cursor)
+            .unwrap_or(HistoryCursor::Run(0));
+        self.scroll = 0;
+    }
+
+    #[must_use]
+    pub fn visible_items(&self) -> Vec<HistoryItem> {
+        let selected_run = self.cursor_run_index();
+        let filter = self.filter.trim().to_ascii_lowercase();
+        let mut items = Vec::new();
+        for (idx, run) in self.runs.iter().enumerate() {
+            if !filter.is_empty() && !run.searchable_text().to_ascii_lowercase().contains(&filter) {
+                continue;
+            }
+            items.push(HistoryItem::Run(idx));
+            if selected_run == idx {
+                items.extend(run.snapshots.iter().enumerate().map(|(snapshot_index, _)| {
+                    HistoryItem::Snapshot {
+                        run_index: idx,
+                        snapshot_index,
+                    }
+                }));
+            }
+        }
+        items
+    }
+
+    #[must_use]
+    pub fn selected_run(&self) -> Option<&HistoryRun> {
+        self.runs.get(self.cursor_run_index())
+    }
+
+    #[must_use]
+    pub fn selected_snapshot(&self) -> Option<&str> {
+        match self.cursor {
+            HistoryCursor::Snapshot {
+                run_index,
+                snapshot_index,
+            } => self
+                .runs
+                .get(run_index)
+                .and_then(|run| run.snapshots.get(snapshot_index))
+                .map(String::as_str),
+            HistoryCursor::Run(_) => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn cursor_run_index(&self) -> usize {
+        match self.cursor {
+            HistoryCursor::Run(index)
+            | HistoryCursor::Snapshot {
+                run_index: index, ..
+            } => index,
+        }
+    }
+
+    pub fn move_cursor(&mut self, delta: isize) {
+        let items = self.visible_items();
+        if items.is_empty() {
+            self.cursor = HistoryCursor::Run(0);
+            self.scroll = 0;
+            return;
+        }
+        let current = items
+            .iter()
+            .position(|item| history_item_matches_cursor(*item, self.cursor))
+            .unwrap_or(0);
+        let next = current.saturating_add_signed(delta).min(items.len() - 1);
+        self.cursor = history_item_to_cursor(items[next]);
+        self.clamp_scroll(18);
+    }
+
+    pub fn select_first(&mut self) {
+        if let Some(item) = self.visible_items().first().copied() {
+            self.cursor = history_item_to_cursor(item);
+            self.scroll = 0;
+        }
+    }
+
+    pub fn select_last(&mut self) {
+        let items = self.visible_items();
+        if let Some(item) = items.last().copied() {
+            self.cursor = history_item_to_cursor(item);
+            self.scroll = items.len().saturating_sub(18);
+        }
+    }
+
+    pub fn select_visible_index(&mut self, index: usize) {
+        let items = self.visible_items();
+        if let Some(item) = items.get(index).copied() {
+            self.cursor = history_item_to_cursor(item);
+            self.clamp_scroll(18);
+        }
+    }
+
+    fn clamp_scroll(&mut self, visible_rows: usize) {
+        let items = self.visible_items();
+        let Some(position) = items
+            .iter()
+            .position(|item| history_item_matches_cursor(*item, self.cursor))
+        else {
+            self.scroll = 0;
+            return;
+        };
+        if position < self.scroll {
+            self.scroll = position;
+        } else if position >= self.scroll.saturating_add(visible_rows) {
+            self.scroll = position.saturating_add(1).saturating_sub(visible_rows);
+        }
+    }
+}
+
+impl Default for HistoryState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+fn history_item_to_cursor(item: HistoryItem) -> HistoryCursor {
+    match item {
+        HistoryItem::Run(index) => HistoryCursor::Run(index),
+        HistoryItem::Snapshot {
+            run_index,
+            snapshot_index,
+        } => HistoryCursor::Snapshot {
+            run_index,
+            snapshot_index,
+        },
+    }
+}
+
+fn history_item_matches_cursor(item: HistoryItem, cursor: HistoryCursor) -> bool {
+    matches!(
+        (item, cursor),
+        (HistoryItem::Run(left), HistoryCursor::Run(right)) if left == right
+    ) || matches!(
+        (item, cursor),
+        (
+            HistoryItem::Snapshot {
+                run_index: left_run,
+                snapshot_index: left_snapshot,
+            },
+            HistoryCursor::Snapshot {
+                run_index: right_run,
+                snapshot_index: right_snapshot,
+            },
+        ) if left_run == right_run && left_snapshot == right_snapshot
+    )
 }
 
 #[derive(Debug)]
@@ -514,6 +846,7 @@ pub struct Model {
     pub cost_totals: SessionTotals,
     pub pricing_table: PricingTable,
     pub settings: SettingsState,
+    pub history: HistoryState,
     pub confirm: Option<ConfirmDialog>,
     pub status_message: Option<ActionStatus>,
     pub quit_requested: bool,
@@ -549,7 +882,11 @@ impl Model {
         for tab in Tab::ALL {
             selection.insert(tab, 0);
         }
-        let read_source_state = ReadSourceState::from_snapshot(&snapshot);
+        let read_source_state = if matches!(snapshot_source, SnapshotSource::Demo(_)) {
+            ReadSourceState::Demo
+        } else {
+            ReadSourceState::from_snapshot(&snapshot)
+        };
         let recent_events = snapshot.recent_events.clone();
         let mut activity = ActivityView::new();
         if let SnapshotSource::Demo(name) = &snapshot_source {
@@ -595,6 +932,7 @@ impl Model {
             cost_totals: SessionTotals::default(),
             pricing_table: PricingTable::load(),
             settings,
+            history: HistoryState::new(),
             confirm: None,
             status_message: None,
             quit_requested: false,
@@ -838,6 +1176,13 @@ impl Model {
     }
 
     pub fn sync_activity_source(&mut self) {
+        if matches!(self.snapshot_source, SnapshotSource::Demo(_)) {
+            return;
+        }
+        if self.read_source_state.is_no_active() {
+            self.activity.set_source(None);
+            return;
+        }
         let Some(source) = activity_source_for(&self.snapshot, &self.snapshot_source) else {
             self.activity.set_source(None);
             return;
@@ -917,6 +1262,10 @@ fn activity_source_for(
     let (state_dir, session_name): (PathBuf, String) = match source {
         SnapshotSource::Demo(_) | SnapshotSource::Socket(_) => return None,
         SnapshotSource::File(path) => {
+            if is_archive_path(path) {
+                return archive_activity_path_for_state_archive(path)
+                    .map(JsonlActivitySource::from_path);
+            }
             let state_dir = path.parent().map(Path::to_path_buf)?;
             let session = if snapshot.session_id.is_empty() {
                 tracked_entries::session_id_from_state_path(path)
@@ -928,8 +1277,25 @@ fn activity_source_for(
         SnapshotSource::Session(resolution) => {
             (resolution.state_dir.clone(), resolution.session.clone())
         }
+        SnapshotSource::Run(source) => {
+            return Some(JsonlActivitySource::from_run_path(
+                source.activity_path.clone(),
+                source.run_dir.clone(),
+            ));
+        }
     };
     Some(JsonlActivitySource::new(state_dir, session_name))
+}
+
+fn archive_activity_path_for_state_archive(path: &Path) -> Option<PathBuf> {
+    let name = path.file_name()?.to_str()?;
+    let rest = name
+        .strip_prefix("flightdeck-state-")?
+        .strip_suffix(".json.archive")?;
+    Some(
+        path.parent()?
+            .join(format!("flightdeck-activity-{rest}.jsonl.archive")),
+    )
 }
 
 fn enabled_tabs_for(snapshot: &DashboardSnapshot) -> Vec<Tab> {

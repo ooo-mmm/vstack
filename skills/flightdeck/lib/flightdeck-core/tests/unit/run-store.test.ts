@@ -437,6 +437,88 @@ describe("Flightdeck durable run store", () => {
 		expect((JSON.parse(readFileSync(first.paths.state_json, "utf8")) as { terminated?: boolean }).terminated).toBe(false);
 	});
 
+	test("corrupt metadata cannot forge run store paths", () => {
+		for (const [index, field] of (["project_root", "state_path", "activity_path", "snapshots_path"] as const).entries()) {
+			const created = createRun(repo, `FORGED${index}`);
+			const stateBefore = readFileSync(created.paths.state_json, "utf8");
+			const forgedPath = join(sandbox, "outside", field);
+			writeFileSync(created.paths.metadata_json, JSON.stringify({ ...created.metadata, [field]: forgedPath }), "utf8");
+
+			expect(() => showRun(repo, created.metadata.run_id)).toThrow(new RegExp(`${field} .*canonical path`));
+			expect(() => readActiveRun(repo)).toThrow(new RegExp(`${field} .*canonical path`));
+			expect(() => terminateRun(repo, created.metadata.run_id)).toThrow(new RegExp(`${field} .*canonical path`));
+			expect(readFileSync(created.paths.state_json, "utf8")).toBe(stateBefore);
+		}
+	});
+
+	test("run store rejects symlinked storage directories and files", () => {
+		const symlinkCases = [
+			[
+				"project directory",
+				(ctx: ReturnType<typeof createRun>, outside: string) => {
+					const projectPaths = resolveProjectRunPaths(ctx.project);
+					rmSync(projectPaths.project_dir, { force: true, recursive: true });
+					symlinkSync(outside, projectPaths.project_dir, "dir");
+				},
+				(ctx: ReturnType<typeof createRun>, currentRepo: string) => showRun(currentRepo, ctx.metadata.run_id),
+			],
+			[
+				"runs directory",
+				(ctx: ReturnType<typeof createRun>, outside: string) => {
+					const projectPaths = resolveProjectRunPaths(ctx.project);
+					rmSync(projectPaths.runs_dir, { force: true, recursive: true });
+					symlinkSync(outside, projectPaths.runs_dir, "dir");
+				},
+				(ctx: ReturnType<typeof createRun>, currentRepo: string) => showRun(currentRepo, ctx.metadata.run_id),
+			],
+			[
+				"run directory",
+				(ctx: ReturnType<typeof createRun>, outside: string) => {
+					rmSync(ctx.paths.run_dir, { force: true, recursive: true });
+					symlinkSync(outside, ctx.paths.run_dir, "dir");
+				},
+				(ctx: ReturnType<typeof createRun>, currentRepo: string) => showRun(currentRepo, ctx.metadata.run_id),
+			],
+			[
+				"state file",
+				(ctx: ReturnType<typeof createRun>, outside: string) => {
+					rmSync(ctx.paths.state_json, { force: true });
+					writeFileSync(join(outside, "state.json"), "{}");
+					symlinkSync(join(outside, "state.json"), ctx.paths.state_json);
+				},
+				(ctx: ReturnType<typeof createRun>, currentRepo: string) => showRun(currentRepo, ctx.metadata.run_id),
+			],
+			[
+				"activity file",
+				(ctx: ReturnType<typeof createRun>, outside: string) => {
+					rmSync(ctx.paths.activity_jsonl, { force: true });
+					writeFileSync(join(outside, "activity.jsonl"), "forged\n");
+					symlinkSync(join(outside, "activity.jsonl"), ctx.paths.activity_jsonl);
+				},
+				(_ctx: ReturnType<typeof createRun>, currentRepo: string) => readActiveRun(currentRepo),
+			],
+			[
+				"snapshots directory",
+				(ctx: ReturnType<typeof createRun>, outside: string) => {
+					rmSync(ctx.paths.snapshots_dir, { force: true, recursive: true });
+					symlinkSync(outside, ctx.paths.snapshots_dir, "dir");
+				},
+				(ctx: ReturnType<typeof createRun>, currentRepo: string) => showRun(currentRepo, ctx.metadata.run_id),
+			],
+		] as const;
+
+		for (const [index, [name, mutate, action]] of symlinkCases.entries()) {
+			const currentRepo = makeRepo(`symlink-${index}`);
+			const created = createRun(currentRepo, `SYMLINK${index}`);
+			const outside = join(sandbox, `outside-storage-${index}`);
+			mkdirSync(outside, { recursive: true });
+
+			mutate(created, outside);
+
+			expect(() => action(created, currentRepo), name).toThrow(/symlinks are not allowed/);
+		}
+	});
+
 	test("forged project index cannot bless matching run metadata", () => {
 		const created = createRun(repo, SESSION);
 		const projectPaths = resolveProjectRunPaths(created.project);

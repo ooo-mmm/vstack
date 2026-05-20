@@ -37,6 +37,15 @@ pub struct TuiArgs {
     /// Read state for a Flightdeck tmux session.
     #[arg(long, value_name = "NAME")]
     pub session: Option<String>,
+    /// Load a durable run-store run read-only.
+    #[arg(long, value_name = "RUN_ID")]
+    pub run_id: Option<String>,
+    /// Load a specific durable run snapshot timestamp/name with --run-id.
+    #[arg(long, value_name = "TIMESTAMP_OR_FILE")]
+    pub snapshot: Option<String>,
+    /// Load a legacy project-local archive read-only.
+    #[arg(long, value_name = "PATH")]
+    pub archive: Option<PathBuf>,
     /// Subscribe to a dashboard daemon Unix socket.
     #[arg(long, value_name = "PATH")]
     pub socket: Option<PathBuf>,
@@ -243,7 +252,51 @@ impl TuiArgs {
     pub fn wants_live_state(&self) -> bool {
         self.socket.is_some()
             || self.state_file.is_some()
+            || self.archive.is_some()
+            || self.run_id.is_some()
             || self.session.is_some()
             || std::env::var_os("TMUX").is_some()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    use super::*;
+
+    #[test]
+    fn tui_parses_history_flags() {
+        let cli = Cli::try_parse_from([
+            "flightdeck-dashboard",
+            "tui",
+            "--run-id",
+            "run-123",
+            "--snapshot",
+            "2026-05-19T120000Z.json",
+        ])
+        .expect("parse run flags");
+        let Command::Tui(args) = cli.command else {
+            panic!("expected tui command");
+        };
+        assert_eq!(args.run_id.as_deref(), Some("run-123"));
+        assert_eq!(args.snapshot.as_deref(), Some("2026-05-19T120000Z.json"));
+        assert!(args.wants_live_state());
+    }
+
+    #[test]
+    fn tui_parses_archive_flag() {
+        let cli = Cli::try_parse_from([
+            "flightdeck-dashboard",
+            "tui",
+            "--archive",
+            "tmp/flightdeck-state-S-2026-05-19T120000Z.json.archive",
+        ])
+        .expect("parse archive flag");
+        let Command::Tui(args) = cli.command else {
+            panic!("expected tui command");
+        };
+        assert!(args.archive.is_some());
+        assert!(args.wants_live_state());
     }
 }

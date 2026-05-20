@@ -1,15 +1,21 @@
 mod common;
 
 use std::collections::{BTreeMap, VecDeque};
+use std::path::PathBuf;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use flightdeck_dashboard::app::command::Cmd;
-use flightdeck_dashboard::app::model::{ModalState, Tab};
+use flightdeck_dashboard::actions::WriteAction;
+use flightdeck_dashboard::app::command::{Cmd, SnapshotSource};
+use flightdeck_dashboard::app::hitmap::{ClickAction, ScrollSource};
+use flightdeck_dashboard::app::model::{ConfirmDialog, ModalState, ReadSourceState, Tab};
 use flightdeck_dashboard::app::motion::MotionLevel;
-use flightdeck_dashboard::app::msg::Msg;
+use flightdeck_dashboard::app::msg::{ActiveRunLoad, Msg, NoActiveRunSnapshot};
 use flightdeck_dashboard::app::theme::Theme;
 use flightdeck_dashboard::app::update;
 use flightdeck_dashboard::settings_catalog::SettingsState;
+use flightdeck_dashboard::state::run_history::{HistoryRun, RunMetadata};
+use flightdeck_dashboard::state::snapshot::DashboardSnapshot;
+use flightdeck_dashboard::state::tracked_entries::SessionResolution;
 
 #[test]
 fn theme_picker_jk_cycles_selection_does_not_touch_base() {
@@ -140,6 +146,265 @@ fn settings_alt_s_opens_popup() {
     );
 
     assert_eq!(model.modal, ModalState::Settings);
+}
+
+#[test]
+fn history_key_opens_popup_and_s_is_modal_local() {
+    let mut model = common::model_for_fixture("mixed", MotionLevel::Off);
+
+    let commands = update(&mut model, Msg::KeyPressed(key(KeyCode::Char('H'))));
+
+    assert_eq!(model.modal, ModalState::History);
+    assert!(model.history.loading);
+    assert!(commands
+        .iter()
+        .any(|command| matches!(command, Cmd::Spawn(_))));
+
+    model.history.set_runs(vec![history_run("run-1", true)]);
+    update(&mut model, Msg::KeyPressed(key(KeyCode::Char('S'))));
+
+    assert_eq!(model.modal, ModalState::History);
+    assert!(model
+        .status_message
+        .as_ref()
+        .is_some_and(|status| status.message.contains("summary.md")));
+}
+
+#[test]
+fn history_filter_and_snapshot_cursor_stay_inside_modal() {
+    let mut model = common::model_for_fixture("mixed", MotionLevel::Off);
+    model.modal = ModalState::History;
+    let mut run = history_run("run-1", true);
+    run.snapshots = vec!["2026-05-15T101500Z.json".to_owned()];
+    model
+        .history
+        .set_runs(vec![run, history_run("run-2", false)]);
+
+    update(&mut model, Msg::KeyPressed(key(KeyCode::Down)));
+    assert_eq!(
+        model.history.selected_snapshot(),
+        Some("2026-05-15T101500Z.json")
+    );
+
+    update(&mut model, Msg::KeyPressed(key(KeyCode::Char('/'))));
+    type_history_filter(&mut model, "run-2");
+    update(&mut model, Msg::KeyPressed(key(KeyCode::Enter)));
+
+    assert_eq!(model.modal, ModalState::History);
+    assert_eq!(
+        model.history.selected_run().unwrap().metadata.run_id,
+        "run-2"
+    );
+}
+
+#[test]
+fn history_navigation_keys_and_escape_stay_modal_scoped() {
+    let mut model = common::model_for_fixture("mixed", MotionLevel::Off);
+    model.modal = ModalState::History;
+    model.history.set_runs(
+        (0..5)
+            .map(|idx| history_run(&format!("run-{idx}"), false))
+            .collect(),
+    );
+
+    update(&mut model, Msg::KeyPressed(key(KeyCode::End)));
+    assert_eq!(
+        model.history.selected_run().unwrap().metadata.run_id,
+        "run-4"
+    );
+
+    update(&mut model, Msg::KeyPressed(key(KeyCode::Home)));
+    assert_eq!(
+        model.history.selected_run().unwrap().metadata.run_id,
+        "run-0"
+    );
+
+    update(&mut model, Msg::KeyPressed(key(KeyCode::PageDown)));
+    assert_eq!(
+        model.history.selected_run().unwrap().metadata.run_id,
+        "run-4"
+    );
+
+    update(&mut model, Msg::KeyPressed(key(KeyCode::PageUp)));
+    assert_eq!(
+        model.history.selected_run().unwrap().metadata.run_id,
+        "run-0"
+    );
+
+    update(&mut model, Msg::KeyPressed(key(KeyCode::Esc)));
+    assert_eq!(model.modal, ModalState::None);
+}
+
+#[test]
+fn history_click_and_scroll_select_rows_inside_modal() {
+    let mut model = common::model_for_fixture("mixed", MotionLevel::Off);
+    model.modal = ModalState::History;
+    model.history.set_runs(vec![
+        history_run("run-0", false),
+        history_run("run-1", false),
+        history_run("run-2", false),
+    ]);
+
+    update(&mut model, Msg::Click(ClickAction::SelectHistoryItem(2)));
+    assert_eq!(
+        model.history.selected_run().unwrap().metadata.run_id,
+        "run-2"
+    );
+
+    update(
+        &mut model,
+        Msg::Click(ClickAction::ScrollUp(ScrollSource::History)),
+    );
+    assert_eq!(
+        model.history.selected_run().unwrap().metadata.run_id,
+        "run-1"
+    );
+
+    update(
+        &mut model,
+        Msg::Click(ClickAction::ScrollDown(ScrollSource::History)),
+    );
+    assert_eq!(
+        model.history.selected_run().unwrap().metadata.run_id,
+        "run-2"
+    );
+}
+
+#[test]
+fn history_enter_loads_selected_run() {
+    let mut model = common::model_for_fixture("mixed", MotionLevel::Off);
+    model.modal = ModalState::History;
+    model.history.set_runs(vec![history_run("run-1", false)]);
+
+    let commands = update(&mut model, Msg::KeyPressed(key(KeyCode::Enter)));
+
+    assert!(model.history.loading);
+    assert!(commands
+        .iter()
+        .any(|command| matches!(command, Cmd::Spawn(_))));
+}
+
+#[test]
+fn read_only_archive_blocks_focus_and_prune() {
+    let mut model = common::model_for_fixture("mixed", MotionLevel::Off);
+    model.read_source_state = ReadSourceState::ArchivedRun {
+        run_id: "run-old".to_owned(),
+        archived_at: common::fixed_now(),
+    };
+
+    update(&mut model, Msg::KeyPressed(key(KeyCode::Char('g'))));
+    assert_eq!(model.modal, ModalState::None);
+    assert!(model.confirm.is_none());
+    assert!(model
+        .status_message
+        .as_ref()
+        .is_some_and(|status| status.message.contains("read-only")));
+
+    update(&mut model, Msg::KeyPressed(key(KeyCode::Char('D'))));
+    assert_eq!(model.modal, ModalState::None);
+    assert!(model.confirm.is_none());
+}
+
+#[test]
+fn no_active_run_blocks_focus_and_prune() {
+    let mut model = common::model_for_fixture("mixed", MotionLevel::Off);
+    model.read_source_state = ReadSourceState::NoActiveRun;
+
+    update(&mut model, Msg::KeyPressed(key(KeyCode::Char('g'))));
+    assert_eq!(model.modal, ModalState::None);
+    assert!(model.confirm.is_none());
+    assert!(model
+        .status_message
+        .as_ref()
+        .is_some_and(|status| status.message.contains("No active Flightdeck run")));
+
+    update(&mut model, Msg::KeyPressed(key(KeyCode::Char('D'))));
+    assert_eq!(model.modal, ModalState::None);
+    assert!(model.confirm.is_none());
+}
+
+#[test]
+fn no_active_snapshot_update_clears_pending_write_confirmation() {
+    let mut model = common::model_for_fixture("mixed", MotionLevel::Off);
+    model.modal = ModalState::ConfirmAction;
+    model.confirm = Some(confirm_dialog());
+    let mut snapshot = DashboardSnapshot::empty_for_session(
+        "S",
+        PathBuf::from("/repo/demo/tmp/flightdeck-state-S.json"),
+        common::fixed_now(),
+    );
+    snapshot.project_root = PathBuf::from("/repo/demo");
+
+    update(
+        &mut model,
+        Msg::SnapshotUpdated {
+            snapshot: Box::new(snapshot),
+            source_state: ReadSourceState::NoActiveRun,
+        },
+    );
+
+    assert_eq!(model.read_source_state, ReadSourceState::NoActiveRun);
+    assert_eq!(model.modal, ModalState::None);
+    assert!(model.confirm.is_none());
+}
+
+#[test]
+fn active_run_no_active_result_clears_archive_snapshot_and_activity() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let mut model = common::model_for_fixture("mixed", MotionLevel::Off);
+    model.read_source_state = ReadSourceState::ArchivedRun {
+        run_id: "run-old".to_owned(),
+        archived_at: common::fixed_now(),
+    };
+    assert!(!model.snapshot.sessions.is_empty());
+    assert!(!model.activity.events.is_empty());
+
+    let state_path = temp.path().join("tmp/flightdeck-state-S.json");
+    std::fs::create_dir_all(state_path.parent().expect("state parent")).expect("state dir");
+    let mut snapshot =
+        DashboardSnapshot::empty_for_session("S", state_path.clone(), common::fixed_now());
+    snapshot.project_root = temp.path().to_path_buf();
+    let source = SnapshotSource::Session(SessionResolution {
+        project_root: temp.path().to_path_buf(),
+        state_dir: temp.path().join("tmp"),
+        session: String::from("S"),
+        state_path,
+    });
+
+    update(
+        &mut model,
+        Msg::ActiveRunLoaded(Ok(ActiveRunLoad::NoActive(Box::new(NoActiveRunSnapshot {
+            message: String::from("No active Flightdeck run"),
+            snapshot,
+            source,
+        })))),
+    );
+
+    assert_eq!(model.read_source_state, ReadSourceState::NoActiveRun);
+    assert!(model.snapshot.sessions.is_empty());
+    assert!(model.activity.events.is_empty());
+    assert!(model.error.is_none());
+}
+
+#[test]
+fn successful_structural_equal_snapshot_clears_stale_error() {
+    let mut model = common::model_for_fixture("mixed", MotionLevel::Off);
+    let snapshot = model.snapshot.clone();
+    let source_state = model.read_source_state.clone();
+    model.error = Some(String::from("socket read failed"));
+
+    let commands = update(
+        &mut model,
+        Msg::SnapshotUpdated {
+            snapshot: Box::new(snapshot),
+            source_state,
+        },
+    );
+
+    assert!(model.error.is_none());
+    assert!(commands
+        .iter()
+        .any(|command| matches!(command, Cmd::Render)));
 }
 
 #[test]
@@ -283,6 +548,49 @@ async fn apply_msg(model: &mut flightdeck_dashboard::app::model::Model, msg: Msg
 fn type_filter(model: &mut flightdeck_dashboard::app::model::Model, value: &str) {
     for ch in value.chars() {
         update(model, Msg::KeyPressed(key(KeyCode::Char(ch))));
+    }
+}
+
+fn type_history_filter(model: &mut flightdeck_dashboard::app::model::Model, value: &str) {
+    for ch in value.chars() {
+        update(model, Msg::KeyPressed(key(KeyCode::Char(ch))));
+    }
+}
+
+fn history_run(run_id: &str, with_summary: bool) -> HistoryRun {
+    HistoryRun {
+        metadata: RunMetadata {
+            activity_path: PathBuf::from(format!("/history/{run_id}/activity.jsonl")),
+            imported: false,
+            imported_from: None,
+            last_seen_at: common::fixed_now(),
+            project_root: PathBuf::from("/repo/demo"),
+            run_id: run_id.to_owned(),
+            snapshots_path: PathBuf::from(format!("/history/{run_id}/snapshots")),
+            started_at: common::fixed_now(),
+            state_path: PathBuf::from(format!("/history/{run_id}/state.json")),
+            summary_path: with_summary
+                .then(|| PathBuf::from(format!("/history/{run_id}/summary.md"))),
+            terminated: true,
+            terminated_at: Some(common::fixed_now()),
+            tmux_session: "VS".to_owned(),
+        },
+        snapshots: Vec::new(),
+        snapshots_truncated: false,
+        snapshot_warning: None,
+    }
+}
+
+fn confirm_dialog() -> ConfirmDialog {
+    ConfirmDialog {
+        title: String::from("Focus this session?"),
+        body: String::from("Switch tmux window"),
+        destructive: false,
+        primary_label: String::from("Focus"),
+        secondary_label: String::from("Cancel"),
+        action: WriteAction::FocusWindow {
+            pane_target: String::from("%1"),
+        },
     }
 }
 
