@@ -654,9 +654,9 @@
         {
           "key": "compaction.model",
           "label": "Compaction model",
-          "description": "Summarizer model as provider/model, a bare model id, or current. Default mirrors Pi's custom-compaction example.",
+          "description": "Summarizer model as provider/model, a bare model id, or current. Default uses Pi's active model.",
           "type": "string",
-          "default": "google/gemini-2.5-flash",
+          "default": "current",
           "category": "Compaction",
           "apply": "live"
         },

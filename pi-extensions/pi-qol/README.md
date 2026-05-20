@@ -154,7 +154,7 @@ Off by default. When enabled, non-interactive matches are blocked.
 | Setting | What it does |
 | --- | --- |
 | Custom compaction summaries | Use QOL summaries instead of Pi's default. |
-| Compaction model | Summarizer model. |
+| Compaction model | Summarizer model. Defaults to `current`, meaning Pi's active model; set a provider/model when you want a dedicated larger-context summarizer. |
 | Compaction detail profile | `concise`, `balanced`, or `exhaustive`. |
 | Include previous summary | Pass the previous summary for iterative continuity. |
 | Fallback to Pi default compaction | Run Pi's default compaction if QOL's fails. |

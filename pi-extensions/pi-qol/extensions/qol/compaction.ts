@@ -95,7 +95,7 @@ async function summarizeWithRemote(endpoint: string, systemPrompt: string, promp
 }
 
 export function resolveConfiguredModel(ctx: ExtensionContext, configured: string): any | undefined {
-	if (!configured || configured === "current") return ctx.model;
+	if (!configured || configured.trim().toLowerCase() === "current") return ctx.model;
 	const withoutThinking = configured.replace(/:(off|minimal|low|medium|high|xhigh)$/i, "");
 	const slash = withoutThinking.indexOf("/");
 	if (slash > 0) return ctx.modelRegistry.find(withoutThinking.slice(0, slash), withoutThinking.slice(slash + 1));
