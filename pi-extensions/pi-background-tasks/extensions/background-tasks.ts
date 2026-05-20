@@ -62,7 +62,7 @@ import { logBackgroundDiagnostic } from "./diagnostics.js";
 import { registerAll } from "./registrations.js";
 import { finalizeTaskLifecycle, replayMissedExitsLifecycle, type LifecycleHooks } from "./lifecycle.js";
 import { createOrphanWatcher, type OrphanWatcher } from "./orphan-watcher.js";
-import { createPersistence, sessionIdForContext, sidecarStatePath } from "./persistence.js";
+import { applyCustomEntryWithBarrier, createPersistence, sessionIdForContext, sidecarStatePath } from "./persistence.js";
 import { logFilePath, settingBoolean, settingEnum, settingNumber, settingString, taskEnv } from "./settings.js";
 import {
 	defaultReadProcessIdentity,
@@ -174,11 +174,17 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		tasks.clear();
 		taskCounter = 0;
 		activeSessionId = sessionIdForContext(ctx);
+		let sidecarLoaded = false;
+		let sidecarTasks: BackgroundTaskSnapshot[] | undefined;
 		try {
 			const file = sidecarStatePath(ctx);
 			if (existsSync(file)) {
 				const data = JSON.parse(readFileSync(file, "utf8")) as { tasks?: unknown };
-				if (Array.isArray(data?.tasks)) for (const snapshot of data.tasks) rememberRestoredSnapshot(snapshot as BackgroundTaskSnapshot);
+				if (Array.isArray(data?.tasks)) {
+					sidecarTasks = data.tasks as BackgroundTaskSnapshot[];
+					for (const snapshot of sidecarTasks) rememberRestoredSnapshot(snapshot);
+					sidecarLoaded = true;
+				}
 			}
 		} catch (error) {
 			const msg = error instanceof Error ? error.message : String(error);
@@ -187,13 +193,13 @@ export default function backgroundTasks(pi: ExtensionAPI): void {
 		}
 		for (const entry of ctx.sessionManager.getBranch()) {
 			if (entry.type === "custom" && entry.customType === BG_STATE_TYPE) {
-				const data = entry.data as { tasks?: unknown; version?: unknown; fullSnapshot?: unknown } | undefined;
-				// Bounded manifests (vstack#177, version 2, fullSnapshot false) record only counts.
-				// Skip them so they don't wipe the sidecar-restored state that's already loaded.
-				if (data?.version === 2 && data.fullSnapshot === false) continue;
-				tasks.clear();
-				taskCounter = 0;
-				if (Array.isArray(data?.tasks)) for (const snapshot of data.tasks) rememberRestoredSnapshot(snapshot as BackgroundTaskSnapshot);
+				applyCustomEntryWithBarrier({
+					data: entry.data,
+					sidecarLoaded,
+					sidecarTasks,
+					clear: () => { tasks.clear(); taskCounter = 0; },
+					apply: (snapshot) => rememberRestoredSnapshot(snapshot),
+				});
 			}
 			if (entry.type === "message" && entry.message.role === "toolResult" && (entry.message.toolName === "bg_task" || entry.message.toolName === "bg_status")) {
 				const details = entry.message.details as { task?: unknown; tasks?: unknown } | undefined;
