@@ -47,10 +47,10 @@ Retained from removed perf-* skills: project architecture docs own budgets and t
 
 ## Resources
 
-Consult these curated references when validating benchmarks, profiling low-latency regressions, auditing lock-free/SIMD/cache behavior, or choosing observability tooling.
+Consult these curated references when validating benchmarks, profiling low-latency regressions, auditing lock-free/SIMD/cache behavior, or choosing observability tooling. Reference column holds a ctx7 ID where one exists, or a direct docs URL otherwise.
 
-| Topic | ctx7 ID | Notes |
-|-------|---------|-------|
+| Topic | Reference | Notes |
+|-------|-----------|-------|
 | Rust std/core::arch | `/websites/doc_rust-lang_stable_std` | Atomics, unsafe semantics, SIMD intrinsics, collections |
 | Crossbeam | `/crossbeam-rs/crossbeam` | `CachePadded`, epoch reclamation, lock-free structures |
 | crossbeam-channel | `/websites/rs_crossbeam-channel` | MPMC channels and select patterns |
@@ -61,7 +61,7 @@ Consult these curated references when validating benchmarks, profiling low-laten
 | parking_lot | `/websites/rs_parking_lot` | Mutex/RwLock primitives for non-hot-path comparisons |
 | dashmap | `/websites/rs_dashmap` | Concurrent hashmap behavior and caveats |
 | libc | `/rust-lang/libc` | `madvise`, `mlockall`, `mmap`, pthread affinity, CPU sets |
-| hdrhistogram | `/hdrhistogram/hdrhistogram_py` | Percentile recording patterns; verify Rust crate APIs against docs.rs if needed |
+| hdrhistogram | `https://docs.rs/hdrhistogram/latest/hdrhistogram/` | Percentile recording patterns for the Rust crate (Python ctx7 `/hdrhistogram/hdrhistogram_py` covers the same algorithms) |
 | HdrHistogram | `http://hdrhistogram.org/` | Coordinated-omission-aware percentile methodology |
 | Criterion | `/criterion-rs/criterion.rs` | Benchmark setup, groups, statistical comparison |
 | Criterion.rs repository | `https://github.com/bheisler/criterion.rs` | Established Rust benchmark examples |
