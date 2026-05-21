@@ -13,9 +13,9 @@ The __[`main`](tour/src/main.rs)__ file contains all the code of the example! Al
   </a>
 </div>
 
-[`iced_winit`]: ../winit
-[`iced_native`]: ../native
-[`iced_wgpu`]: ../wgpu
+[`iced_winit`]: https://github.com/iced-rs/iced/tree/master/winit
+[`iced_native`]: https://github.com/iced-rs/iced/tree/master/native
+[`iced_wgpu`]: ../iced_wgpu
 [`iced_web`]: https://github.com/iced-rs/iced_web
 [`winit`]: https://github.com/rust-windowing/winit
 [`wgpu`]: https://github.com/gfx-rs/wgpu
@@ -82,11 +82,11 @@ A bunch of simpler examples exist:
 - [`bezier_tool`](bezier_tool), a Paint-like tool for drawing Bézier curves using the `Canvas` widget.
 - [`clock`](clock), an application that uses the `Canvas` widget to draw a clock and its hands to display the current time.
 - [`color_palette`](color_palette), a color palette generator based on a user-defined root color.
-- [`counter`](counter), the classic counter example explained in the [`README`](../README.md).
+- [`counter`](counter), the classic counter example explained in the [iced repository README](https://github.com/iced-rs/iced#overview).
 - [`custom_widget`](custom_widget), a demonstration of how to build a custom widget that draws a circle.
 - [`download_progress`](download_progress), a basic application that asynchronously downloads a dummy file of 100 MB and tracks the download progress.
 - [`events`](events), a log of native events displayed using a conditional `Subscription`.
-- [`geometry`](geometry), a custom widget showcasing how to draw geometry with the `Mesh2D` primitive in [`iced_wgpu`](../wgpu).
+- [`geometry`](geometry), a custom widget showcasing how to draw geometry with the `Mesh2D` primitive in [`iced_wgpu`](../iced_wgpu).
 - [`integration`](integration), a demonstration of how to integrate Iced in an existing [`wgpu`] application.
 - [`pane_grid`](pane_grid), a grid of panes that can be split, resized, and reorganized.
 - [`pick_list`](pick_list), a dropdown list of selectable options.

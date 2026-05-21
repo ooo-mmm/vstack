@@ -1,6 +1,6 @@
 ## Counter
 
-The classic counter example explained in the [`README`](../../README.md).
+The classic counter example explained in the [iced repository README](https://github.com/iced-rs/iced#overview).
 
 The __[`main`]__ file contains all the code of the example.
 

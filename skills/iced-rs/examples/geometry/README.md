@@ -1,6 +1,6 @@
 ## Geometry
 
-A custom widget showcasing how to draw geometry with the `Mesh2D` primitive in [`iced_wgpu`](../../wgpu).
+A custom widget showcasing how to draw geometry with the `Mesh2D` primitive in [`iced_wgpu`](../../iced_wgpu).
 
 The __[`main`]__ file contains all the code of the example.
 
