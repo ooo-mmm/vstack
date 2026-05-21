@@ -167,10 +167,10 @@ Readers call `readTrackedEntries(state)` to get the canonical `TrackedEntry` map
         //   "item_title": "<item title>",
         //   "depends_on": ["<item-id>"],
         //   "worktree": "<absolute path>",
-        //   "parse_mode": "h2-items|phase-style",
+        //   "parse_mode": "explicit-items|inferred-items|mixed-items", // legacy rows may say h2-items or phase-style
         //   "brief_artifact_path": "<absolute sanitized item brief artifact path>",
         //   "brief_sha256": "sha256:<64-hex sanitized brief hash>",
-        //   "omitted_context": ["<shared context title omitted from child brief>"],
+        //   "omitted_context": ["<supervisor-only context title/label sanitized from child brief>"],
         //   "pr_number": 0,
         //   "merge_commit": null,
         //   "scope_files_actual": 27

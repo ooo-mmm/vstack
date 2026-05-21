@@ -76,11 +76,11 @@ Run commands by asking your agent for `flightdeck <command>`.
 
 ### Plan lane
 
-Plan-file orchestration turns one markdown plan into multiple item worktrees and child panes, then supervises each item PR through CI, review, merge, dependency unblocks, and cleanup. Plans can use simple H2 work-item sections or phase-style H3 items under a recognized implementation workstream. Ambiguous H2s and master-only orchestration text inside item content fail closed before preview or mutation; master-only orchestration text in shared context is omitted from child briefs and reported in the preview. Flightdeck previews the chosen mode before any worktree or pane is created. Format reference: [`PLAN-FILE.md`](./PLAN-FILE.md).
+Plan-file orchestration turns one markdown plan into multiple item worktrees and child panes, then supervises each item PR through CI, review, merge, dependency unblocks, and cleanup. Plans can dictate explicit work items, or they can be freeform/narrative: Flightdeck analyzes the plan, does light repo reconnaissance when useful, infers PR-sized items, chooses worktree names, and decides dependency/parallel waves before presenting one preview. Master-only orchestration text is sanitized out of child briefs and reported in the preview. Format reference: [`PLAN-FILE.md`](./PLAN-FILE.md).
 
 | Command | Use when | Main args |
 |---------|----------|-----------|
-| `flightdeck plan start` | Parse a plan file, preview items, spawn dependency-free work items. | `<path>` |
+| `flightdeck plan start` | Decompose a plan file, preview items, spawn dependency-free work items. | `<path>` |
 | `flightdeck plan watch` | Resume plan supervision. | `[ITEM_ID...]` |
 | `flightdeck plan close-item` | Verify merged PR state, then clean up one item. | `<ITEM_ID>` |
 | `flightdeck plan terminate` | Summarize and unwind the plan session. | none |

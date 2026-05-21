@@ -70,7 +70,7 @@ export interface PlanItemDomain {
 	worktree: string;
 	pr_number: number | null;
 	merge_commit: string | null;
-	/** Parse mode used to produce immutable item briefs. Present for new plan-lane entries; omitted on legacy entries. */
+	/** Decomposition mode used to produce immutable item briefs. Present for new plan-lane entries; legacy rows may use h2-items/phase-style. */
 	parse_mode?: "h2-items" | "phase-style" | string | null;
 	/** sha256:<hex> hash of the frozen source plan text used at plan start. */
 	plan_snapshot_sha256?: string | null;
@@ -78,7 +78,7 @@ export interface PlanItemDomain {
 	brief_artifact_path?: string | null;
 	/** sha256:<hex> hash of brief_artifact_path content. */
 	brief_sha256?: string | null;
-	/** Shared context titles omitted from this item's brief because they contained orchestration-only instructions. */
+	/** Supervisor-only context titles/labels sanitized from this item's brief. */
 	omitted_context?: string[] | null;
 	scope_files_actual?: number | null;
 	[key: string]: unknown;

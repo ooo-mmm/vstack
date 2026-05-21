@@ -120,7 +120,7 @@ const ORCHESTRATION_ONLY_PATTERNS = [
 ];
 
 type ParsedPlanOutcome = {
-	mode: "h2-items" | "phase-style" | "ambiguous";
+	mode: "explicit-items" | "inferred-items" | "mixed-items" | "ambiguous";
 	reason?: string;
 	beforePreview: boolean;
 	beforeMutation: boolean;
@@ -150,11 +150,20 @@ function isRecognizedWorkstream(title: string): boolean {
 	const normalized = normalizeHeading(title);
 	return normalized === "implementation phases" ||
 		normalized === "implementation plan" ||
+		normalized === "implementation" ||
 		normalized === "work items" ||
 		normalized === "workstreams" ||
+		normalized === "tasks" ||
+		normalized === "task list" ||
+		normalized === "phases" ||
+		normalized === "milestones" ||
+		normalized === "work plan" ||
+		normalized === "rollout" ||
 		normalized === "execution plan" ||
 		normalized.startsWith("additional workstream") ||
-		normalized.includes("workstream");
+		normalized.includes("workstream") ||
+		normalized.includes("phase") ||
+		normalized.includes("task");
 }
 
 function isSafeSharedH2(title: string): boolean {
@@ -168,6 +177,22 @@ function isPhaseItemHeading(title: string): boolean {
 
 function containsOrchestrationOnlyMarker(text: string): boolean {
 	return ORCHESTRATION_ONLY_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+function sanitizeOrchestrationOnlyText(text: string): string {
+	return text
+		.split(/\n{2,}/)
+		.map((part) => part.trim())
+		.filter((part) => part && !containsOrchestrationOnlyMarker(part))
+		.join("\n\n");
+}
+
+function isImplementationLikeH2(title: string, body: string): boolean {
+	const normalized = normalizeHeading(title);
+	if (isSafeSharedH2(title)) return false;
+	if (/^(add|update|wire|extract|refactor|implement|build|fix|normalize|render|split|create|migrate|remove|replace|audit|document|test)\b/.test(normalized)) return true;
+	if (/(follow-?ups?|work|task|phase|implementation|refactor|feature|fix|cleanup|migration|support|helper|shim|ui|api|cli|docs?)/.test(normalized)) return true;
+	return /\b(scope|tests?|acceptance criteria|implement|wire|extract|refactor|add|update|fix)\b/i.test(body);
 }
 
 function parseH2Sections(markdown: string): H2Section[] {
@@ -222,7 +247,8 @@ function itemBriefAndControls(h3: H3Section, itemId: string): { brief: string; w
 	const briefParts: string[] = [];
 	let worktree = `flightdeck-plan-${itemId}`;
 	let depends_on: string[] = [];
-	if (h3.intro) briefParts.push(h3.intro);
+	const safeIntro = sanitizeOrchestrationOnlyText(h3.intro);
+	if (safeIntro) briefParts.push(safeIntro);
 	for (const h4 of h3.h4s) {
 		const normalized = normalizeHeading(h4.title);
 		if (normalized === "worktree") {
@@ -233,7 +259,8 @@ function itemBriefAndControls(h3: H3Section, itemId: string): { brief: string; w
 			depends_on = parseDepends(h4.body);
 			continue;
 		}
-		briefParts.push(`#### ${h4.title}\n\n${h4.body}`);
+		const safeBody = sanitizeOrchestrationOnlyText(h4.body);
+		if (safeBody) briefParts.push(`#### ${h4.title}\n\n${safeBody}`);
 	}
 	return { brief: briefParts.join("\n\n"), depends_on, worktree };
 }
@@ -246,60 +273,90 @@ function parsePlanContract(markdown: string): ParsedPlanOutcome {
 	const h2s = parseH2Sections(markdown);
 	const allH2Ids = h2s.map((section) => slugTitle(section.title));
 	const hasPhaseIndicators = h2s.some((section) => section.h3s.some((h3) => isPhaseItemHeading(h3.title)));
-	const hasRecognizedPhaseItems = h2s.some((section) => isRecognizedWorkstream(section.title) && section.h3s.some((h3) => isPhaseItemHeading(h3.title)));
-
-	if (hasPhaseIndicators && !hasRecognizedPhaseItems) {
-		return { ...ambiguous("plan-format-ambiguous: ambiguous plan format; use either H2 item mode or put Phase/Work item H3s under an implementation workstream"), allH2Ids };
-	}
 
 	if (!hasPhaseIndicators) {
+		const safeGlobalContext: string[] = [];
+		const omittedOrchestrationContext: string[] = [];
+		const items: ParsedPlanOutcome["items"] = [];
+		for (const section of h2s) {
+			if (isSafeSharedH2(section.title) && !isImplementationLikeH2(section.title, section.body)) {
+				const safeBody = sanitizeOrchestrationOnlyText(section.body);
+				if (safeBody) safeGlobalContext.push(`## ${section.title}\n\n${safeBody}`);
+				else if (containsOrchestrationOnlyMarker(section.body)) omittedOrchestrationContext.push(section.title);
+				continue;
+			}
+			const id = slugTitle(section.title);
+			const safeBody = sanitizeOrchestrationOnlyText(section.body);
+			if (!safeBody && containsOrchestrationOnlyMarker(section.body)) {
+				omittedOrchestrationContext.push(section.title);
+				continue;
+			}
+			items.push({ id, title: section.title, brief: [...safeGlobalContext, safeBody].filter(Boolean).join("\n\n---\n\n"), worktree: `flightdeck-plan-${id}`, depends_on: [] });
+		}
 		return {
-			mode: "h2-items",
+			mode: items.length > 0 ? "explicit-items" : "inferred-items",
 			beforePreview: false,
 			beforeMutation: true,
-			items: h2s.map((section) => ({ id: slugTitle(section.title), title: section.title, brief: section.body, worktree: `flightdeck-plan-${slugTitle(section.title)}`, depends_on: [] })),
-			omittedOrchestrationContext: [],
+			items,
+			omittedOrchestrationContext,
 			allH2Ids,
 		};
 	}
 
 	const safeGlobalContext: string[] = [];
 	const omittedOrchestrationContext: string[] = [];
+	let inferredItemAdded = false;
 	for (const section of h2s) {
-		if (isRecognizedWorkstream(section.title)) continue;
-		if (!isSafeSharedH2(section.title)) {
-			return { ...ambiguous(`plan-format-ambiguous: H2 '${section.title}' is neither an implementation workstream nor allowlisted shared context`), allH2Ids };
-		}
+		if (isRecognizedWorkstream(section.title) || section.h3s.some((h3) => isPhaseItemHeading(h3.title))) continue;
+		if (!isSafeSharedH2(section.title) && isImplementationLikeH2(section.title, section.body)) continue;
 		if (containsOrchestrationOnlyMarker(section.body)) {
 			omittedOrchestrationContext.push(section.title);
 		} else {
-			safeGlobalContext.push(`## ${section.title}\n\n${section.body}`);
+			const safeBody = sanitizeOrchestrationOnlyText(section.body);
+			if (safeBody) safeGlobalContext.push(`## ${section.title}\n\n${safeBody}`);
 		}
 	}
 
 	const items: ParsedPlanOutcome["items"] = [];
-	for (const section of h2s.filter((candidate) => isRecognizedWorkstream(candidate.title))) {
+	for (const section of h2s) {
+		const phaseItems = section.h3s.filter((candidate) => isPhaseItemHeading(candidate.title));
+		if (phaseItems.length === 0) {
+			if (isSafeSharedH2(section.title) || !isImplementationLikeH2(section.title, section.body)) continue;
+			const id = slugTitle(section.title);
+			const safeBody = sanitizeOrchestrationOnlyText(section.body);
+			if (!safeBody && containsOrchestrationOnlyMarker(section.body)) {
+				omittedOrchestrationContext.push(section.title);
+				continue;
+			}
+			items.push({ id, title: section.title, brief: [...safeGlobalContext, safeBody].filter(Boolean).join("\n\n---\n\n"), worktree: `flightdeck-plan-${id}`, depends_on: [] });
+			inferredItemAdded = true;
+			continue;
+		}
 		const safeLocalContext: string[] = [];
 		if (section.intro) {
 			if (containsOrchestrationOnlyMarker(section.intro)) omittedOrchestrationContext.push(section.title);
-			else safeLocalContext.push(section.intro);
+			else safeLocalContext.push(sanitizeOrchestrationOnlyText(section.intro));
 		}
 		for (const h3 of section.h3s) {
 			if (isPhaseItemHeading(h3.title)) continue;
 			if (containsOrchestrationOnlyMarker(h3.body)) omittedOrchestrationContext.push(`${section.title} / ${h3.title}`);
-			else safeLocalContext.push(`### ${h3.title}\n\n${h3.body}`);
+			else {
+				const safeBody = sanitizeOrchestrationOnlyText(h3.body);
+				if (safeBody) safeLocalContext.push(`### ${h3.title}\n\n${safeBody}`);
+			}
 		}
-		for (const h3 of section.h3s.filter((candidate) => isPhaseItemHeading(candidate.title))) {
+		for (const h3 of phaseItems) {
 			const id = slugTitle(h3.title);
 			if (containsOrchestrationOnlyMarker(h3.body)) {
-				return { ...ambiguous(`plan-format-ambiguous: ${id} contains Flightdeck master-only orchestration instructions`), allH2Ids };
+				omittedOrchestrationContext.push(`${section.title} / ${h3.title}`);
 			}
 			const controls = itemBriefAndControls(h3, id);
+			if (!controls.brief && containsOrchestrationOnlyMarker(h3.body)) continue;
 			items.push({ id, title: h3.title, brief: [...safeGlobalContext, ...safeLocalContext, controls.brief].filter(Boolean).join("\n\n---\n\n"), worktree: controls.worktree, depends_on: controls.depends_on });
 		}
 	}
 
-	return { mode: "phase-style", beforePreview: false, beforeMutation: true, items, omittedOrchestrationContext, allH2Ids };
+	return { mode: inferredItemAdded ? "mixed-items" : "explicit-items", beforePreview: false, beforeMutation: true, items, omittedOrchestrationContext, allH2Ids };
 }
 
 function runClassify(input: string, args: string[] = []): { stdout: string; stderr: string; status: number | null } {
@@ -506,7 +563,7 @@ describe("handler domain guards", () => {
 
 	test("plan start validates graph before dry-run or mutation", () => {
 		const doc = readFileSync(PLAN_START_DOC, "utf8");
-		expectTextBefore(doc, "Validate the parse mode and plan graph before dry-run preview", "<parse_preview_format>");
+		expectTextBefore(doc, "Validate the decomposition and plan graph before dry-run preview", "<parse_preview_format>");
 		expect(doc).toContain('reason:"plan-parse-invalid"');
 		expect(doc).toContain('prompt_text:"<ABSOLUTE_PLAN_PATH>: zero work items"');
 		expect(doc).toContain('reason:"plan-dependency-unresolved"');
@@ -517,26 +574,27 @@ describe("handler domain guards", () => {
 		expect(doc).toContain('prompt_text:"cycle: <ITEM_A> -> <ITEM_B> -> <ITEM_A>"');
 	});
 
-	test("plan lane supports phase-style docs without treating context H2s as items", () => {
+	test("plan lane supports autonomous decomposition without treating context H2s as items", () => {
 		const start = readFileSync(PLAN_START_DOC, "utf8");
 		const watch = readFileSync(PLAN_WATCH_DOC, "utf8");
 		const handle = readFileSync(PLAN_HANDLE_DOC, "utf8");
 		const planFile = readFileSync(PLAN_FILE_DOC, "utf8");
 		const schema = readFileSync(SCHEMA_DOC, "utf8");
 		for (const doc of [start, planFile]) {
-			expect(doc).toContain("phase-style");
-			expect(doc).toContain("Implementation phases");
+			expect(doc).toContain("freeform");
+			expect(doc).toContain("inferred-items");
 			expect(doc).toContain("### Phase");
 			expect(doc).toContain("shared context");
 		}
-		expect(start).toContain("A malformed phase-style file must not fall back to H2 item mode");
-		expect(start).toContain("Any other H2 outside a recognized implementation workstream is ambiguous; do not silently treat it as shared context");
-		expect(start).toContain("H2 '<H2_TITLE>' is neither an implementation workstream nor allowlisted shared context");
-		expect(start).toContain("Additional workstream");
-		expect(start).toContain("Non-item H3s inside a workstream, such as `### Context`, `### Summary`, `### Goals`, and `### Non-goals`, are workstream-local shared context, not items");
-		expect(start).toContain("Context-only H2 sections outside the safe allowlist must never appear as preview Item rows");
-		expect(start).toContain("Omit matching shared-context sections from child briefs and show their titles in the preview as omitted orchestration context");
-		expect(start).toContain("<ITEM_ID> contains Flightdeck master-only orchestration instructions");
+		expect(start).toContain("Treat markdown headings, checklists, and explicit control blocks as evidence, not a rigid schema");
+		expect(start).toContain("Do **not** pause before preview merely because markdown structure is unfamiliar");
+		expect(start).toContain("unrecognized H2 titles");
+		expect(start).toContain("context H2s outside any allowlist");
+		expect(start).toContain("absent dependency declarations are all normal inputs");
+		expect(start).toContain("Prefer a conservative dependency edge or a smaller item split over asking the user an open-ended decomposition question");
+		expect(start).toContain("Do not ask a pre-preview questionnaire about item boundaries, H2 classification, worktree names, or parallelism");
+		expect(start).toContain("show their titles or short labels in the preview as sanitized orchestration context");
+		expect(start).toContain("If a candidate item becomes empty after supervisor-only content is removed");
 		expect(start).toContain("brief_artifact_path");
 		expect(start).toContain("brief_sha256");
 		expect(start).toContain("plan_snapshot_sha256");
@@ -552,18 +610,18 @@ describe("handler domain guards", () => {
 		expect(schema).toContain("brief_sha256");
 		expect(schema).toContain("plan_snapshot_sha256");
 		expect(start).toContain('reason:"plan-format-ambiguous"');
-		expect(start).toContain("Mode: [PARSE_MODE]");
-		expect(start).toContain("Shared context: [global H2/workstream-local titles or —]");
-		expect(start).toContain("Omitted orchestration context: [titles or —]");
-		expect(planFile).toContain("Preview must show only `phase-1-normalize-error-payloads`, `phase-2-render-diagnostics`, and `phase-3-update-troubleshooting-guide` as items");
-		expect(planFile).toContain("`Problem`, `Goals`, `Additional workstream — Documentation follow-ups`, and `Context` are shared context, not work items");
-		expect(planFile).toContain("Malformed phase-style sections do not fall back to H2 item mode");
-		expect(planFile).toContain("Result: `plan-format-ambiguous`");
+		expect(start).toContain("Mode: [explicit-items|inferred-items|mixed-items]");
+		expect(start).toContain("Analysis basis: [explicit controls, inferred from headings/prose, repo reconnaissance, or combination]");
+		expect(start).toContain("Sanitized orchestration context: [titles/labels or —]");
+		expect(start).toContain("Parallel waves:");
+		expect(planFile).toContain("Markdown headings are hints, not a contract");
+		expect(planFile).toContain("Flightdeck decides and shows the basis in the preview instead of asking you to reformat the plan");
+		expect(planFile).toContain("It should not stop just because `## Phases` or `## Documentation follow-ups` are not on a fixed allowlist");
 	});
 
-	test("actual app/run-history plan remains valid phase-style under the allowlist", () => {
+	test("actual app/run-history plan remains valid explicit decomposition", () => {
 		const parsed = parsePlanContract(readFileSync(ACTUAL_PHASE_STYLE_PLAN, "utf8"));
-		expect(parsed.mode).toBe("phase-style");
+		expect(parsed.mode).toBe("explicit-items");
 		expect(parsed.reason).toBeUndefined();
 		expect(parsed.items.map((item) => item.title)).toContain("Phase 1 — Design and compatibility layer");
 		expect(parsed.items.some((item) => item.title.startsWith("Phase 6.7 — App focus/open helper, icon title, and launch order"))).toBe(true);
@@ -575,9 +633,9 @@ describe("handler domain guards", () => {
 		expect(parsed.items.length).toBe(15);
 	});
 
-	test("phase-style fixture parses exact phase items and excludes context-only H2s", () => {
+	test("explicit fixture parses exact phase items and excludes context-only H2s", () => {
 		const parsed = parsePlanContract(planFixture("phase-style-valid.md"));
-		expect(parsed.mode).toBe("phase-style");
+		expect(parsed.mode).toBe("explicit-items");
 		expect(parsed.beforeMutation).toBe(true);
 		expect(parsed.items.map((item) => item.id)).toEqual([
 			"phase-1-run-identity",
@@ -618,33 +676,30 @@ describe("handler domain guards", () => {
 		}
 	});
 
-	test("malformed or mixed phase-style fixtures fail closed before preview or mutation", () => {
+	test("formerly malformed or mixed phase-style fixtures now decompose before preview", () => {
 		const malformed = parsePlanContract(planFixture("malformed-phases-h2.md"));
-		expect(malformed.mode).toBe("ambiguous");
-		expect(malformed.reason).toContain("plan-format-ambiguous");
-		expect(malformed.reason).toContain("put Phase/Work item H3s under an implementation workstream");
-		expect(malformed.beforePreview).toBe(true);
+		expect(malformed.mode).toBe("explicit-items");
+		expect(malformed.reason).toBeUndefined();
+		expect(malformed.beforePreview).toBe(false);
 		expect(malformed.beforeMutation).toBe(true);
-		expect(malformed.items).toEqual([]);
+		expect(malformed.items.map((item) => item.id)).toEqual(["phase-1-parser-guard"]);
 
 		const mixed = parsePlanContract(planFixture("mixed-unknown-h2.md"));
-		expect(mixed.mode).toBe("ambiguous");
-		expect(mixed.reason).toContain("plan-format-ambiguous");
-		expect(mixed.reason).toContain("Refactor dashboard");
-		expect(mixed.reason).toContain("neither an implementation workstream nor allowlisted shared context");
-		expect(mixed.beforePreview).toBe(true);
+		expect(mixed.mode).toBe("mixed-items");
+		expect(mixed.reason).toBeUndefined();
+		expect(mixed.beforePreview).toBe(false);
 		expect(mixed.beforeMutation).toBe(true);
-		expect(mixed.items).toEqual([]);
+		expect(mixed.items.map((item) => item.id)).toEqual(["phase-1-parser-guard", "refactor-dashboard"]);
 	});
 
-	test("implementation item content with Flightdeck master commands fails instead of entering child briefs", () => {
+	test("implementation item content with Flightdeck master commands is sanitized from child briefs", () => {
 		const parsed = parsePlanContract(planFixture("item-master-command.md"));
-		expect(parsed.mode).toBe("ambiguous");
-		expect(parsed.reason).toContain("plan-format-ambiguous");
-		expect(parsed.reason).toContain("phase-1-parser-guard contains Flightdeck master-only orchestration instructions");
-		expect(parsed.beforePreview).toBe(true);
+		expect(parsed.mode).toBe("explicit-items");
+		expect(parsed.reason).toBeUndefined();
+		expect(parsed.beforePreview).toBe(false);
 		expect(parsed.beforeMutation).toBe(true);
 		expect(parsed.items).toEqual([]);
+		expect(parsed.omittedOrchestrationContext).toEqual(["Implementation phases / Phase 1 — Parser guard"]);
 	});
 
 	test("plan spawn docs require atomic claim and transactional failure handling", () => {

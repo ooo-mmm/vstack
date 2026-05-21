@@ -9,7 +9,7 @@ Start a Flightdeck plan-file session from one markdown plan. This lane is intent
 - Plan lane dependencies only: `github` and `worktree`. Do not load `linear` or `project-management`.
 - `gh` authenticated against the target repo because each item produces a PR.
 
-**Post-condition**: every parsed item has a tracked entry with metadata under `entry.domain.plan_item`; dependency-free items are spawned through `flightdeck-session start --kind workflow`; `workflows/plan/watch.md` owns supervision.
+**Post-condition**: every decomposed item has a tracked entry with metadata under `entry.domain.plan_item`; dependency-free items are spawned through `flightdeck-session start --kind workflow`; `workflows/plan/watch.md` owns supervision.
 
 ---
 
@@ -23,63 +23,68 @@ Start a Flightdeck plan-file session from one markdown plan. This lane is intent
 
 ---
 
-## § 2: Parse work items with dry-run preview
+## § 2: Analyze plan into work items with dry-run preview
 
-Parse with master judgment. No parser code is required. First choose exactly one parse mode, then derive items.
+Decompose with master judgment. No parser code is required. Treat markdown headings, checklists, and explicit control blocks as evidence, not a rigid schema. Flightdeck's job is to accept an implementation plan as handed off, including freeform narrative plans, infer PR-sized work items when the plan does not dictate them, and ask the user only for the final preview confirmation before mutation.
 
-Parse modes:
+Decomposition steps:
 
-- `h2-items`: simple format. Each `## <Work item title>` H2 section is one work item. Use this mode only when the file contains no phase-style indicators anywhere.
-- `phase-style`: long-plan format. One or more recognized implementation workstream H2 sections contain item H3s. Recognized workstream headings are `## Implementation phases`, `## Implementation plan`, `## Work items`, `## Workstreams`, `## Additional workstream ...`, and `## Execution plan`; any H2 containing `workstream` is a workstream. Inside those sections, `### Phase <N> ...` and `### Work item ...` H3 headings become work items. Non-item H3s inside a workstream, such as `### Context`, `### Summary`, `### Goals`, and `### Non-goals`, are workstream-local shared context, not items.
+1. Build a source map from the frozen plan: H1 title, intro, headings at any depth, checklists, tables, code blocks, explicit `Worktree`, `Depends on`, `After`, `Prerequisite`, `Blocked by`, `Parallel`, or similar controls, and any file/module names.
+2. If the plan names product areas, files, crates/packages, commands, or concepts whose boundaries matter, do a short repo reconnaissance before preview (`git status`, file tree, `rg`/`grep` for named symbols or likely modules). Use this to avoid splitting one tightly coupled file/API change across parallel worktrees.
+3. Choose one decomposition mode:
+   - `explicit-items`: the plan clearly dictates item boundaries through sections such as `## <item>`, `### Phase ...`, `### Work item ...`, task lists, tables, or explicit workstream headings. Preserve explicit item titles, `Worktree`, and `Depends on` controls unless they are impossible, cyclic, or unsafe.
+   - `inferred-items`: the plan is narrative, mixed-format, or uses unfamiliar headings. Synthesize implementation items from goals, acceptance criteria, touched areas, and repo reconnaissance. Context headings stay shared context; implementation-sounding headings become candidate items; missing headings do not block decomposition.
+   - `mixed-items`: some boundaries are explicit and some must be inferred. Keep explicit items stable, then add inferred items for implementation scope not covered by explicit items.
 
-Phase-style indicators are any H3 heading matching `### Phase <N> ...` or `### Work item ...`, anywhere in the file. A malformed phase-style file must not fall back to H2 item mode.
+Do **not** pause before preview merely because markdown structure is unfamiliar: unrecognized H2 titles, `### Phase` under `## Phases`, context H2s outside any allowlist, a mixture of H2 and H3 item headings, absent worktree names, or absent dependency declarations are all normal inputs. Decide and show the decision in the preview.
 
-Safe global shared-context H2 allowlist for phase-style mode:
+Pause before preview only when the plan is unreadable, has no meaningful implementable outcome after analysis, requires destructive/irreversible actions outside normal branch/worktree/PR flow, or contains direct contradictions where choosing an interpretation would change product behavior. Prefer a conservative dependency edge or a smaller item split over asking the user an open-ended decomposition question.
 
-- `Pre-execution context`, `Context`, `Background`, `Summary`, `Problem`, `Goals`, `Non-goals`, `Scope`, `Constraints`, `Current state`, `Proposed model`, `Design`, `Architecture`, `Lifecycle changes`, `Dashboard UX`, `Pi extension scope after the Rust app`, `CLI/script changes`, `Data model additions`, `Storage layout`, `Acceptance criteria`, `Validation plan`, `Test plan`, `Tests`, `Execution workflow`, `Risks`, `Notes`, `Open questions`.
-- The title may have a parenthetical or update suffix after an allowlisted base title, such as `Pre-execution context (updated ...)`.
-- Any other H2 outside a recognized implementation workstream is ambiguous; do not silently treat it as shared context.
-
-Safety guard:
-
-- If phase-style indicators exist but do not sit under a recognized implementation workstream, set `paused_for_user = {entry_id:"plan", reason:"plan-format-ambiguous", prompt_text:"<ABSOLUTE_PLAN_PATH>: ambiguous plan format; use either H2 item mode or put Phase/Work item H3s under an implementation workstream"}` and stop before dry-run preview.
-- If a phase-style document has any non-allowlisted H2 outside recognized implementation workstreams, set `paused_for_user = {entry_id:"plan", reason:"plan-format-ambiguous", prompt_text:"<ABSOLUTE_PLAN_PATH>: H2 '<H2_TITLE>' is neither an implementation workstream nor allowlisted shared context"}` and stop before dry-run preview.
-- Before adding shared context to any child brief, scan shared-context sections for orchestration-only markers: `BACKUP-WAKE`, reviewer fan-out instructions, `Do NOT act as Flightdeck master`, `/skill:flightdeck plan`, `$flightdeck plan`, `/flightdeck plan`, `flightdeck plan start`, `flightdeck plan watch`, `flightdeck plan close-item`, `flightdeck plan terminate`, `flightdeck linear start`, `flightdeck github start`, and `flightdeck session` master commands. Omit matching shared-context sections from child briefs and show their titles in the preview as omitted orchestration context.
-- If an implementation item section contains any orchestration-only marker, set `paused_for_user = {entry_id:"plan", reason:"plan-format-ambiguous", prompt_text:"<ITEM_ID> contains Flightdeck master-only orchestration instructions"}` and stop before dry-run preview. Do not silently strip item content.
-- Immediately before writing `<WT_PATH>/tmp/brief.md`, re-scan the final item brief and abort with `plan-format-ambiguous` if any orchestration-only marker remains.
-- Context-only H2 sections outside the safe allowlist must never appear as preview Item rows in phase-style mode; they must fail closed as `plan-format-ambiguous`.
-
-Rules:
+Item and context rules:
 
 - `item_id` = slugified item title: lowercase, dash-separated, alphanumeric plus dash only, collapsed repeats, trimmed, truncated to 32 chars.
 - If two titles slugify to the same id, append a stable numeric suffix (`-2`, `-3`) and show the collision in the preview.
-- Worktree name = optional `Worktree` control body, else `flightdeck-plan-<ITEM_ID>`. Use `### Worktree` in `h2-items` mode and `#### Worktree` in `phase-style` mode.
+- Worktree name = explicit `Worktree` control body when present, else `flightdeck-plan-<ITEM_ID>`. Accept `Worktree` controls at any subsection depth under the item.
 - Branch name matches the worktree name.
-- Optional `Depends on` control body names other item titles or item ids. Normalize each dependency to an `item_id`. Use `### Depends on` in `h2-items` mode and `#### Depends on` in `phase-style` mode.
-- In `h2-items` mode, the H2 section content excluding only optional `### Worktree` and `### Depends on` subsections becomes the child brief. Other H3 subsections remain part of the brief.
-- In `phase-style` mode, shared context is the plan intro plus allowlisted H2 sections outside recognized implementation workstreams that do not contain orchestration-only markers. Workstream-local shared context is the recognized workstream H2 intro plus non-item H3 sections inside that workstream that do not contain orchestration-only markers. The child brief is safe global shared context plus safe workstream-local shared context plus the item H3 content, excluding only optional `#### Worktree` and `#### Depends on` subsections. Other H4 subsections remain part of the item brief.
+- Explicit dependency controls (`Depends on`, `After`, `Prerequisite`, `Blocked by`, table dependency columns, or clear prose equivalents) name other item titles or item ids. Normalize each dependency to an `item_id`.
+- Infer dependencies when one item creates or changes an API/schema/model/storage shape used by another, when two items must touch the same files or public interface in incompatible ways, when generated artifacts depend on implementation output, when migrations must precede consumers, or when plan order explicitly says a later item builds on an earlier one. Otherwise items are dependency-free and may start in parallel.
+- If dependency certainty is low, choose the safer edge and include the reason in the preview; do not ask the user just to decide parallelism.
+- Combine tiny adjacent tasks when separate PRs would mostly edit the same files or create review overhead. Split oversized tasks along independently reviewable file/API boundaries.
+- Shared context is any plan intro or section that explains goals, constraints, design, acceptance criteria, risks, validation, or background rather than assigning implementation scope. Include relevant shared context in every child brief unless sanitized as supervisor-only.
+- Child briefs must include enough context for an isolated agent: scope, likely files/modules when known, acceptance criteria, tests, non-goals, and PR-size boundary. If the original plan omits these, infer reasonable defaults from plan text and repo reconnaissance.
 
-Validate the parse mode and plan graph before dry-run preview and before any worktree, state, or pane mutation:
+Orchestration-only safety guard:
 
-1. Require at least one parsed work item. If none, set `paused_for_user = {entry_id:"plan", reason:"plan-parse-invalid", prompt_text:"<ABSOLUTE_PLAN_PATH>: zero work items"}` and stop.
+- Before adding any plan content to a child brief, scan for orchestration-only markers: `BACKUP-WAKE`, reviewer fan-out instructions, `Do NOT act as Flightdeck master`, `/skill:flightdeck plan`, `$flightdeck plan`, `/flightdeck plan`, `flightdeck plan start`, `flightdeck plan watch`, `flightdeck plan close-item`, `flightdeck plan terminate`, `flightdeck linear start`, `flightdeck github start`, and `flightdeck session` master commands.
+- Treat matching sections, paragraphs, or list items as supervisor-only context. Omit them from child briefs and show their titles or short labels in the preview as sanitized orchestration context.
+- If a candidate item becomes empty after supervisor-only content is removed and has no implementable scope beyond its title, drop it as non-implementation context. If all candidates drop this way, stop with `plan-parse-invalid`.
+- Immediately before writing `<WT_PATH>/tmp/brief.md`, re-scan the final item brief. If any orchestration-only marker remains, set `paused_for_user = {entry_id:"plan", reason:"plan-format-ambiguous", prompt_text:"<ITEM_ID> generated brief still contains Flightdeck master-only orchestration instructions"}` and stop.
+
+Validate the decomposition and plan graph before dry-run preview and before any worktree, state, or pane mutation:
+
+1. Require at least one decomposed work item. If none, set `paused_for_user = {entry_id:"plan", reason:"plan-parse-invalid", prompt_text:"<ABSOLUTE_PLAN_PATH>: zero work items"}` and stop.
 2. Resolve every `Depends on` token against known item titles and slug ids. If any token fails, set `paused_for_user = {entry_id:"plan", reason:"plan-dependency-unresolved", prompt_text:"<ITEM_ID> depends on '<BAD_NAME>' which doesn't match any item title or id"}` and stop.
 3. Reject self-dependencies. If found, set `paused_for_user = {entry_id:"plan", reason:"plan-self-dependency", prompt_text:"<ITEM_ID> depends on itself"}` and stop.
 4. Detect cycles. If found, set `paused_for_user = {entry_id:"plan", reason:"plan-dependency-cycle", prompt_text:"cycle: <ITEM_A> -> <ITEM_B> -> <ITEM_A>"}` and stop.
 
-Only after parse-mode and graph validation pass, print a dry-run preview and ask the user to confirm.
+Only after decomposition and graph validation pass, print one dry-run preview and ask the user to confirm. Do not ask a pre-preview questionnaire about item boundaries, H2 classification, worktree names, or parallelism; make the call, document the basis, and let the user accept or reject the whole graph.
 
 <parse_preview_format>
 Plan: [PLAN_TITLE]
 Source: [ABSOLUTE_PLAN_PATH]
-Mode: [PARSE_MODE]
-Shared context: [global H2/workstream-local titles or —]
-Omitted orchestration context: [titles or —]
+Mode: [explicit-items|inferred-items|mixed-items]
+Analysis basis: [explicit controls, inferred from headings/prose, repo reconnaissance, or combination]
+Shared context: [section titles or inferred context labels or —]
+Sanitized orchestration context: [titles/labels or —]
+Parallel waves:
+- Wave 1: [ITEM_ID, ...]
+- Wave 2+: [ITEM_ID, ... blocked by prior waves, or —]
 
-| Item | Depends on | Worktree | Brief preview |
-|------|------------|----------|---------------|
-| [ITEM_ID] — [ITEM_TITLE] | [ITEM_ID, ... or —] | [WORKTREE_NAME] | [first 200 chars, whitespace collapsed] |
+| Item | Depends on | Worktree | Basis | Brief preview |
+|------|------------|----------|-------|---------------|
+| [ITEM_ID] — [ITEM_TITLE] | [ITEM_ID, ... or —] | [WORKTREE_NAME] | [explicit/inferred + why parallel or blocked] | [first 200 chars, whitespace collapsed] |
 
-Confirm plan parsing before Flightdeck creates worktrees or panes.
+Confirm plan decomposition before Flightdeck creates worktrees or panes.
 </parse_preview_format>
 
 If the user rejects or corrects the preview, stop without mutation. This verify-don't-trust step is mandatory for every plan start.
@@ -96,11 +101,11 @@ flightdeck-state run ensure --tmux-session "$SESSION"
 
 Then create one tracked entry per item. Items blocked by dependencies may have no pane yet; they still get a state row so the graph survives compaction.
 
-Before writing entries or spawning panes, materialize immutable sanitized item brief artifacts from the already-confirmed parse result:
+Before writing entries or spawning panes, materialize immutable sanitized item brief artifacts from the already-confirmed decomposition result:
 
 1. Compute `plan_snapshot_sha256 = sha256:<hex>` over the frozen plan text read in § 1.
 2. Create a plan-brief artifact directory under the canonical Flightdeck state-owned root, for example `<project-root>/<FLIGHTDECK_STATE_DIR or tmp>/plan-briefs/<PLAN_ID_OR_HASH>/`. Do not use attacker-controlled absolute paths that merely contain a `plan-briefs` segment, and do not route through symlinked state or `plan-briefs` roots.
-3. For every item, write the final sanitized item brief content (safe shared context + item content, with `Worktree` / `Depends on` controls removed and omitted orchestration context excluded) to `<ARTIFACT_DIR>/<ITEM_ID>.md` atomically.
+3. For every item, write the final sanitized item brief content (safe shared context + item content, with `Worktree` / `Depends on` controls removed and sanitized orchestration context excluded) to `<ARTIFACT_DIR>/<ITEM_ID>.md` atomically.
 4. Compute `brief_sha256 = sha256:<hex>` for each artifact and store `brief_artifact_path`, `brief_sha256`, and `plan_snapshot_sha256` in `domain.plan_item`.
 5. If any artifact write/hash fails, set `paused_for_user = {entry_id:"plan", reason:"plan-brief-artifact-failed", prompt_text:"<ITEM_ID>: <ERROR>"}` and stop before any tracked-entry, worktree, or pane mutation.
 
@@ -123,7 +128,7 @@ Minimum tracked-entry shape:
       "item_title": "<ITEM_TITLE>",
       "depends_on": ["<ITEM_ID>"],
       "worktree": "<ABSOLUTE_WORKTREE_PATH>",
-      "parse_mode": "h2-items|phase-style",
+      "parse_mode": "explicit-items|inferred-items|mixed-items",
       "brief_artifact_path": "<ABSOLUTE_BRIEF_ARTIFACT_PATH>",
       "brief_sha256": "sha256:<SANITIZED_BRIEF_HASH>",
       "omitted_context": ["<H2_OR_H3_TITLE>"],
@@ -156,7 +161,7 @@ For each item with no unmet dependencies, in dependency-graph topological order,
    ```bash
    WT_PATH=$(.agents/skills/worktree/scripts/worktree create <WORKTREE_NAME>)
    ```
-4. Read the immutable sanitized item brief from `entry.domain.plan_item.brief_artifact_path`, verify its `sha256:<hex>` matches `entry.domain.plan_item.brief_sha256`, re-scan it for orchestration-only markers, then create `<WT_PATH>/tmp/brief.md` atomically and check the write return code. The item brief content must already include only safe shared context when parse mode is `phase-style`; omitted orchestration context must not be written. The file body must be:
+4. Read the immutable sanitized item brief from `entry.domain.plan_item.brief_artifact_path`, verify its `sha256:<hex>` matches `entry.domain.plan_item.brief_sha256`, re-scan it for orchestration-only markers, then create `<WT_PATH>/tmp/brief.md` atomically and check the write return code. The item brief content must already include only safe shared context for the chosen decomposition mode; sanitized orchestration context must not be written. The file body must be:
 
    ```markdown
    # Plan: <PLAN_TITLE>
@@ -222,7 +227,7 @@ For each item with unmet dependencies:
 
 ## § 6: Enter watch
 
-Invoke `workflows/plan/watch.md` with the parsed item ids. The watch loop reuses `workflows/shared/session-watch.md` for daemon/poll mechanics, then adds plan dependency resolution and GitHub PR handling.
+Invoke `workflows/plan/watch.md` with the decomposed item ids. The watch loop reuses `workflows/shared/session-watch.md` for daemon/poll mechanics, then adds plan dependency resolution and GitHub PR handling.
 
 ## Returns
 

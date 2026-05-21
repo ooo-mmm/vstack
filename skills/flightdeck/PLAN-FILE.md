@@ -1,131 +1,106 @@
-# Flightdeck plan-file format
+# Flightdeck plan-file handoff
 
-Plan lane turns one markdown file into multiple tracked implementation panes. A plan file uses one parse mode:
+Plan lane turns one markdown plan into multiple tracked implementation panes. The plan does not need to follow a strict header schema. Flightdeck freezes the file, analyzes it, infers work items when they are not explicit, previews the item graph once, then creates dependency-free worktrees and panes after confirmation.
 
-- **H2 item mode**: each `##` section is one work item. This mode is valid only when the file has no `### Phase ...` or `### Work item ...` headings anywhere.
-- **Phase-style mode**: `### Phase ...` sections under a recognized implementation workstream become work items. Surrounding `##` sections are shared context only when their titles are on the safe shared-context allowlist.
+## What Flightdeck accepts
 
-Flightdeck previews parsed items before creating worktrees or panes. If the mode is ambiguous, Flightdeck stops with a validation error instead of guessing.
+- Explicit item plans: H2 sections, phase-style H3 sections, task lists, tables, or sections named `Work items`, `Implementation plan`, `Phases`, `Milestones`, `Tasks`, `Workstreams`, or similar.
+- Freeform plans: narrative docs with goals, constraints, architecture, acceptance criteria, risks, validation, and rough implementation notes.
+- Mixed plans: some explicit items plus extra scope that must be inferred.
 
-## Basic H2 item shape
+Markdown headings are hints, not a contract. Unfamiliar H2 titles, `### Phase` under `## Phases`, context sections outside an allowlist, mixed H2/H3 item levels, missing worktree names, and missing dependency declarations are normal. Flightdeck decides and shows the basis in the preview instead of asking you to reformat the plan.
+
+## Decomposition behavior
+
+During `flightdeck plan start <path>`, Flightdeck:
+
+1. Freezes the plan snapshot and extracts title, headings, checklists, tables, code blocks, explicit controls, and named files/modules.
+2. Does light repo reconnaissance when boundaries matter, such as searching named modules or likely files.
+3. Chooses one mode:
+   - `explicit-items` — item boundaries are dictated by the plan.
+   - `inferred-items` — items are synthesized from freeform plan content and repo context.
+   - `mixed-items` — explicit items are preserved, uncovered scope is inferred.
+4. Assigns item ids, worktree/branch names, dependencies, and parallel waves.
+5. Sanitizes master-only orchestration instructions out of child briefs.
+6. Prints one preview and asks for confirmation before any worktree, state, or pane mutation.
+
+Flightdeck pauses before preview only when the plan is unreadable, has no meaningful implementable outcome, asks for destructive/irreversible work outside normal branch/worktree/PR flow, or contains direct contradictions where choosing an interpretation would change product behavior.
+
+## Item controls
+
+Controls are optional. Use them when you want to dictate boundaries; omit them when you want Flightdeck to infer.
 
 ```markdown
-# <Plan title>
+## Extract report model
 
-Optional overview: goals, context, non-goals, shared acceptance criteria.
-
-## <Work item title>
-
-Brief for the implementation pane assigned to this item.
+Create a pure report model module used by current export code.
 
 ### Worktree
-optional-custom-worktree-name
+flightdeck-plan-report-model
 
 ### Depends on
-Other work item title, another-item-id
+Normalize export errors
 ```
 
-## Phase-style shape
+Accepted control names include `Worktree`, `Depends on`, `After`, `Prerequisite`, `Blocked by`, and equivalent table columns or clear prose. Dependencies may name item titles or item ids. Worktree names become branch names. Without a worktree control, Flightdeck uses `flightdeck-plan-<item_id>`.
 
-Use phase-style mode for long planning documents that keep problem/goals/design as top-level sections and list implementation work under a dedicated workstream.
+## Dependency and parallel inference
 
-```markdown
-# <Plan title>
+Flightdeck infers a dependency when one item creates an API/schema/model/storage shape used by another, two items must edit the same files or public interface in incompatible ways, generated artifacts depend on implementation output, migrations must precede consumers, or the plan says a later item builds on an earlier item.
 
-## Problem
+Items with no known dependency start in the same parallel wave. When uncertain, Flightdeck prefers a conservative dependency edge over asking an open-ended question. Later merge conflict handling still verifies PR file overlap and merge order from GitHub.
 
-Shared context every implementation pane should read.
+## Sanitized supervisor-only context
 
-## Goals
+Plan files sometimes contain instructions for the Flightdeck master, not for child implementation panes. Flightdeck removes these from child briefs and shows them in the preview as sanitized orchestration context. Markers include `BACKUP-WAKE`, reviewer fan-out instructions, `Do NOT act as Flightdeck master`, `/skill:flightdeck plan`, `$flightdeck plan`, `/flightdeck plan`, `flightdeck plan start`, `flightdeck plan watch`, `flightdeck plan close-item`, `flightdeck plan terminate`, `flightdeck linear start`, `flightdeck github start`, and `flightdeck session` commands.
 
-More shared context.
+Child briefs wrap the plan/item body as data and instruct the child not to execute embedded supervisor commands. A final safety scan aborts before launch if a supervisor-only marker remains in the generated brief.
 
-## Implementation phases
+## Preview shape
 
-Introductory workstream context.
+Before mutation, Flightdeck prints a preview like:
 
-### Phase 1 — Extract storage helper
+```text
+Plan: Improve release diagnostics
+Source: /repo/docs/plans/release-diagnostics.md
+Mode: mixed-items
+Analysis basis: explicit Phase headings plus inferred docs follow-up from Acceptance criteria
+Shared context: Problem, Goals, Validation plan
+Sanitized orchestration context: Execution workflow
+Parallel waves:
+- Wave 1: normalize-error-payloads, update-troubleshooting-guide
+- Wave 2: render-diagnostics
 
-Implementation brief for this item.
-
-#### Worktree
-flightdeck-plan-storage-helper
-
-#### Depends on
-
-### Phase 2 — Wire UI
-
-Implementation brief for this item.
-
-#### Depends on
-Phase 1 — Extract storage helper
+| Item | Depends on | Worktree | Basis | Brief preview |
+|------|------------|----------|-------|---------------|
+| normalize-error-payloads — Normalize error payloads | — | flightdeck-plan-normalize-error-payloads | explicit phase; no file overlap found | Add shared error shape... |
+| render-diagnostics — Render diagnostics | normalize-error-payloads | flightdeck-plan-render-diagnostics | depends on normalized payload API | Show normalized payload in CLI... |
 ```
 
-Recognized implementation workstream headings include `## Implementation phases`, `## Implementation plan`, `## Work items`, `## Workstreams`, `## Additional workstream ...`, and `## Execution plan`; any H2 containing `workstream` is a workstream. Inside those sections, `### Phase <N> ...` and `### Work item ...` headings become plan items. Non-item H3s inside a workstream, such as `### Context`, `### Summary`, `### Goals`, and `### Non-goals`, are workstream-local shared context.
+Reject the preview if item boundaries or dependencies are wrong. Otherwise confirmation starts dependency-free items.
 
-Top-level shared context is fail-closed. In phase-style mode, H2 sections outside recognized workstreams are shared context only when their normalized titles are allowlisted:
+## Examples
 
-- `Pre-execution context`, `Context`, `Background`, `Summary`, `Problem`, `Goals`, `Non-goals`, `Scope`, `Constraints`, `Current state`, `Proposed model`, `Design`, `Architecture`, `Lifecycle changes`, `Dashboard UX`, `Pi extension scope after the Rust app`, `CLI/script changes`, `Data model additions`, `Storage layout`, `Acceptance criteria`, `Validation plan`, `Test plan`, `Tests`, `Execution workflow`, `Risks`, `Notes`, `Open questions`.
-
-An allowlisted title may have a parenthetical or update suffix, such as `Pre-execution context (updated ...)`. Any other H2 outside a recognized workstream stops parsing with `plan-format-ambiguous` before preview, worktree creation, state writes, or pane launch.
-
-Shared context is also filtered for child-brief safety. Sections containing master-only orchestration markers are omitted from child briefs and shown in the preview as omitted orchestration context. Markers include `BACKUP-WAKE`, reviewer fan-out instructions, `Do NOT act as Flightdeck master`, and Flightdeck master lane commands such as `/skill:flightdeck plan`, `$flightdeck plan`, `/flightdeck plan`, `flightdeck plan start`, `flightdeck plan watch`, `flightdeck plan close-item`, `flightdeck plan terminate`, `flightdeck linear start`, `flightdeck github start`, or `flightdeck session`. If those markers appear inside an implementation item, Flightdeck stops with `plan-format-ambiguous` instead of stripping item content.
-
-## Rules
-
-- First H1 (`#`) is the plan title.
-- Flightdeck chooses exactly one parse mode before preview:
-  - H2 item mode when no phase-style indicators (`### Phase ...` or `### Work item ...`) exist anywhere.
-  - Phase-style mode when one or more recognized implementation workstreams contain `### Phase ...` or `### Work item ...` headings.
-  - Malformed or ambiguous mixed files stop with `plan-format-ambiguous` before any dry-run preview, worktree, state, or pane mutation.
-- In H2 item mode, each H2 (`##`) is one work item.
-- In phase-style mode, each matching H3 inside a recognized implementation workstream is one work item; allowlisted surrounding H2 sections become global shared context, and safe non-item H3s inside that workstream become workstream-local shared context prepended to item briefs.
-- Item id is the slugified item title: lowercase, dash-separated, alphanumeric plus dash only, truncated to 32 characters.
-- Default worktree name is `flightdeck-plan-<item_id>`.
-- Optional `Worktree` overrides the worktree/branch name. Use `### Worktree` in H2 item mode and `#### Worktree` in phase-style mode.
-- Optional `Depends on` lists item titles or item ids this item waits for. Use `### Depends on` in H2 item mode and `#### Depends on` in phase-style mode.
-- Item brief is the parsed item content, excluding only optional `Worktree` and `Depends on` subsections.
-- Other subsections, such as `Acceptance criteria`, stay in the item brief.
-- Dependencies must resolve to known items, cannot point at self, and cannot form cycles.
-- The dry-run preview is mandatory before Flightdeck creates worktrees or panes.
-- After preview confirmation, Flightdeck writes immutable sanitized item brief artifacts under its canonical state-owned `<project-root>/<FLIGHTDECK_STATE_DIR or tmp>/plan-briefs/` root and stores `brief_artifact_path`, `brief_sha256`, and `plan_snapshot_sha256` on each `domain.plan_item`. Artifact paths must be absolute normalized paths below that exact root, ending in `<item_id>.md`, with no traversal, control characters, wrong filename, out-of-root containment, symlinked state/`plan-briefs` roots, or symlink escape. Dependency-spawned items read those artifacts instead of reparsing a mutable plan file.
-
-Good item briefs include: scope, likely files, acceptance criteria, tests, non-goals, and PR-size boundaries.
-
-## Example: simple parallel plan
+### Minimal freeform plan
 
 ```markdown
 # Reduce settings UI friction
 
-Goal: make the settings page easier to scan without changing stored settings.
-
-## Group related toggles
-
-Reorganize settings into visual groups. Preserve existing setting keys and persistence behavior.
+Users struggle to scan the settings page. Make related toggles easier to find,
+add local search by label/description, and preserve existing setting keys.
 
 Acceptance criteria:
 - Existing settings load unchanged.
-- Groups have accessible headings.
-- Snapshot tests update only for layout.
-
-Tests:
-- Run the settings UI test suite.
-
-## Add search filter
-
-Add a local search box that filters visible settings by label and description.
-
-Acceptance criteria:
 - Empty search shows all settings.
 - Search is case-insensitive.
-- No settings persistence behavior changes.
+- Groups have accessible headings.
 
-Tests:
-- Add unit tests for filtering.
-- Run the settings UI test suite.
+Validation: run the settings UI test suite.
 ```
 
-## Example: plan with dependencies
+Flightdeck should infer separate items such as grouping toggles and adding search if repo reconnaissance shows independent UI/state boundaries. If both changes touch one tightly coupled settings component, it may combine them into one item and explain that in the preview.
+
+### Explicit items with dependencies
 
 ```markdown
 # Split report export pipeline
@@ -169,7 +144,7 @@ Acceptance criteria:
 - Invalid format names return a clear error.
 ```
 
-## Example: phase-style plan
+### Phase-style plan with context
 
 ```markdown
 # Improve release diagnostics
@@ -182,7 +157,7 @@ Users need clearer failure causes across release tooling.
 
 Keep changes small and independently reviewable.
 
-## Implementation phases
+## Phases
 
 ### Phase 1 — Normalize error payloads
 
@@ -199,77 +174,17 @@ Scope: show the normalized payload in the CLI.
 
 Tests: snapshot CLI output.
 
-## Additional workstream — Documentation follow-ups
+## Documentation follow-ups
 
-### Context
-
-Keep docs aligned with the new diagnostic output.
-
-### Phase 3 — Update troubleshooting guide
-
-Scope: document common diagnostic causes.
-
-Tests: link check docs.
+Update troubleshooting docs after the diagnostics wording is stable.
 ```
 
-Preview must show only `phase-1-normalize-error-payloads`, `phase-2-render-diagnostics`, and `phase-3-update-troubleshooting-guide` as items. `Problem`, `Goals`, `Additional workstream — Documentation follow-ups`, and `Context` are shared context, not work items.
-
-## Invalid phase-style examples
-
-Malformed phase-style sections do not fall back to H2 item mode:
-
-```markdown
-# Bad plan
-
-## Phases
-
-### Phase 1 — Missing recognized workstream
-
-This looks like phase-style, but `## Phases` is not a recognized implementation workstream.
-```
-
-Result: `plan-format-ambiguous` before dry-run preview or mutation. Rename `## Phases` to `## Implementation phases` or convert the file to pure H2 item mode.
-
-Unallowlisted H2 sections in a phase-style file also fail closed:
-
-```markdown
-# Bad plan
-
-## Problem
-
-Shared context.
-
-## Implementation phases
-
-### Phase 1 — Add parser guard
-
-Implementation work.
-
-## Refactor dashboard
-
-This H2 could be a missed work item, so Flightdeck must not silently treat it as context.
-```
-
-Result: `plan-format-ambiguous` with a message that `Refactor dashboard` is neither an implementation workstream nor allowlisted shared context.
-
-Master-only instructions cannot ride into child briefs:
-
-```markdown
-# Bad plan
-
-## Implementation phases
-
-### Phase 1 — Add parser guard
-
-Run `/flightdeck plan watch` after editing.
-```
-
-Result: `plan-format-ambiguous` because implementation item content contains Flightdeck master-only orchestration instructions.
+Flightdeck may treat `Problem` and `Goals` as shared context, `Phase 1` and `Phase 2` as explicit items, and `Documentation follow-ups` as an inferred dependent or parallel item depending on the plan text and repo reconnaissance. It should not stop just because `## Phases` or `## Documentation follow-ups` are not on a fixed allowlist.
 
 ## Notes
 
 - One plan file represents one plan session.
 - Dependent items spawn only after required items merge.
-- Dependent items use the immutable brief artifact created at plan start; mid-session edits to the source plan do not change queued child briefs.
+- Dependent items use immutable brief artifacts created at plan start; mid-session edits to the source plan do not change queued child briefs.
 - GitHub merge verification happens before item cleanup.
-- Mid-session edits are not re-parsed; start a new session if the plan changes materially.
+- Mid-session edits are not re-analyzed; start a new session if the plan changes materially.
