@@ -1945,10 +1945,6 @@ fn perform_move_plans(items: &DiscoveredItems, plans: &[MovePlan], to_global: bo
                     mapping.skills_for_agent(&agent.name, &agent.role, &installed_skills_dst);
                 let skill_pairs =
                     crate::resolve::resolve_skill_pairs(&source_skills, &items.skills);
-                let optional_entries =
-                    mapping.optional_skills_for_agent(&agent.name, &installed_skills_dst);
-                let optional_pairs =
-                    crate::resolve::resolve_optional_skill_pairs(&optional_entries);
                 let installed_hooks_dst: Vec<crate::hook::Hook> = items
                     .hooks
                     .iter()
@@ -1977,7 +1973,6 @@ fn perform_move_plans(items: &DiscoveredItems, plans: &[MovePlan], to_global: bo
                             agent,
                             to_global,
                             &skill_pairs,
-                            &optional_pairs,
                             &matched_hooks,
                             &extras,
                         )

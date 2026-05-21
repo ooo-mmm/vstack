@@ -1012,10 +1012,6 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
     // Collect computed agent→skill mappings to write to project vstack.toml
     let mut agent_skill_map: std::collections::HashMap<String, Vec<String>> =
         std::collections::HashMap::new();
-    let mut agent_optional_map: std::collections::HashMap<
-        String,
-        Vec<crate::mapping::OptionalSkill>,
-    > = std::collections::HashMap::new();
 
     // Available skill names for role-skills merging during agent regen:
     // UNION of skills already in the lock (from prior installs) with the skills
@@ -1055,23 +1051,9 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
 
             let skill_pairs = crate::resolve::resolve_skill_pairs(&skill_names, &selected_skills);
 
-            // Same merge for optional skills.
-            let source_optional =
-                mapping.optional_skills_for_agent(&a.name, &available_skill_names);
-            let project_optional = project_config.agent_skills_optional.get(&a.name);
-            let (optional_entries, _) = merge_skill_lists(
-                project_optional.map(|v| v.as_slice()),
-                &source_optional,
-                |e| e.skill.clone(),
-            );
-            let optional_pairs = crate::resolve::resolve_optional_skill_pairs(&optional_entries);
-
             agent_skill_map
                 .entry(a.name.clone())
                 .or_insert_with(|| skill_names.clone());
-            agent_optional_map
-                .entry(a.name.clone())
-                .or_insert_with(|| optional_entries.clone());
 
             let matched_hooks: Vec<hook::Hook> = mapping
                 .hooks_for_agent(&a.role, &selected_hooks)
@@ -1099,7 +1081,6 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
                 *harness,
                 global,
                 &skill_pairs,
-                &optional_pairs,
                 &matched_hooks,
                 &extras,
             )?;
@@ -1163,10 +1144,6 @@ source (e.g. switching vstack repos, or starting clean), pass --clobber:
     // make every item appear outdated on next launch).
     if writes_project_config {
         crate::project_config::write_agent_skills(&config::project_root(), &agent_skill_map);
-        crate::project_config::write_agent_skills_optional(
-            &config::project_root(),
-            &agent_optional_map,
-        );
     }
 
     // Update lock file
@@ -1523,14 +1500,6 @@ fn reconcile_agents(
 
         let skill_pairs = crate::resolve::resolve_skill_pairs(&skill_names, &source_skills);
 
-        let optional_entries =
-            if let Some(project_list) = project_config.agent_skills_optional.get(&agent.name) {
-                project_list.clone()
-            } else {
-                mapping.optional_skills_for_agent(&agent.name, &installed_skills)
-            };
-        let optional_pairs = crate::resolve::resolve_optional_skill_pairs(&optional_entries);
-
         let matched_hooks: Vec<crate::hook::Hook> = mapping
             .hooks_for_agent(&agent.role, &source_hooks)
             .into_iter()
@@ -1567,7 +1536,6 @@ fn reconcile_agents(
                         agent,
                         global,
                         &skill_pairs,
-                        &optional_pairs,
                         &matched_hooks,
                         &extras,
                     );

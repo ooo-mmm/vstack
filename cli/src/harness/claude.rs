@@ -12,7 +12,6 @@ pub fn generate_agent(
     agent: &Agent,
     dir: &Path,
     skills: &[(String, String)],
-    optional_skills: &[(String, String)],
     hooks: &[Hook],
     extras: &agent::AgentExtras,
 ) -> Result<PathBuf> {
@@ -83,7 +82,7 @@ pub fn generate_agent(
 
     // Insert guidance + skills after first heading's intro
     let guidance = agent::guidance_section(extras.guidance.as_deref());
-    let skills_section = agent::load_skills_section(skills, optional_skills);
+    let skills_section = agent::load_skills_section();
     let combined = format!("{}{}", guidance, skills_section);
     let body = agent::insert_after_intro(&agent.body, &combined);
 
@@ -283,7 +282,7 @@ mod tests {
 
         let mut agent = agent_fixture("reviewer-arch", AgentRole::Reviewer);
         agent.effort = Some("high".into());
-        let path = generate_agent(&agent, &dir, &[], &[], &[], &AgentExtras::default())
+        let path = generate_agent(&agent, &dir, &[], &[], &AgentExtras::default())
             .expect("generate ok");
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(!content.contains("\ntools:"));
@@ -320,7 +319,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let path = generate_agent(&agent, &dir, &[], &[], &[], &extras).expect("generate ok");
+        let path = generate_agent(&agent, &dir, &[], &[], &extras).expect("generate ok");
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(!content.contains("\ntools:"));
         assert!(content.contains("disallowedTools: Agent, AskUserQuestion"));
@@ -350,7 +349,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let path = generate_agent(&agent, &dir, &[], &[], &[], &extras).expect("generate ok");
+        let path = generate_agent(&agent, &dir, &[], &[], &extras).expect("generate ok");
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(!content.contains("\ntools:"));
         assert!(content.contains("disallowedTools: Agent, AskUserQuestion, Bash, Write"));
@@ -377,7 +376,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let path = generate_agent(&agent, &dir, &[], &[], &[], &extras).expect("generate ok");
+        let path = generate_agent(&agent, &dir, &[], &[], &extras).expect("generate ok");
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("model: opus[1m]"));
         assert!(content.contains("effort: max"));
@@ -407,7 +406,7 @@ mod tests {
             },
         );
 
-        let path = generate_agent(&agent, &dir, &[], &[], &[], &extras).expect("generate ok");
+        let path = generate_agent(&agent, &dir, &[], &[], &extras).expect("generate ok");
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("background: true"));
 
@@ -418,7 +417,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        let path = generate_agent(&agent, &dir, &[], &[], &[], &extras).expect("generate ok");
+        let path = generate_agent(&agent, &dir, &[], &[], &extras).expect("generate ok");
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("background: false"));
 
@@ -445,7 +444,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let path = generate_agent(&agent, &dir, &[], &[], &[], &extras).expect("generate ok");
+        let path = generate_agent(&agent, &dir, &[], &[], &extras).expect("generate ok");
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(!content.contains("effort:"));
         assert!(content.contains("background: false"));
@@ -474,7 +473,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let path = generate_agent(&agent, &dir, &[], &[], &[], &extras).expect("generate ok");
+        let path = generate_agent(&agent, &dir, &[], &[], &extras).expect("generate ok");
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("background: true"));
         assert!(content.contains("isolation: worktree"));

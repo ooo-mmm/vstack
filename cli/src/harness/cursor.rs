@@ -10,8 +10,7 @@ use std::path::{Path, PathBuf};
 pub fn generate_agent(
     agent: &Agent,
     dir: &Path,
-    skills: &[(String, String)],
-    optional_skills: &[(String, String)],
+    _skills: &[(String, String)],
     _hooks: &[Hook],
     extras: &agent::AgentExtras,
 ) -> Result<PathBuf> {
@@ -30,7 +29,7 @@ pub fn generate_agent(
     output.push_str("> **Never edit this file directly.** To make additions or modifications, edit the appropriate section in `./vstack.toml`. Then run `vstack refresh`.\n\n");
 
     let guidance = agent::guidance_section(extras.guidance.as_deref());
-    let skills_section = agent::load_skills_section(skills, optional_skills);
+    let skills_section = agent::load_skills_section();
     let combined = format!("{}{}", guidance, skills_section);
     let body = agent::insert_after_intro(&agent.body, &combined);
     let hooks_prose = agent::custom_hooks_section(&extras.custom_hooks);

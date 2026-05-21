@@ -21,12 +21,10 @@ pub fn install_agent(
     harness: Harness,
     global: bool,
     skills: &[(String, String)],
-    optional_skills: &[(String, String)],
     hooks: &[crate::hook::Hook],
     extras: &crate::agent::AgentExtras,
 ) -> Result<InstallResult> {
-    let output_path =
-        harness.generate_agent(agent, global, skills, optional_skills, hooks, extras)?;
+    let output_path = harness.generate_agent(agent, global, skills, hooks, extras)?;
 
     let detail = format!(
         "{} → {} ({})",

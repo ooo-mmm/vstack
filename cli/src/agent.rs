@@ -466,22 +466,13 @@ pub fn custom_hooks_section(hooks: &[CustomHookEntry]) -> String {
     section
 }
 
-/// Emit a one-line skill-loading preamble. The per-agent "## Required Skills"
-/// table this used to render was duplicative: every harness (pi, codex,
-/// opencode, claude) already auto-injects skill name+description into the
-/// agent's context via its native discovery surface (`<available_skills>` for
-/// pi/codex, the `skill` tool description for opencode, the Skill tool for
-/// claude). Repeating the same list in the agent body wasted context. The
-/// preamble is preserved as a single load-skills directive so agents still
-/// have the explicit reminder; the actual skill catalog comes from the
-/// harness.
-///
-/// `skills` and `optional_skills` are kept in the signature so callers don't
-/// need to change; their content is not currently rendered in the body.
-pub fn load_skills_section(
-    _skills: &[(String, String)],
-    _optional_skills: &[(String, String)],
-) -> String {
+/// Emit the load-skills preamble injected into every generated agent body.
+/// Each harness (pi, codex, opencode, claude) already auto-exposes skill
+/// name+description through its native discovery surface (`<available_skills>`
+/// for pi/codex, the `skill` tool description for opencode, the Skill tool
+/// for claude). The agent body just needs the directive to load by description
+/// match — the actual catalog comes from the harness.
+pub fn load_skills_section() -> String {
     String::from(
         "## Skills\n\n\
          Load any skill whose name or description matches the task before acting on that domain. Skill descriptions are listed by the harness; do not guess commands or improvise — load the skill first.\n\n",
@@ -642,39 +633,16 @@ Does testing things.
     }
 
     #[test]
-    fn load_skills_section_empty() {
-        // vstack: preamble is emitted unconditionally because the harness
-        // injects available skill name+description regardless of agent
-        // mapping; the agent still needs the one-line load directive.
-        let section = load_skills_section(&[], &[]);
-        assert!(section.contains("## Skills"));
-        assert!(section.contains("Load any skill whose name or description matches"));
-    }
-
-    #[test]
-    fn load_skills_section_format() {
-        let skills = vec![
-            (
-                "rust-tooling".into(),
-                "Architecture patterns for Rust: more details here.".into(),
-            ),
-            ("github".into(), "GitHub CLI integration".into()),
-        ];
-        let optional = vec![(
-            "trading-design".into(),
-            "UI layout design, typography, color".into(),
-        )];
-        let section = load_skills_section(&skills, &optional);
-        // vstack: body table cut. Section is now a single one-line preamble
-        // because the harness already injects skill name+description into
-        // the agent's context (pi `<available_skills>`, codex initial list,
-        // opencode `skill` tool description, claude Skill tool description).
+    fn load_skills_section_emits_directive_only() {
+        // The preamble is emitted unconditionally because the harness
+        // injects available skill name+description into the agent's context
+        // (pi `<available_skills>`, codex initial list, opencode `skill`
+        // tool description, claude Skill tool description). The body just
+        // needs the one-line directive to load by description match.
+        let section = load_skills_section();
         assert!(section.contains("## Skills"));
         assert!(section.contains("Load any skill whose name or description matches"));
         assert!(section.contains("Skill descriptions are listed by the harness"));
-        // Per-skill table rows are intentionally absent.
-        assert!(!section.contains("| `rust-tooling` |"));
-        assert!(!section.contains("| `trading-design` |"));
     }
 
     #[test]

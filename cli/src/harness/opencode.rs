@@ -11,8 +11,7 @@ use std::path::{Path, PathBuf};
 pub fn generate_agent(
     agent: &Agent,
     dir: &Path,
-    skills: &[(String, String)],
-    optional_skills: &[(String, String)],
+    _skills: &[(String, String)],
     _hooks: &[Hook],
     extras: &agent::AgentExtras,
 ) -> Result<PathBuf> {
@@ -58,7 +57,7 @@ pub fn generate_agent(
     output.push_str("> **Never edit this file directly.** To make additions or modifications, edit the appropriate section in `./vstack.toml`. Then run `vstack refresh`.\n\n");
 
     let guidance = agent::guidance_section(extras.guidance.as_deref());
-    let skills_section = agent::load_skills_section(skills, optional_skills);
+    let skills_section = agent::load_skills_section();
     let combined = format!("{}{}", guidance, skills_section);
     let body = agent::insert_after_intro(&agent.body, &combined);
     let hooks_prose = agent::custom_hooks_section(&extras.custom_hooks);
@@ -232,7 +231,7 @@ mod tests {
 
         let mut agent = agent_fixture("reviewer", AgentRole::Reviewer, "sonnet");
         agent.effort = Some("high".into());
-        let path = generate_agent(&agent, &dir, &[], &[], &[], &AgentExtras::default()).unwrap();
+        let path = generate_agent(&agent, &dir, &[], &[], &AgentExtras::default()).unwrap();
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("mode: subagent\n"));
         assert!(content.contains("color: \"#22c55e\"\n"));
@@ -255,7 +254,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
 
         let agent = agent_fixture("rust", AgentRole::Engineer, "opus");
-        let path = generate_agent(&agent, &dir, &[], &[], &[], &AgentExtras::default()).unwrap();
+        let path = generate_agent(&agent, &dir, &[], &[], &AgentExtras::default()).unwrap();
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("mode: subagent\n"));
 
@@ -266,7 +265,7 @@ mod tests {
             },
             ..AgentExtras::default()
         };
-        let path = generate_agent(&agent, &dir, &[], &[], &[], &extras).unwrap();
+        let path = generate_agent(&agent, &dir, &[], &[], &extras).unwrap();
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("mode: primary\n"));
 
@@ -277,7 +276,7 @@ mod tests {
             },
             ..AgentExtras::default()
         };
-        let path = generate_agent(&agent, &dir, &[], &[], &[], &extras).unwrap();
+        let path = generate_agent(&agent, &dir, &[], &[], &extras).unwrap();
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("mode: subagent\n"));
 
@@ -304,7 +303,7 @@ mod tests {
             },
             ..AgentExtras::default()
         };
-        let path = generate_agent(&agent, &dir, &[], &[], &[], &extras).unwrap();
+        let path = generate_agent(&agent, &dir, &[], &[], &extras).unwrap();
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("  bash: deny\n"));
         assert!(content.contains("  edit: deny\n"));
@@ -334,7 +333,7 @@ mod tests {
             },
             ..AgentExtras::default()
         };
-        let path = generate_agent(&agent, &dir, &[], &[], &[], &extras).unwrap();
+        let path = generate_agent(&agent, &dir, &[], &[], &extras).unwrap();
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("color: \"#336699\"\n"));
         assert!(content.contains("  reasoningEffort: high\n"));
@@ -360,7 +359,7 @@ mod tests {
             },
             ..AgentExtras::default()
         };
-        let path = generate_agent(&agent, &dir, &[], &[], &[], &extras).unwrap();
+        let path = generate_agent(&agent, &dir, &[], &[], &extras).unwrap();
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("  reasoningEffort: xhigh\n"));
 
@@ -377,7 +376,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
 
         let agent = agent_fixture("scout", AgentRole::Analyst, "haiku");
-        let path = generate_agent(&agent, &dir, &[], &[], &[], &AgentExtras::default()).unwrap();
+        let path = generate_agent(&agent, &dir, &[], &[], &AgentExtras::default()).unwrap();
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(!content.contains("  reasoningEffort:"));
         assert!(!content.contains("options:\n"));

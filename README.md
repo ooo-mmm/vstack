@@ -69,10 +69,6 @@ Claude Code · Cursor · OpenCode · Codex · Pi
 [agent-skills]
 rust = ["github", "worktree"]
 
-# Specialist skills loaded on demand.
-[agent-skills-optional]
-rust = [{ skill = "second-opinion", when = "Cross-model review" }]
-
 # Instructions added near the top of the generated agent file.
 [agent-launch-instructions]
 rust = "Read docs/architecture.md before coding."

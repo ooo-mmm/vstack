@@ -3,7 +3,7 @@ use crate::config::{self, ItemKind};
 use crate::harness::Harness;
 use crate::hook::Hook;
 use crate::installer;
-use crate::mapping::{MappingConfig, OptionalSkill};
+use crate::mapping::MappingConfig;
 use crate::pi_extension::PiExtension;
 use crate::project_config::ProjectConfig;
 use crate::skill::Skill;
@@ -31,13 +31,11 @@ pub struct RefreshStats {
     pub pi_refreshed: usize,
     /// Map of agent_name → (full merged required-skills list, newly added skill names).
     pub upstream_skill_updates: HashMap<String, (Vec<String>, Vec<String>)>,
-    /// Map of agent_name → (full merged optional-skills list, newly added skill names).
-    pub upstream_optional_updates: HashMap<String, (Vec<OptionalSkill>, Vec<String>)>,
 }
 
 impl RefreshStats {
-    /// Persist any required/optional skill upstream additions back to the
-    /// project's `vstack.toml`. No-op for global scope (no project config).
+    /// Persist any required-skill upstream additions back to the project's
+    /// `vstack.toml`. No-op for global scope (no project config).
     pub fn persist_upstream(&self, project_root: &Path) {
         if !self.upstream_skill_updates.is_empty() {
             let merged: HashMap<String, Vec<String>> = self
@@ -47,20 +45,12 @@ impl RefreshStats {
                 .collect();
             crate::project_config::merge_upstream_agent_skills(project_root, &merged);
         }
-        if !self.upstream_optional_updates.is_empty() {
-            let merged: HashMap<String, Vec<OptionalSkill>> = self
-                .upstream_optional_updates
-                .iter()
-                .map(|(k, (list, _))| (k.clone(), list.clone()))
-                .collect();
-            crate::project_config::merge_upstream_agent_skills_optional(project_root, &merged);
-        }
     }
 }
 
 /// Generic upstream-merge: starts with `project_list` if present, else
 /// `source_list`; appends source items not already present, returning
-/// (merged, names_added). Used by both required and optional skill merges.
+/// (merged, names_added).
 fn merge_upstream<T: Clone>(
     project_list: Option<&[T]>,
     source_list: &[T],
@@ -89,8 +79,7 @@ fn merge_upstream<T: Clone>(
 /// `agents`/`skills`/`hooks`/`pi_extensions` and `mapping`), project-config
 /// loading, lock loading, lock-disk reconciliation, and writing the
 /// upstream-additions back to disk via
-/// [`crate::project_config::merge_upstream_agent_skills`] /
-/// [`crate::project_config::merge_upstream_agent_skills_optional`].
+/// [`crate::project_config::merge_upstream_agent_skills`].
 #[allow(clippy::too_many_arguments)]
 pub fn refresh_items_in_scope(
     global: bool,
@@ -159,24 +148,6 @@ pub fn refresh_items_in_scope(
 
         let skill_pairs = crate::resolve::resolve_skill_pairs(&skill_names, skills);
 
-        // Optional skills: same merge logic as required.
-        let source_optional = mapping.optional_skills_for_agent(&agent.name, &installed_skills);
-        let project_optional: Option<&[OptionalSkill]> = project_config
-            .agent_skills_optional
-            .get(&agent.name)
-            .map(|v| v.as_slice());
-        let (optional_entries, added) =
-            merge_upstream(project_optional, &source_optional, |e| e.skill.clone());
-        if !added.is_empty() {
-            project_config
-                .agent_skills_optional
-                .insert(agent.name.clone(), optional_entries.clone());
-            stats
-                .upstream_optional_updates
-                .insert(agent.name.clone(), (optional_entries.clone(), added));
-        }
-        let optional_pairs = crate::resolve::resolve_optional_skill_pairs(&optional_entries);
-
         let matched_hooks: Vec<Hook> = mapping
             .hooks_for_agent(&agent.role, &installed_hooks)
             .into_iter()
@@ -205,7 +176,6 @@ pub fn refresh_items_in_scope(
                     agent,
                     global,
                     &skill_pairs,
-                    &optional_pairs,
                     &matched_hooks,
                     &extras,
                 );
@@ -465,13 +435,6 @@ fn run_one(global: bool, verbose: bool) -> Result<()> {
         for (agent, (_, added)) in &stats.upstream_skill_updates {
             eprintln!(
                 "  + {} — added upstream skills: {}",
-                agent,
-                added.join(", ")
-            );
-        }
-        for (agent, (_, added)) in &stats.upstream_optional_updates {
-            eprintln!(
-                "  + {} — added upstream optional skills: {}",
                 agent,
                 added.join(", ")
             );

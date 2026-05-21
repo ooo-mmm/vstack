@@ -20,16 +20,6 @@ pub fn resolve_skill_pairs(names: &[String], available: &[Skill]) -> Vec<(String
         .collect()
 }
 
-/// Map optional skill entries to (name, when) pairs.
-pub fn resolve_optional_skill_pairs(
-    entries: &[crate::mapping::OptionalSkill],
-) -> Vec<(String, String)> {
-    entries
-        .iter()
-        .map(|e| (e.skill.clone(), e.when.clone()))
-        .collect()
-}
-
 /// Read guidance/instructions from an existing agent file on disk.
 /// Returns empty extras if the file doesn't exist.
 pub fn read_existing_extras(path: &Path, harness: Harness) -> AgentExtras {

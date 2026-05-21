@@ -30,8 +30,6 @@ pub struct ProjectConfig {
     #[serde(skip)]
     pub agent_frontmatter_by_harness:
         HashMap<String, HashMap<String, crate::agent::AgentFrontmatterOverrides>>,
-    #[serde(rename = "agent-skills-optional")]
-    pub agent_skills_optional: HashMap<String, Vec<crate::mapping::OptionalSkill>>,
     #[serde(rename = "agent-launch-instructions", alias = "agent-guidance")]
     pub agent_guidance: HashMap<String, String>,
     #[serde(rename = "agent-additional-instructions", alias = "agent-instructions")]
@@ -706,45 +704,6 @@ pub fn merge_upstream_agent_skills(project_root: &Path, updates: &HashMap<String
     }
 }
 
-/// Merge upstream additions into the project's `[agent-skills-optional]`.
-/// Same principle as `merge_upstream_agent_skills`: only add entries whose
-/// `skill` name isn't already present — never remove user edits.
-pub fn merge_upstream_agent_skills_optional(
-    project_root: &Path,
-    updates: &HashMap<String, Vec<crate::mapping::OptionalSkill>>,
-) {
-    if updates.is_empty() {
-        return;
-    }
-    let path = project_root.join("vstack.toml");
-    let content = match std::fs::read_to_string(&path) {
-        Ok(c) => c,
-        Err(_) => return,
-    };
-
-    let mut out = content.clone();
-    for (agent, skills) in updates {
-        if skills.is_empty() {
-            continue;
-        }
-        let mut v = "[\n".to_string();
-        for s in skills {
-            let when = s.when.replace('"', "\\\"");
-            v.push_str(&format!(
-                "    {{ skill = \"{}\", when = \"{}\" }},\n",
-                s.skill, when
-            ));
-        }
-        v.push(']');
-        out = replace_toml_array_value(&out, "[agent-skills-optional]", agent, &v);
-    }
-
-    out = ensure_value_section_entry_spacing(&out);
-    if out != content {
-        let _ = std::fs::write(&path, out);
-    }
-}
-
 /// Replace a TOML array value for a key within a specific section.
 /// Handles both `key = [...]` (inline) and multi-line arrays.
 fn replace_toml_array_value(
@@ -1410,68 +1369,6 @@ fn upsert_missing_inline_table_fields(
     rendered
 }
 
-/// Write `[agent-skills-optional]` entries to the project's vstack.toml.
-/// Only adds agents that don't already have an entry — never overwrites user edits.
-pub fn write_agent_skills_optional(
-    project_root: &Path,
-    agent_optional_map: &HashMap<String, Vec<crate::mapping::OptionalSkill>>,
-) {
-    if agent_optional_map.is_empty() {
-        return;
-    }
-    let path = project_root.join("vstack.toml");
-    let existing = std::fs::read_to_string(&path).unwrap_or_default();
-
-    let parsed: ProjectConfig = toml::from_str(&existing).unwrap_or_default();
-
-    // Ensure the section header exists
-    let mut content = existing.clone();
-    if !content.contains("[agent-skills-optional]") {
-        content.push_str("\n\n# ── Optional Skills ──────────────────────────────────\n");
-        content.push_str("# Specialist skills loaded on demand. The agent gets a\n");
-        content.push_str("# \"Load When Needed\" table. Edit `when` descriptions\n");
-        content.push_str("# or remove entries, then run `vstack refresh`.\n");
-        content.push_str("#\n");
-        content.push_str("[agent-skills-optional]\n");
-    }
-
-    let mut agents: Vec<&String> = agent_optional_map.keys().collect();
-    agents.sort();
-
-    let mut new_entries = String::new();
-    for agent in agents {
-        if parsed.agent_skills_optional.contains_key(agent.as_str()) {
-            continue;
-        }
-        let skills = &agent_optional_map[agent];
-        if skills.is_empty() {
-            continue;
-        }
-        new_entries.push_str(&format!("{} = [\n", agent));
-        for s in skills {
-            let when = s.when.replace('"', "\\\"");
-            new_entries.push_str(&format!(
-                "    {{ skill = \"{}\", when = \"{}\" }},\n",
-                s.skill, when
-            ));
-        }
-        new_entries.push_str("]\n");
-    }
-
-    if new_entries.is_empty() {
-        return;
-    }
-
-    let out = ensure_value_section_entry_spacing(&insert_entries_into_section(
-        &content,
-        "[agent-skills-optional]",
-        &new_entries,
-    ));
-    if out != existing {
-        let _ = std::fs::write(&path, out);
-    }
-}
-
 /// Create or update vstack.toml at the project root.
 ///
 /// - If the file doesn't exist, generates a full template with commented placeholders.
@@ -1590,7 +1487,6 @@ fn normalize_attached_section_headers(content: &str) -> String {
         "[agent-frontmatter.opencode]",
         "[agent-frontmatter.codex]",
         "[agent-frontmatter.pi]",
-        "[agent-skills-optional]",
         "[agent-colors]",
         "[[custom-hooks]]",
     ];
@@ -1726,7 +1622,6 @@ fn ensure_value_section_entry_spacing(content: &str) -> String {
         "[agent-additional-instructions]",
         "[skill-instructions]",
         "[agent-skills]",
-        "[agent-skills-optional]",
         "[agent-frontmatter]",
         "[agent-frontmatter.pi]",
     ];
@@ -2245,15 +2140,6 @@ fn create_project_config(path: &Path, agents: &[String], skills: &[String]) {
 
     out.push('\n');
     out.push_str(&agent_frontmatter_scaffold());
-
-    // ── agent-skills-optional ──
-    out.push_str("\n\n# ── Optional Skills ──────────────────────────────────\n");
-    out.push_str("# Specialist skills loaded on demand. The agent gets a\n");
-    out.push_str("# \"Load When Needed\" table. Edit `when` descriptions\n");
-    out.push_str("# or remove entries, then run `vstack refresh`.\n");
-    out.push_str("#\n");
-    out.push_str("[agent-skills-optional]\n");
-    // Actual entries are written by write_agent_skills_optional().
 
     // ── custom-hooks ──
     out.push_str("\n\n# ── Custom Hooks ─────────────────────────────────────\n");

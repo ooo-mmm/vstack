@@ -7,8 +7,6 @@ use std::path::Path;
 pub struct MappingConfig {
     #[serde(rename = "agent-skills")]
     pub agent_skills: HashMap<String, Vec<String>>,
-    #[serde(rename = "agent-skills-optional")]
-    pub agent_skills_optional: HashMap<String, Vec<OptionalSkill>>,
     #[serde(rename = "role-skills")]
     pub role_skills: HashMap<String, Vec<String>>,
     #[serde(rename = "hook-events")]
@@ -21,12 +19,6 @@ pub struct MappingConfig {
     #[serde(skip)]
     pub agent_frontmatter_by_harness:
         HashMap<String, HashMap<String, crate::agent::AgentFrontmatterOverrides>>,
-}
-
-#[derive(Debug, Deserialize, Clone)]
-pub struct OptionalSkill {
-    pub skill: String,
-    pub when: String,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -108,38 +100,6 @@ impl MappingConfig {
 
         matched.sort();
         matched
-    }
-
-    /// Return optional skills for an agent (from `[agent-skills-optional]`).
-    /// Checks full name first, then stripped reviewer- prefix.
-    pub fn optional_skills_for_agent(
-        &self,
-        agent_name: &str,
-        available: &[String],
-    ) -> Vec<OptionalSkill> {
-        let available_set: HashSet<&str> = available.iter().map(|s| s.as_str()).collect();
-        let name = agent_name.to_lowercase();
-        let mut result = Vec::new();
-        let mut seen = HashSet::new();
-
-        let mut collect = |entries: &[OptionalSkill]| {
-            for entry in entries {
-                if available_set.contains(entry.skill.as_str()) && seen.insert(entry.skill.clone())
-                {
-                    result.push(entry.clone());
-                }
-            }
-        };
-
-        if let Some(entries) = self.agent_skills_optional.get(&name) {
-            collect(entries);
-        }
-        if let Some(suffix) = name.strip_prefix("reviewer-")
-            && let Some(entries) = self.agent_skills_optional.get(suffix)
-        {
-            collect(entries);
-        }
-        result
     }
 
     pub fn hooks_for_agent<'a>(

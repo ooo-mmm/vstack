@@ -123,10 +123,6 @@ Per-agent customization survives `vstack add` — re-applied on every install/re
 [agent-skills]
 rust = ["github", "worktree"]
 
-# Specialist skills loaded on demand with "when to load" hints.
-[agent-skills-optional]
-rust = [{ skill = "second-opinion", when = "Cross-model review" }]
-
 # Launch instructions added near the top of generated agent files.
 [agent-launch-instructions]
 rust = "Read docs/architecture.md before coding."
