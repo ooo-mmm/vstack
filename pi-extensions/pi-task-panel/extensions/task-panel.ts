@@ -22,6 +22,11 @@ import {
 	type PanelState,
 	type VisiblePanelState,
 } from "./visibility.js";
+import { reportTaskPanelPersistenceFailure } from "./diagnostics.js";
+import {
+	applyTaskPanelToolResultRestore,
+	taskPanelToolResultState,
+} from "./tool-result-details.js";
 
 const INSTALL_SYMBOL = Symbol.for("vstack.pi-task-panel.installed");
 const CONFIG_ID = "@vanillagreen/pi-task-panel";
@@ -795,14 +800,23 @@ export default function taskPanel(pi: ExtensionAPI): void {
 	let lastReminderAt = 0;
 	let pendingCompletionMessage: { action: string; summary: string } | undefined;
 
-	const writeSidecar = (ctx: ExtensionContext | undefined) => {
-		if (!ctx) return;
+	let lastSidecarWriteOk = true;
+
+	const writeSidecar = (ctx: ExtensionContext | undefined): boolean => {
+		if (!ctx) {
+			lastSidecarWriteOk = true;
+			return true;
+		}
 		try {
 			const file = sidecarStatePath(ctx);
 			mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
 			writeFileSync(file, `${JSON.stringify(cloneState(state), null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
-		} catch {
-			// Session entries and tool-result details remain the primary restore path.
+			lastSidecarWriteOk = true;
+			return true;
+		} catch (error) {
+			lastSidecarWriteOk = false;
+			reportTaskPanelPersistenceFailure("sidecar-write", error, ctx);
+			return false;
 		}
 	};
 
@@ -811,7 +825,8 @@ export default function taskPanel(pi: ExtensionAPI): void {
 			const file = sidecarStatePath(ctx);
 			if (!existsSync(file)) return undefined;
 			return normalizeState(JSON.parse(readFileSync(file, "utf8")), ctx.cwd);
-		} catch {
+		} catch (error) {
+			reportTaskPanelPersistenceFailure("sidecar-read", error, ctx);
 			return undefined;
 		}
 	};
@@ -820,7 +835,7 @@ export default function taskPanel(pi: ExtensionAPI): void {
 
 	const persist = () => {
 		state.updatedAt = new Date().toISOString();
-		writeSidecar(activeCtx);
+		const sidecarOk = writeSidecar(activeCtx);
 		if (!activeCtx) {
 			// No active session context — fall back to the unconditional append.
 			pi.appendEntry<TaskPanelState>(STATE_TYPE, cloneState(state));
@@ -833,7 +848,10 @@ export default function taskPanel(pi: ExtensionAPI): void {
 		const snapshot = cloneState(state);
 		const serialized = JSON.stringify(snapshot);
 		const byteSize = Buffer.byteLength(serialized, "utf8");
-		if (byteSize <= TASK_PANEL_SNAPSHOT_MAX_BYTES) {
+		if (!sidecarOk || byteSize <= TASK_PANEL_SNAPSHOT_MAX_BYTES) {
+			// If sidecar persistence failed, keep a full session-entry fallback even
+			// for oversized panels. Slash/manager/shortcut mutations have no tool
+			// result details, so a bounded manifest alone would make resume lossy.
 			pi.appendEntry<TaskPanelState>(STATE_TYPE, snapshot);
 			lastFingerprintBySession.set(sessionKey, fingerprint);
 		} else {
@@ -877,8 +895,13 @@ export default function taskPanel(pi: ExtensionAPI): void {
 				state = normalizeState(entry.data, ctx.cwd);
 			}
 			if (entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolName === "tasks_write") {
-				const restored = normalizeState(entry.message.details?.state, ctx.cwd);
-				if (restored.tasks.length > 0 || restored.phases.length > 0) state = restored;
+				state = applyTaskPanelToolResultRestore({
+					currentState: state,
+					detailsState: entry.message.details?.state,
+					hasStateContent: (restored) => restored.tasks.length > 0 || restored.phases.length > 0,
+					normalizeState: (value) => normalizeState(value, ctx.cwd),
+					sidecarState,
+				});
 			}
 		}
 		updatePanelAfterTaskChange(state, ctx.cwd);
@@ -1166,7 +1189,7 @@ export default function taskPanel(pi: ExtensionAPI): void {
 			const summary = toolResultSummary(params.action, message, state);
 			const deferAllCompleteDisplay = state.tasks.length > 0 && remainingCount(state) === 0 && !summary.startsWith("No task");
 			pendingCompletionMessage = deferAllCompleteDisplay ? { action: params.action, summary } : undefined;
-			return { content: [{ type: "text", text: toolResultContent(summary, state, runCtx.cwd) }], details: { action: params.action, deferDisplay: deferAllCompleteDisplay, message, summary, state: cloneState(state) } };
+			return { content: [{ type: "text", text: toolResultContent(summary, state, runCtx.cwd) }], details: { action: params.action, deferDisplay: deferAllCompleteDisplay, message, summary, state: taskPanelToolResultState(state, { forceFullSnapshot: !lastSidecarWriteOk }) } };
 		},
 		renderCall(_args, theme) {
 			return compactToolOutput ? singleLine("") : singleLine(theme.fg("toolTitle", "tasks_write"));
