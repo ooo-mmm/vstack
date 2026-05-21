@@ -186,7 +186,7 @@
         {
           "key": "styledCodeBlocks",
           "label": "Styled markdown code blocks",
-          "description": "Render fenced markdown code blocks with syntax highlighting and a subtle background, flush-left with no copy gutter/prefix instead of literal ``` fences.",
+          "description": "Render fenced markdown code blocks with syntax highlighting, subtle background, and top/bottom dashed border; code stays flush-left with no copy gutter/prefix instead of literal ``` fences.",
           "type": "boolean",
           "default": true,
           "category": "Messages",

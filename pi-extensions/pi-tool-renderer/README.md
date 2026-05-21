@@ -84,7 +84,7 @@ Glyph style: each package exposes `glyphStyle` (`unicode` default, `ascii` for t
 | Compact compaction summaries | Compact bullet style instead of Pi's padded box. |
 | Compact skill invocation messages | Compact `/skill:name` rows. |
 | Align assistant messages | Remove Pi's one-column left padding from assistant text. |
-| Styled markdown code blocks | Render fenced code blocks with syntax highlighting and background, flush-left with no copy gutter/prefix. |
+| Styled markdown code blocks | Render fenced code blocks with syntax highlighting, background, and top/bottom dashed border; code stays flush-left with no copy gutter/prefix. |
 
 ### Read / Search / Bash output
 

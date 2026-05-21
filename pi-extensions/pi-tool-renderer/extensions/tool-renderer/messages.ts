@@ -427,7 +427,8 @@ function renderStyledCodeBlock(token: any, width: number, markdownTheme: any, ct
 	}
 
 	const codeWidth = Math.max(1, contentWidth);
-	const lines: string[] = [];
+	const border = markdownTheme?.codeBlockBorder ? markdownTheme.codeBlockBorder("-".repeat(codeWidth)) : "-".repeat(codeWidth);
+	const lines: string[] = [applyCodeBlockBg(border, ctx)];
 	for (const highlightedLine of highlightedLines) {
 		const wrapped = wrapTextWithAnsi(highlightedLine, codeWidth);
 		const segments = wrapped.length > 0 ? wrapped : [""];
@@ -435,6 +436,7 @@ function renderStyledCodeBlock(token: any, width: number, markdownTheme: any, ct
 			lines.push(applyCodeBlockBg(padAnsiLine(segment, codeWidth), ctx));
 		}
 	}
+	lines.push(applyCodeBlockBg(border, ctx));
 	return lines;
 }
 

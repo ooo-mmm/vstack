@@ -13,6 +13,9 @@ const theme = {
 	codeBlock(text: string) {
 		return text;
 	},
+	codeBlockBorder(text: string) {
+		return text;
+	},
 	highlightCode(code: string) {
 		return code.split("\n");
 	},
@@ -23,16 +26,20 @@ function stripControl(text: string): string {
 }
 
 describe("styled markdown code blocks", () => {
-	test("render code flush-left with background but no copy gutter", () => {
+	test("render code flush-left with dashed background border but no copy gutter", () => {
 		const rendered = __test.renderStyledCodeBlock({ type: "code", lang: "bash", text: "echo hi\nprintf ok" }, 20, theme);
 
-		expect(rendered).toHaveLength(2);
-		expect(stripControl(rendered[0]!)).toBe("echo hi" + " ".repeat(12));
-		expect(stripControl(rendered[1]!)).toBe("printf ok" + " ".repeat(10));
-		expect(stripControl(rendered[0]!).startsWith(" ")).toBe(false);
-		expect(stripControl(rendered[0]!)).not.toContain("┃");
-		expect(stripControl(rendered[0]!)).not.toContain("│");
-		expect(rendered[0]!).toContain("\x1b[48;5;236m");
-		expect(visibleWidth(rendered[0]!)).toBe(19);
+		expect(rendered).toHaveLength(4);
+		expect(stripControl(rendered[0]!)).toBe("-".repeat(19));
+		expect(stripControl(rendered[1]!)).toBe("echo hi" + " ".repeat(12));
+		expect(stripControl(rendered[2]!)).toBe("printf ok" + " ".repeat(10));
+		expect(stripControl(rendered[3]!)).toBe("-".repeat(19));
+		expect(stripControl(rendered[1]!).startsWith(" ")).toBe(false);
+		for (const line of rendered) {
+			expect(stripControl(line)).not.toContain("┃");
+			expect(stripControl(line)).not.toContain("│");
+			expect(line).toContain("\x1b[48;5;236m");
+			expect(visibleWidth(line)).toBe(19);
+		}
 	});
 });
