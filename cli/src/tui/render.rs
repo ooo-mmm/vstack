@@ -156,6 +156,12 @@ pub fn draw_tabbed_select(frame: &mut Frame, select: &mut TabbedSelect) {
     } else {
         select.help_overlay_outer = Rect::default();
     }
+
+    // Progress overlay paints last so it sits above any dialog still on
+    // screen when a worker thread started from a confirm-dialog Enter.
+    if select.progress.is_some() {
+        draw_progress_overlay(frame, select);
+    }
 }
 
 fn draw_sep(frame: &mut Frame, area: Rect) {
@@ -1746,6 +1752,46 @@ fn draw_confirm_dialog(frame: &mut Frame, select: &mut TabbedSelect, d: &Confirm
 
 // ── Help overlay ──────────────────────────────────────────
 
+/// Braille-dot spinner frames; ~10 fps when advanced every 80–100ms.
+const SPINNER_FRAMES: &[&str] = &[
+    "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏",
+];
+
+fn draw_progress_overlay(frame: &mut Frame, select: &mut TabbedSelect) {
+    let Some(progress) = select.progress.as_ref() else { return };
+    let elapsed = progress.started.elapsed();
+    let frame_idx = (elapsed.as_millis() / 100) as usize % SPINNER_FRAMES.len();
+    let spinner = SPINNER_FRAMES[frame_idx];
+    let secs = elapsed.as_secs();
+    let elapsed_label = if secs >= 60 {
+        format!("{}m{:02}s", secs / 60, secs % 60)
+    } else {
+        format!("{}s", secs)
+    };
+
+    let label = progress.label.clone();
+    let dialog_w: u16 = (label.chars().count() as u16 + 16).clamp(36, 60);
+    let (inner, _outer) = draw_dialog_chrome(frame, "Working", theme::ACCENT, 3, dialog_w);
+
+    let line = Line::from(vec![
+        Span::styled(format!("{spinner} "), Style::default().fg(theme::ACCENT).bold()),
+        Span::styled(label, Style::default().fg(theme::TEXT_PRIMARY).bold()),
+        Span::styled(
+            format!("  ({elapsed_label})"),
+            Style::default().fg(theme::TEXT_MUTED),
+        ),
+    ]);
+    let hint = Line::from(Span::styled(
+        "Input is paused until this finishes.",
+        Style::default().fg(theme::TEXT_MUTED).italic(),
+    ));
+    frame.render_widget(
+        Paragraph::new(vec![line, Line::from(""), hint])
+            .style(Style::default().bg(Color::Reset)),
+        inner,
+    );
+}
+
 fn draw_help_overlay(frame: &mut Frame, select: &mut TabbedSelect) {
     let entries: &[(&str, &[(&str, &str)])] = &[
         (
@@ -2573,6 +2619,37 @@ mod tests {
             out.push('\n');
         }
         out
+    }
+
+    #[test]
+    fn progress_overlay_renders_label_and_spinner_frame() {
+        let mut select = TabbedSelect::new(
+            "x",
+            vec![source_tab("Agents", vec![item("a", "")])],
+        );
+        select.progress = Some(crate::tui::multiselect::ProgressOverlay {
+            label: "Updating 3 item(s)…".into(),
+            started: std::time::Instant::now(),
+        });
+        let backend = TestBackend::new(120, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| draw_tabbed_select(f, &mut select))
+            .unwrap();
+        let text = buffer_text(terminal.backend().buffer());
+        assert!(text.contains("Working"), "missing Working title:\n{text}");
+        assert!(
+            text.contains("Updating 3 item(s)"),
+            "missing progress label:\n{text}"
+        );
+        assert!(
+            SPINNER_FRAMES.iter().any(|f| text.contains(f)),
+            "no spinner frame char rendered:\n{text}"
+        );
+        assert!(
+            text.contains("Input is paused"),
+            "missing input-paused hint:\n{text}"
+        );
     }
 
     #[test]

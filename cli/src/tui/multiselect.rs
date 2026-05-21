@@ -265,6 +265,8 @@ pub struct TabbedSelect {
     pub harness_dialog: Option<HarnessDialog>,
     /// Method picker dialog (compact).
     pub method_dialog: Option<MethodDialog>,
+    /// Spinner overlay shown while a blocking action runs on a worker thread.
+    pub progress: Option<ProgressOverlay>,
 
     /// Temporary message shown in status bar
     pub flash_message: Option<String>,
@@ -336,6 +338,13 @@ pub struct MethodDialog {
     pub cursor: usize,
 }
 
+/// Centered "Working\u2026" overlay shown while a blocking action runs on a worker thread.
+/// `started` drives the spinner frame; `label` is the user-facing verb ("Updating\u2026").
+pub struct ProgressOverlay {
+    pub label: String,
+    pub started: std::time::Instant,
+}
+
 /// A clickable action surfaced in the UI (action bar, inspector, top chips).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ActionButton {
@@ -396,6 +405,7 @@ impl TabbedSelect {
             repo_dialog: None,
             harness_dialog: None,
             method_dialog: None,
+            progress: None,
             flash_message: None,
             layout_tab_bar: ratatui::layout::Rect::default(),
             layout_list: ratatui::layout::Rect::default(),

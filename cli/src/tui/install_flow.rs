@@ -13,10 +13,12 @@ use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
 use ratatui::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::io;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use super::multiselect::{
-    ActionButton, ConfirmAction, ConfirmDialog, MovePlan, RemovePlan, RepoOption, Scope,
-    SelectItem, TabKind, TabbedSelect,
+    ActionButton, ConfirmAction, ConfirmDialog, MovePlan, ProgressOverlay, RemovePlan, RepoOption,
+    Scope, SelectItem, TabKind, TabbedSelect,
 };
 use super::render;
 use super::state::{
@@ -35,6 +37,34 @@ struct FlowState<'a> {
     source_selector: &'a SourceSelectorData,
     /// CLI binary update label, e.g. "1.2.3 → 1.2.4". `None` if up to date.
     cli_update: Option<String>,
+    /// Active worker thread + how to apply its result once it joins. The main
+    /// loop ticks the spinner overlay and drains input until the worker
+    /// finishes; only then is normal input handling resumed.
+    pending_work: Option<PendingWork>,
+}
+
+/// Spinner tick interval. Drives both the spinner frame advance and the
+/// poll timeout used to keep the worker-finished check responsive.
+const SPINNER_TICK: Duration = Duration::from_millis(80);
+
+struct PendingWork {
+    join: thread::JoinHandle<()>,
+    post: PostWork,
+}
+
+/// What to do on the main thread after a worker finishes. Keeping this
+/// out of the worker payload means the worker can be a plain `() -> ()`
+/// closure and the main thread owns every mutation that touches the TUI
+/// state, terminal, or process lifetime.
+enum PostWork {
+    /// Reload installed-state tabs and set a flash message.
+    Done(String),
+    /// As Done, but also drop a source registry entry. Used by RemoveSource.
+    DoneForgetSource { source: String, flash: String },
+    /// As Done, but afterwards leave the alt screen and run the CLI binary
+    /// updater (which exits the process). Used when an update batch mixes
+    /// content items with the vstack (cli) row.
+    DoneThenCliUpdate(String),
 }
 
 pub fn run_install_flow(
@@ -93,6 +123,7 @@ pub fn run_install_flow(
         select,
         source_selector,
         cli_update,
+        pending_work: None,
     };
 
     if let Some(idx) = state
@@ -122,6 +153,29 @@ pub fn run_install_flow(
 
     let result = loop {
         terminal.draw(|f| render::draw_tabbed_select(f, &mut state.select))?;
+
+        // While a worker thread is running, tick the spinner instead of
+        // blocking on input. Events that arrive during the work are
+        // dropped so they cannot race the post-work state rebuild.
+        if state.pending_work.is_some() {
+            if state
+                .pending_work
+                .as_ref()
+                .is_some_and(|w| w.join.is_finished())
+            {
+                let work = state.pending_work.take().unwrap();
+                let _ = work.join.join();
+                state.select.progress = None;
+                if let Some(r) = apply_post_work(&mut state, work.post)? {
+                    break r;
+                }
+                continue;
+            }
+            if event::poll(SPINNER_TICK)? {
+                let _ = event::read()?;
+            }
+            continue;
+        }
 
         match event::read()? {
             Event::Mouse(mouse) => {
@@ -1401,14 +1455,7 @@ fn open_update_confirm(state: &mut FlowState, all: bool) -> Result<()> {
 
     let cli_only = names.len() == 1 && names[0] == "vstack (cli)";
     if cli_only {
-        // Run binary update directly
-        io::stdout().execute(DisableMouseCapture)?;
-        io::stdout().execute(LeaveAlternateScreen)?;
-        terminal::disable_raw_mode()?;
-        eprintln!("Updating vstack...\n");
-        let _ = crate::commands::update::run(false);
-        eprintln!("\nRestart vstack to use the new version.");
-        std::process::exit(0);
+        run_cli_update_inline()?;
     }
 
     let mut body = Vec::new();
@@ -1679,35 +1726,39 @@ fn execute_action(
             Ok(Some(InstallFlowResult::Install(result)))
         }
         ConfirmAction::UpdateMarked(names) => {
-            // CLI binary update inline
             let has_cli = names.iter().any(|n| n == "vstack (cli)");
             let content_names: Vec<String> = names
                 .iter()
                 .filter(|n| n.as_str() != "vstack (cli)")
                 .cloned()
                 .collect();
-            if !content_names.is_empty() {
-                perform_inline_update(&content_names, state.items);
-            }
-            if has_cli {
-                io::stdout().execute(DisableMouseCapture)?;
-                io::stdout().execute(LeaveAlternateScreen)?;
-                terminal::disable_raw_mode()?;
-                eprintln!("Updating vstack...\n");
-                let _ = crate::commands::update::run(false);
-                eprintln!("\nRestart vstack to use the new version.");
-                std::process::exit(0);
+            // No content rows — the only selected update is the CLI binary.
+            // Keep this fully inline so the alt-screen exit + std::process::exit
+            // happen on the main thread without a worker round-trip.
+            if content_names.is_empty() && has_cli {
+                return run_cli_update_inline().map(|_| None);
             }
             let n = content_names.len();
-            rebuild_tabs(state);
-            state.select.flash_message = Some(format!("Updated {n} item(s)"));
+            let items_clone = state.items.clone();
+            let label = format!("Updating {n} item(s)…");
+            let post = if has_cli {
+                PostWork::DoneThenCliUpdate(format!("Updated {n} item(s)"))
+            } else {
+                PostWork::Done(format!("Updated {n} item(s)"))
+            };
+            spawn_work(state, label, post, move || {
+                perform_inline_update(&content_names, &items_clone);
+            });
             Ok(None)
         }
         ConfirmAction::RemoveMarked(plans) => {
             let n = plans.len();
-            perform_remove_plans(&plans);
-            rebuild_tabs(state);
-            state.select.flash_message = Some(format!("Removed {n} item(s)"));
+            spawn_work(
+                state,
+                format!("Removing {n} item(s)…"),
+                PostWork::Done(format!("Removed {n} item(s)")),
+                move || perform_remove_plans(&plans),
+            );
             Ok(None)
         }
         ConfirmAction::ResolveDups(plans) => {
@@ -1717,24 +1768,34 @@ fn execute_action(
             let kept_global = plans.first().is_some_and(|p| p.from_project);
             let kept = if kept_global { "global" } else { "project" };
             let n = plans.len();
-            perform_remove_plans(&plans);
-            rebuild_tabs(state);
-            state.select.flash_message = Some(format!("Resolved {n} dup(s) — kept {kept}"));
+            spawn_work(
+                state,
+                format!("Resolving {n} duplicate(s)…"),
+                PostWork::Done(format!("Resolved {n} dup(s) — kept {kept}")),
+                move || perform_remove_plans(&plans),
+            );
             Ok(None)
         }
         ConfirmAction::RemoveAll(plans) => {
             let n = plans.len();
-            perform_remove_plans(&plans);
-            rebuild_tabs(state);
-            state.select.flash_message = Some(format!("Uninstalled all {n} item(s)"));
+            spawn_work(
+                state,
+                format!("Uninstalling {n} item(s)…"),
+                PostWork::Done(format!("Uninstalled all {n} item(s)")),
+                move || perform_remove_plans(&plans),
+            );
             Ok(None)
         }
         ConfirmAction::MoveItems { to_global, items } => {
             let n = items.len();
-            perform_move_plans(state.items, &items, to_global);
-            rebuild_tabs(state);
             let target = if to_global { "global" } else { "project" };
-            state.select.flash_message = Some(format!("Moved {n} item(s) to {target}"));
+            let items_clone = state.items.clone();
+            spawn_work(
+                state,
+                format!("Moving {n} item(s) to {target}…"),
+                PostWork::Done(format!("Moved {n} item(s) to {target}")),
+                move || perform_move_plans(&items_clone, &items, to_global),
+            );
             Ok(None)
         }
         ConfirmAction::RemoveSource { source, packages } => {
@@ -1754,14 +1815,74 @@ fn execute_action(
                 })
                 .collect();
             let n = plans.len();
-            perform_remove_plans(&plans);
-            forget_source(&mut state.select, &source);
-            rebuild_tabs(state);
-            state.select.flash_message =
-                Some(format!("Removed source and uninstalled {n} package(s)"));
+            spawn_work(
+                state,
+                format!("Removing source ({n} package(s))…"),
+                PostWork::DoneForgetSource {
+                    source: source.clone(),
+                    flash: format!("Removed source and uninstalled {n} package(s)"),
+                },
+                move || perform_remove_plans(&plans),
+            );
             Ok(None)
         }
     }
+}
+
+/// Start a worker thread, install the spinner overlay, and record how the
+/// main loop should reconcile state once the worker joins.
+fn spawn_work<F>(state: &mut FlowState<'_>, label: String, post: PostWork, work: F)
+where
+    F: FnOnce() + Send + 'static,
+{
+    let join = thread::spawn(move || {
+        work();
+    });
+    state.select.progress = Some(ProgressOverlay {
+        label,
+        started: Instant::now(),
+    });
+    state.pending_work = Some(PendingWork { join, post });
+}
+
+/// Apply a finished worker's outcome on the main thread. Owns every
+/// mutation that touches TUI state, the terminal, or process lifetime.
+fn apply_post_work(
+    state: &mut FlowState<'_>,
+    post: PostWork,
+) -> Result<Option<InstallFlowResult>> {
+    match post {
+        PostWork::Done(flash) => {
+            rebuild_tabs(state);
+            state.select.flash_message = Some(flash);
+            Ok(None)
+        }
+        PostWork::DoneForgetSource { source, flash } => {
+            forget_source(&mut state.select, &source);
+            rebuild_tabs(state);
+            state.select.flash_message = Some(flash);
+            Ok(None)
+        }
+        PostWork::DoneThenCliUpdate(flash) => {
+            rebuild_tabs(state);
+            state.select.flash_message = Some(flash);
+            run_cli_update_inline()?;
+            // run_cli_update_inline exits the process; this line is unreachable.
+            Ok(None)
+        }
+    }
+}
+
+/// Tear down the TUI, run the CLI binary updater, and exit the process.
+/// Used by both the CLI-only update path and the mixed-batch follow-up.
+fn run_cli_update_inline() -> Result<()> {
+    io::stdout().execute(DisableMouseCapture)?;
+    io::stdout().execute(LeaveAlternateScreen)?;
+    terminal::disable_raw_mode()?;
+    eprintln!("Updating vstack...\n");
+    let _ = crate::commands::update::run(false);
+    eprintln!("\nRestart vstack to use the new version.");
+    std::process::exit(0);
 }
 
 // ── Build install selections ──────────────────────────────
@@ -2223,6 +2344,7 @@ mod tests {
             select,
             source_selector: &source_selector,
             cli_update: None,
+            pending_work: None,
         };
 
         open_install_confirm(&mut state);
@@ -2292,6 +2414,7 @@ mod tests {
             select,
             source_selector: &source_selector,
             cli_update: None,
+            pending_work: None,
         };
 
         handle_key(&mut state, key(KeyCode::Down)).unwrap();

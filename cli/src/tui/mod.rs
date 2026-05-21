@@ -34,6 +34,7 @@ pub struct SummaryData {
     pub scope: String,
 }
 
+#[derive(Clone)]
 pub struct DiscoveredItems {
     pub agents: Vec<Agent>,
     pub skills: Vec<Skill>,
