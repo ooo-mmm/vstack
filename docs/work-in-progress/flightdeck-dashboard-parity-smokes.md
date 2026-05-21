@@ -4,8 +4,8 @@ Manual smoke coverage for pi-flightdeck surfaces that cannot be proven by a rata
 
 ## Scope
 
-- Rust dashboard: `skills/flightdeck/lib/flightdeck-dashboard/`
-- Pi extension being deprecated for new sessions: `pi-extensions/pi-flightdeck/`
+- Rust dashboard (canonical): `skills/flightdeck/lib/flightdeck-dashboard/`
+- Optional Pi UI extension: `pi-extensions/pi-flightdeck/`
 - Snapshot-backed rows live in `skills/flightdeck/lib/flightdeck-dashboard/tests/snapshot_overview.rs` and `tests/snapshot_tabs.rs`.
 
 ## Smoke 1 — terminal bell on pause

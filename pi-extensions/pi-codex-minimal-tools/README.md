@@ -17,7 +17,7 @@ Minimal Codex/OpenAI tools for Pi. Adds Codex-style tools without replacing Pi n
 - Optional direct OpenAI Images API fallback when `OPENAI_API_KEY` is set.
 - Codex provider failures keep HTTP status prefixes such as `HTTP 429:` or `HTTP 503:` so Pi can classify retries and limits.
 
-`web_search` moved to `pi-web-tools`. Install both packages together if you use search.
+For web search, install [`pi-web-tools`](../pi-web-tools/README.md) alongside this package.
 
 ## Install
 

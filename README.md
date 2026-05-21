@@ -166,14 +166,14 @@ Rust and performance reference material now lives directly in the `rust`, `revie
 |---|---|
 | [`decider`](skills/decider/)* | Architectural decision document management and indexing. |
 | [`deep-research`](skills/deep-research/) | Exa-powered deep research and portable findings report generation. |
-| [`html-artifact`](skills/html-artifact/) | Standalone HTML artifacts for plans, reports, reviews, explainers, prototypes, and custom editors. |
-| [`github`](skills/github/)* | GitHub PR, thread, review, CI, and merge workflows. |
-| [`issue-lifecycle`](skills/issue-lifecycle/)* | Delegated implementation and review-fix issue workflows for dev agents. |
-| [`reviewer`](skills/reviewer/)* | Code-review and QA-review workflows + the canonical finding/verdict JSON schema. Loaded by any `reviewer-*` agent. |
-| [`linear`](skills/linear/)* | Linear issue, cycle, milestone, and project workflows. |
 | [`flightdeck`](skills/flightdeck/)* | Master session lifecycle for multi-issue parallel dev work; tmux-only, with structured activity JSONL for dashboard/live inspection. |
+| [`github`](skills/github/)* | GitHub PR, thread, review, CI, and merge workflows. |
+| [`html-artifact`](skills/html-artifact/) | Standalone HTML artifacts for plans, reports, reviews, explainers, prototypes, and custom editors. |
+| [`issue-lifecycle`](skills/issue-lifecycle/)* | Delegated implementation and review-fix issue workflows for dev agents. |
+| [`linear`](skills/linear/)* | Linear issue, cycle, milestone, and project workflows. |
 | [`linear-orch`](skills/linear-orch/)* | Per-issue lifecycle inside a worktree: dev → review → submit → merge. |
 | [`project-management`](skills/project-management/)* | TPM-driven planning, audits, roadmaps, and research-backed decomposition. |
+| [`reviewer`](skills/reviewer/)* | Code-review and QA-review workflows + the canonical finding/verdict JSON schema. Loaded by any `reviewer-*` agent. |
 | [`second-opinion`](skills/second-opinion/) | Cross-model review via the opposite AI CLI (Claude ↔ Codex). |
 | [`worktree`](skills/worktree/)* | Git worktree creation, env/config linkage, and isolated workflows. |
 

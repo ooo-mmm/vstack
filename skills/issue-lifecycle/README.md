@@ -13,7 +13,7 @@ skills/issue-lifecycle/
     └── dev-fix.md         # Review fix delegation workflow (§ 1-6)
 ```
 
-Code-review and QA-review workflows moved to the reviewer skill: `skills/reviewer/workflows/review.md` and `skills/reviewer/workflows/qa-review.md`.
+Code-review and QA-review workflows live in the reviewer skill: `skills/reviewer/workflows/review.md` and `skills/reviewer/workflows/qa-review.md`.
 
 This skill is workflow-based. All behavior is defined in the workflow files.
 

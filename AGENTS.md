@@ -168,7 +168,7 @@ Each canonical agent declares its own `effort:` in frontmatter. Harnesses write 
 
 - Prefer `deny-tools`. Claude Code writes it as native `disallowedTools`, seeds `background` from Pi `pane` on first install (`pane = true` → `background = false`, `pane = false` → `background = true`) and preserves later edits, and omits `isolation`/`memory` unless configured. Pi emits `deny-tools` for `pi-agents-tmux` (default = active parent tools minus denials). OpenCode defaults generated agents to `mode: subagent`, still exposes `mode` for rare primary-agent overrides, emits `permission: <tool>: deny` entries from the same deny list, maps `color` to hex values, and writes reasoning under `options.reasoningEffort` with summary/verbosity defaults.
 - Cursor and Codex don't use the same per-agent tool-deny frontmatter; Codex subagents use sandbox/approval configuration instead.
-- Legacy shared `[agent-frontmatter]` sections and `tools` allowlists are intentionally no longer generated or read. Move overrides into `[agent-frontmatter.<harness>]` and use `deny-tools` so harness defaults remain available while unsafe tools are blocked.
+- Per-harness frontmatter overrides live under `[agent-frontmatter.<harness>]`; use `deny-tools` rather than allowlists so harness defaults remain available while unsafe tools are blocked.
 
 ## Rules
 
