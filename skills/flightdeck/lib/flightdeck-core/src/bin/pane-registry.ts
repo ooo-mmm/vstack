@@ -104,8 +104,14 @@ function tmuxLivePaneIds(): Set<string> {
 	return r.ok ? r.panes : new Set<string>();
 }
 
+type LivePaneCoords = {
+	paneTarget: string;
+	windowIndex: string;
+	paneIndex: string;
+};
+
 type TmuxLivePaneSnapshotResult =
-	| { ok: true; panes: Set<string>; targets: Set<string> }
+	| { ok: true; panes: Set<string>; targets: Set<string>; byPaneId: Map<string, LivePaneCoords> }
 	| { ok: false; error: string };
 
 function tmuxLivePaneSnapshotResult(): TmuxLivePaneSnapshotResult {
@@ -117,13 +123,22 @@ function tmuxLivePaneSnapshotResult(): TmuxLivePaneSnapshotResult {
 	}
 	const panes = new Set<string>();
 	const targets = new Set<string>();
+	const byPaneId = new Map<string, LivePaneCoords>();
 	for (const line of (r.stdout ?? "").split("\n")) {
 		if (!line) continue;
 		const [paneId, paneTarget] = line.split("\t");
 		if (paneId) panes.add(paneId);
 		if (paneTarget) targets.add(paneTarget);
+		if (paneId && paneTarget) {
+			const m = paneTarget.match(/^[^:]+:(\d+)\.(\d+)$/);
+			byPaneId.set(paneId, {
+				paneTarget,
+				windowIndex: m?.[1] ?? "",
+				paneIndex: m?.[2] ?? "",
+			});
+		}
 	}
-	return { ok: true, panes, targets };
+	return { ok: true, panes, targets, byPaneId };
 }
 
 type TmuxWindowNameResult =
@@ -965,19 +980,29 @@ function cmdList(args: string[]): void {
 	}
 }
 
-function cmdRefreshWindowNames(args: string[]): void {
-	if (args.length > 0) die("Usage: refresh-window-names");
-	const updated: string[] = [];
+interface RefreshWindowNamesResult {
+	updated: string[];
+	cleared: string[];
+	warnings: Array<{ id?: string; reason: string; message: string }>;
+}
+
+function performRefreshWindowNames(): RefreshWindowNamesResult {
+	const updated = new Set<string>();
 	const cleared: string[] = [];
 	const warnings: Array<{ id?: string; reason: string; message: string }> = [];
 	const entries = trackedEntriesForRefresh();
 	const windowSnapshot = tmuxLivePaneSnapshotResult();
 	if (!windowSnapshot.ok) {
 		warnings.push({ reason: "tmux-list-panes-failed", message: windowSnapshot.error });
-		process.stdout.write(`${JSON.stringify({ updated, cleared, warnings })}\n`);
-		return;
+		return { updated: [], cleared, warnings };
 	}
 	for (const [id, entry] of Object.entries(entries)) {
+		// vstack#214: %PANE_ID is the source of truth; pane_target / window /
+		// window_index are cached views that go stale when tmux renumbers
+		// windows (close, swap, move). Refresh them whenever the entry's
+		// pane_id still resolves to a live pane at different coords.
+		refreshPaneCoordsForEntry(id, entry, windowSnapshot.byPaneId, updated, warnings);
+
 		const current = tmuxCurrentWindowNameForEntry(entry, windowSnapshot);
 		const previous = entry.window_name_current;
 		if (!current.ok) {
@@ -995,10 +1020,95 @@ function cmdRefreshWindowNames(args: string[]): void {
 		if (previous !== current.name) {
 			if (!registryHasEntry(id)) continue;
 			setEntryField(id, "window_name_current", JSON.stringify(current.name));
-			updated.push(id);
+			updated.add(id);
 		}
 	}
-	process.stdout.write(`${JSON.stringify({ updated, cleared, warnings })}\n`);
+	return { updated: Array.from(updated), cleared, warnings };
+}
+
+function cmdRefreshWindowNames(args: string[]): void {
+	if (args.length > 0) die("Usage: refresh-window-names");
+	const result = performRefreshWindowNames();
+	process.stdout.write(`${JSON.stringify(result)}\n`);
+}
+
+function refreshPaneCoordsForEntry(
+	id: string,
+	entry: EntryRecord,
+	byPaneId: Map<string, LivePaneCoords>,
+	updated: Set<string>,
+	warnings: Array<{ id?: string; reason: string; message: string }>,
+): void {
+	const paneId = entryString(entry, "pane_id");
+	const storedTarget = entryString(entry, "pane_target") ?? "";
+	const state = entryString(entry, "state") ?? "";
+
+	if (!paneId) {
+		// Entries with no pane_id can be intentional pre-spawn rows (e.g.
+		// kind=workflow placeholders, plan-item rows waiting on a
+		// dependency, or fresh `state=waiting` rows registered before
+		// their pane was created). Those have neither pane_target nor a
+		// post-waiting state, so we skip them silently — there's nothing
+		// to heal yet.
+		//
+		// Anything else (a pane_target was recorded, or the entry has
+		// already left `waiting`) implies the row *should* have a
+		// pane_id but doesn't. That's a registry-drift signal worth
+		// logging so daemon refresh + operator log capture it.
+		if (storedTarget || (state && state !== "waiting")) {
+			warnings.push({
+				id,
+				reason: "missing-pane-id",
+				message: `entry ${id} has no pane_id but pane_target='${storedTarget || "<none>"}' state='${state || "<none>"}'; refresh cannot heal pane_target without a canonical %pane_id (run pane-registry reconcile to backfill)`,
+			});
+		}
+		return;
+	}
+
+	const live = byPaneId.get(paneId);
+	if (!live || !live.windowIndex || !live.paneIndex) {
+		// pane_id is set but tmux's live snapshot doesn't have it.
+		// Either the pane died since the snapshot was taken, or
+		// `list-panes -a` returned partial data. Reconcile is the
+		// durable handler for dead panes; surface a warning so the
+		// daemon refresh log + operator can correlate the gap.
+		warnings.push({
+			id,
+			reason: "pane-id-not-live",
+			message: `entry ${id} pane_id=${paneId} did not resolve in the live tmux snapshot; pane may be gone (run pane-registry reconcile) or list-panes returned partial data`,
+		});
+		return;
+	}
+
+	const storedWindow = entryString(entry, "window") ?? "";
+	const storedIndexRaw = entry.window_index;
+	const storedIndex = typeof storedIndexRaw === "number"
+		? String(storedIndexRaw)
+		: typeof storedIndexRaw === "string" ? storedIndexRaw : "";
+
+	const wantTarget = live.paneTarget;
+	const wantIndexStr = live.windowIndex;
+	const wantIndexNum = Number.parseInt(wantIndexStr, 10);
+
+	if (storedTarget !== wantTarget) {
+		if (!registryHasEntry(id)) return;
+		setEntryField(id, "pane_target", JSON.stringify(wantTarget));
+		updated.add(id);
+	}
+	if (Number.isFinite(wantIndexNum) && String(wantIndexNum) !== storedIndex) {
+		if (!registryHasEntry(id)) return;
+		setEntryField(id, "window_index", String(wantIndexNum));
+		updated.add(id);
+	}
+	// flightdeck-session writes `--window <numeric index>` at registration, so
+	// in practice `entry.window` mirrors window_index. Only refresh when the
+	// stored value is numeric — preserves any legacy entries that stored a
+	// window name (those don't change on renumber).
+	if (/^\d+$/.test(storedWindow) && storedWindow !== wantIndexStr) {
+		if (!registryHasEntry(id)) return;
+		setEntryField(id, "window", JSON.stringify(wantIndexStr));
+		updated.add(id);
+	}
 }
 
 // ----- get / set-state / set-substate / set / log-decision -----------------
@@ -1334,6 +1444,28 @@ function cmdRemoveMerged(): void {
 }
 
 function cmdReconcile(): void {
+	// vstack#214: refresh pane_target / window / window_index from the live
+	// pane snapshot before liveness reconciliation. A tmux window reshuffle
+	// can renumber an entry's slot while leaving its %PANE_ID alive, and
+	// downstream callers (pane-respond, pane-poll, find-by-pane) must see
+	// fresh coords. The daemon's reconcile tick (loop.ts) already calls
+	// refresh-window-names before its own reconcile pass; mirror that here
+	// so manual `pane-registry reconcile` invocations have the same effect.
+	const refresh = performRefreshWindowNames();
+	if (refresh.updated.length > 0) {
+		process.stdout.write(
+			`reconciled: refreshed pane coords/names for ${refresh.updated.length} entr${refresh.updated.length === 1 ? "y" : "ies"} (${refresh.updated.join(",")})\n`,
+		);
+	}
+	if (refresh.cleared.length > 0) {
+		process.stdout.write(
+			`reconciled: cleared stale window_name_current for ${refresh.cleared.length} entr${refresh.cleared.length === 1 ? "y" : "ies"} (${refresh.cleared.join(",")})\n`,
+		);
+	}
+	for (const w of refresh.warnings) {
+		process.stderr.write(`reconciled: refresh warning id=${w.id ?? "-"} reason=${w.reason} message=${w.message}\n`);
+	}
+
 	const probe = livePanesAndWindowsResult();
 	if (!probe.ok) {
 		// vstack#85 F1: transient tmux probe failure (SIGSTOP, SIGPIPE,
