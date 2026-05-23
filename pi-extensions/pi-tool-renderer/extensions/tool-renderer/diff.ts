@@ -528,6 +528,22 @@ function diffFrame(cwd?: string): { bl: string; br: string; h: string; joint: st
 	return { bl: "└", br: "┘", h: "─", joint: "┴", tl: "┌", tm: "┬", tr: "┐", v: "│" };
 }
 
+function diffBorderStyler(theme: any, frame: ReturnType<typeof diffFrame>): (text: string) => string {
+	const sample = frame.h.repeat(2);
+	try {
+		const styledSample = borderMuted(theme, sample);
+		const sampleIndex = styledSample.indexOf(sample);
+		if (sampleIndex >= 0 && styledSample !== sample) {
+			const open = styledSample.slice(0, sampleIndex);
+			const close = styledSample.slice(sampleIndex + sample.length);
+			return (text: string) => `${open}${text}${close}`;
+		}
+	} catch {
+		// Fall back to per-call styling below.
+	}
+	return (text: string) => borderMuted(theme, text);
+}
+
 function renderUnifiedLine(
 	line: StructuredDiffLine,
 	width: number,
@@ -550,12 +566,13 @@ function renderUnifiedDiff(diff: StructuredDiff, rows: StructuredDiffLine[], wid
 	const maxNum = Math.max(1, ...diff.lines.map((line) => Math.max(line.oldNum ?? 0, line.newNum ?? 0)));
 	const numWidth = Math.max(2, String(maxNum).length);
 	const frame = diffFrame(cwd);
-	const leftBorder = borderMuted(theme, frame.v);
-	const rightBorder = borderMuted(theme, frame.v);
+	const border = diffBorderStyler(theme, frame);
+	const leftBorder = border(frame.v);
+	const rightBorder = border(frame.v);
 	const cellWidth = Math.max(1, tableWidth - visibleLength(leftBorder) - visibleLength(rightBorder));
 	const contentWidth = Math.max(1, cellWidth - 2);
-	const ruleSegment = borderMuted(theme, frame.h.repeat(Math.max(1, cellWidth)));
-	const out: string[] = [`${borderMuted(theme, frame.tl)}${ruleSegment}${borderMuted(theme, frame.tr)}`];
+	const ruleSegment = border(frame.h.repeat(Math.max(1, cellWidth)));
+	const out: string[] = [`${border(frame.tl)}${ruleSegment}${border(frame.tr)}`];
 	const pushLine = (line: StructuredDiffLine, renderedLine: string) => {
 		const cell = ` ${padVisible(renderedLine, contentWidth)} `;
 		const bgToken = diffLineBgToken(line);
@@ -581,7 +598,7 @@ function renderUnifiedDiff(diff: StructuredDiff, rows: StructuredDiffLine[], wid
 			if (add) pushLine(add, renderUnifiedLine(add, contentWidth, numWidth, theme, path ?? diff.path, cwd, lineWordRanges(add, del ?? null, cwd)));
 		}
 	}
-	out.push(`${borderMuted(theme, frame.bl)}${ruleSegment}${borderMuted(theme, frame.br)}`);
+	out.push(`${border(frame.bl)}${ruleSegment}${border(frame.br)}`);
 	return out;
 }
 
@@ -666,15 +683,16 @@ function renderSplitDiff(diff: StructuredDiff, rows: StructuredDiffLine[], width
 	const maxNum = Math.max(1, ...diff.lines.map((line) => Math.max(line.oldNum ?? 0, line.newNum ?? 0)));
 	const numWidth = Math.max(2, String(maxNum).length);
 	const frame = diffFrame(cwd);
-	const leftBorder = borderMuted(theme, frame.v);
-	const divider = borderMuted(theme, frame.v);
-	const rightBorder = borderMuted(theme, frame.v);
+	const border = diffBorderStyler(theme, frame);
+	const leftBorder = border(frame.v);
+	const divider = border(frame.v);
+	const rightBorder = border(frame.v);
 	const innerWidth = Math.max(2, tableWidth - visibleLength(leftBorder) - visibleLength(divider) - visibleLength(rightBorder));
 	const leftCellWidth = Math.max(1, Math.floor(innerWidth / 2));
 	const rightCellWidth = Math.max(1, innerWidth - leftCellWidth);
-	const ruleSegment = (width: number) => borderMuted(theme, frame.h.repeat(Math.max(1, width)));
-	const topRule = `${borderMuted(theme, frame.tl)}${ruleSegment(leftCellWidth)}${borderMuted(theme, frame.tm)}${ruleSegment(rightCellWidth)}${borderMuted(theme, frame.tr)}`;
-	const bottomRule = `${borderMuted(theme, frame.bl)}${ruleSegment(leftCellWidth)}${borderMuted(theme, frame.joint)}${ruleSegment(rightCellWidth)}${borderMuted(theme, frame.br)}`;
+	const ruleSegment = (width: number) => border(frame.h.repeat(Math.max(1, width)));
+	const topRule = `${border(frame.tl)}${ruleSegment(leftCellWidth)}${border(frame.tm)}${ruleSegment(rightCellWidth)}${border(frame.tr)}`;
+	const bottomRule = `${border(frame.bl)}${ruleSegment(leftCellWidth)}${border(frame.joint)}${ruleSegment(rightCellWidth)}${border(frame.br)}`;
 	const out = [topRule];
 	for (const pair of pairDiffRows(rows)) {
 		const leftRanges = pair.left && pair.right ? lineWordRanges(pair.left, pair.right, cwd) : [];
