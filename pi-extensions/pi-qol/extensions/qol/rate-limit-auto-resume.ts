@@ -309,7 +309,7 @@ export function createRateLimitAutoResumeController(pi: ExtensionAPI, clock: Rat
 
 	const deliverPending = async (snapshot: PendingRateLimitResume, ctx: ExtensionContext): Promise<void> => {
 		if (pending !== snapshot) return;
-		if (snapshot.turnId !== turnId) {
+		if (snapshot.turnId !== turnId || !settingsEnabled(ctx)) {
 			clearPending();
 			return;
 		}
@@ -397,8 +397,8 @@ export function createRateLimitAutoResumeController(pi: ExtensionAPI, clock: Rat
 				model: stringValue(message.model),
 				provider: stringValue(message.provider),
 				reason: "assistant message",
-				resetAt: reset?.resetAt,
-				source: reset?.source ?? "message_end",
+				resetAt: reset?.resetAt ?? latestHint?.resetAt,
+				source: reset?.source ?? latestHint?.source ?? "message_end",
 			});
 		},
 		noteProviderResponse(event: any, _ctx: ExtensionContext): void {
@@ -408,8 +408,8 @@ export function createRateLimitAutoResumeController(pi: ExtensionAPI, clock: Rat
 				model: stringValue(event?.model?.id) ?? stringValue(event?.model),
 				provider: stringValue(event?.provider?.id) ?? stringValue(event?.provider),
 				reason: "HTTP 429",
-				resetAt: reset?.resetAt,
-				source: reset?.source ?? "after_provider_response",
+				resetAt: reset?.resetAt ?? latestHint?.resetAt,
+				source: reset?.source ?? latestHint?.source ?? "after_provider_response",
 			});
 		},
 		noteExternalRateLimitEvent(payload: unknown, _ctx: ExtensionContext): void {
@@ -426,8 +426,8 @@ export function createRateLimitAutoResumeController(pi: ExtensionAPI, clock: Rat
 				model: stringValue(event.model),
 				provider: stringValue(event.provider),
 				reason: stringValue(event.reason) ?? stringValue(event.rateLimitType),
-				resetAt,
-				source: stringValue(event.source) ?? RATE_LIMIT_AUTO_RESUME_EVENT,
+				resetAt: resetAt ?? latestHint?.resetAt,
+				source: stringValue(event.source) ?? latestHint?.source ?? RATE_LIMIT_AUTO_RESUME_EVENT,
 			});
 		},
 		renderPreviewLines(width: number): string[] {

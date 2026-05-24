@@ -110,6 +110,7 @@ test("schedules configured resume message at reset plus buffer", async () => {
 	const { clock, controller, ctx, notifications, sent } = makeHarness();
 	controller.noteAgentStart(ctx);
 	controller.noteExternalRateLimitEvent({ resetAtMs: clock.now() + 60_000, source: "test", status: "rejected" }, ctx);
+	controller.noteMessageEnd({ message: { errorMessage: "You're out of extra usage", role: "assistant", stopReason: "error" } }, ctx);
 	const scheduled = controller.noteAgentEnd({ messages: [{ errorMessage: "429 rate limit", role: "assistant" }] }, ctx);
 
 	expect(scheduled).toBe(true);
@@ -141,6 +142,21 @@ test("does not schedule after a successful assistant turn even if a transient 42
 
 	expect(scheduled).toBe(false);
 	expect(clock.timers).toHaveLength(0);
+});
+
+test("does not send a pending auto-resume after the setting is disabled", async () => {
+	writeQolConfig({ "rateLimitAutoResume.enabled": true });
+	const { clock, controller, ctx, sent } = makeHarness();
+	controller.noteAgentStart(ctx);
+	controller.noteExternalRateLimitEvent({ resetAtMs: clock.now() + 60_000, status: "rejected" }, ctx);
+	controller.noteAgentEnd({ messages: [{ errorMessage: "429 rate limit", role: "assistant" }] }, ctx);
+
+	writeQolConfig({ "rateLimitAutoResume.enabled": false });
+	clock.runNext();
+	await Promise.resolve();
+
+	expect(sent).toHaveLength(0);
+	expect(controller.renderPreviewLines(200)).toEqual([]);
 });
 
 test("cancels pending auto-resume when a newer turn starts", async () => {
