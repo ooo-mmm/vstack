@@ -41,10 +41,6 @@ struct FlowState<'a> {
     /// loop ticks the spinner overlay and drains input until the worker
     /// finishes; only then is normal input handling resumed.
     pending_work: Option<PendingWork>,
-    /// Set by `open_apply_stub` to defer the inline theme picker into the
-    /// main loop, which can safely suspend/restore the terminal between
-    /// frames. Drained next loop iteration.
-    pending_inline_apply: Option<String>,
 }
 
 /// Spinner tick interval. Drives both the spinner frame advance and the
@@ -69,6 +65,15 @@ enum PostWork {
     /// updater (which exits the process). Used when an update batch mixes
     /// content items with the vstack (cli) row.
     DoneThenCliUpdate(String),
+    /// Apply-picker outcome: leave the picker open, mark the just-applied
+    /// theme as active, and flash success or the error message.
+    ApplyPickerResult {
+        extra_name: String,
+        theme_id: String,
+        result: std::sync::Arc<
+            std::sync::Mutex<Option<anyhow::Result<crate::commands::apply::ApplyOutcome>>>,
+        >,
+    },
 }
 
 pub fn run_install_flow(
@@ -129,7 +134,6 @@ pub fn run_install_flow(
         source_selector,
         cli_update,
         pending_work: None,
-        pending_inline_apply: None,
     };
 
     if let Some(idx) = state
@@ -158,10 +162,6 @@ pub fn run_install_flow(
     let mut last_click: Option<std::time::Instant> = None;
 
     let result = loop {
-        if let Some(extra_name) = state.pending_inline_apply.take() {
-            run_apply_inline(&mut state, &extra_name)?;
-            terminal.clear()?;
-        }
         terminal.draw(|f| render::draw_tabbed_select(f, &mut state.select))?;
 
         // While a worker thread is running, tick the spinner instead of
@@ -791,6 +791,11 @@ fn handle_key(
         return handle_confirm_key(state, key);
     }
 
+    // Native theme-pack apply picker (modal; swallows all keys while open).
+    if state.select.apply_picker.is_some() {
+        return handle_apply_picker_key(state, key);
+    }
+
     // Filter input mode
     if state.select.filter_input_mode {
         match key.code {
@@ -869,7 +874,17 @@ fn handle_key(
             state.select.open_harness_dialog(&prev);
         }
         KeyCode::Enter | KeyCode::Char(' ') => {
-            toggle_cursor(state);
+            // On extras rows the checkbox dance is meaningless (extras have
+            // no install/uninstall state, only apply). Open the picker
+            // directly so Enter does what the user expects.
+            if matches!(
+                state.select.cursor_item().and_then(|i| i.kind),
+                Some(crate::config::ItemKind::Extra)
+            ) {
+                open_apply_stub(state);
+            } else {
+                toggle_cursor(state);
+            }
         }
         KeyCode::Char('a') => state.select.toggle_all_visible(),
         KeyCode::Char('c') => {
@@ -1150,163 +1165,138 @@ fn unlock_orphan_deps(select: &mut TabbedSelect, graph: &HashMap<String, Vec<Str
 // ── Confirm dialog construction ──────────────────────────────
 
 fn open_apply_stub(state: &mut FlowState) {
-    let mut names: Vec<String> = state
+    let cursor_extra = state
         .select
-        .marked_items()
-        .into_iter()
+        .cursor_item()
         .filter(|item| item.kind == Some(crate::config::ItemKind::Extra))
-        .map(|item| item.label.clone())
-        .collect();
-    names.sort();
-    names.dedup();
+        .map(|item| item.label.clone());
 
-    if names.is_empty() {
-        state.select.flash_message = Some("No extras selected to apply.".into());
-        return;
-    }
+    let extra_name = match cursor_extra {
+        Some(name) => name,
+        None => {
+            let mut names: Vec<String> = state
+                .select
+                .marked_items()
+                .into_iter()
+                .filter(|item| item.kind == Some(crate::config::ItemKind::Extra))
+                .map(|item| item.label.clone())
+                .collect();
+            names.sort();
+            names.dedup();
+            if names.len() != 1 {
+                state.select.flash_message = Some(
+                    "Move the cursor onto an extras row (or mark exactly one) and press Apply."
+                        .into(),
+                );
+                return;
+            }
+            names.into_iter().next().unwrap()
+        }
+    };
 
-    if names.len() > 1 {
-        state.select.flash_message = Some(format!(
-            "Apply runs one extra at a time; mark exactly one. Got: {}",
-            names.join(", ")
-        ));
-        return;
-    }
-
-    state.pending_inline_apply = Some(names.into_iter().next().unwrap());
+    open_apply_picker(state, &extra_name);
 }
 
-/// Drive an interactive theme picker for the given extra name by suspending
-/// the TUI, prompting on the shell, running `commands::apply::run`, then
-/// restoring the alt-screen. Mirrors the `run_cli_update_inline` lifecycle,
-/// but resumes the TUI instead of exiting the process.
-fn run_apply_inline(state: &mut FlowState, extra_name: &str) -> Result<()> {
-    let extras = state.items.extras.clone();
-    let extra = extras.iter().find(|e| e.name() == extra_name);
+/// Build the picker dialog from the discovered extra and stash it on the
+/// select state. Render and key handlers pick it up next frame.
+fn open_apply_picker(state: &mut FlowState, extra_name: &str) {
+    let extra = state
+        .items
+        .extras
+        .iter()
+        .find(|e| e.name() == extra_name)
+        .cloned();
     let Some(extra) = extra else {
         state.select.flash_message =
             Some(format!("extra `{extra_name}` not found in discovery cache"));
-        return Ok(());
+        return;
     };
-
-    let suspend = suspend_terminal_for_inline();
-    if let Err(err) = &suspend {
-        eprintln!("warning: could not fully suspend TUI for apply: {err}");
-    }
-
-    let pick_result = pick_and_apply_theme(extra);
-
-    let resume = resume_terminal_after_inline();
-    if let Err(err) = &resume {
-        eprintln!("warning: could not restore TUI after apply: {err}");
-    }
-
-    let _ = (suspend, resume);
-
-    state.select.flash_message = Some(match pick_result {
-        Ok(Some(msg)) => msg,
-        Ok(None) => format!("apply cancelled for `{extra_name}`"),
-        Err(err) => format!("apply failed for `{extra_name}`: {err}"),
-    });
-    Ok(())
-}
-
-fn suspend_terminal_for_inline() -> Result<()> {
-    io::stdout().execute(DisableMouseCapture)?;
-    io::stdout().execute(LeaveAlternateScreen)?;
-    terminal::disable_raw_mode()?;
-    Ok(())
-}
-
-fn resume_terminal_after_inline() -> Result<()> {
-    terminal::enable_raw_mode()?;
-    io::stdout().execute(EnterAlternateScreen)?;
-    io::stdout().execute(EnableMouseCapture)?;
-    Ok(())
-}
-
-fn pick_and_apply_theme(extra: &crate::extra::Extra) -> Result<Option<String>> {
-    use std::io::{BufRead as _, Write as _};
-
-    let themes = &extra.theme_pack.themes;
+    let themes = extra
+        .theme_pack
+        .themes
+        .iter()
+        .map(|t| crate::tui::multiselect::ApplyPickerTheme {
+            id: t.id.clone(),
+            display: t.display.clone(),
+        })
+        .collect::<Vec<_>>();
     if themes.is_empty() {
-        return Err(anyhow::anyhow!(
-            "extra `{}` declares no themes",
-            extra.name()
+        state.select.flash_message = Some(format!(
+            "extra `{extra_name}` declares no themes; nothing to apply."
         ));
+        return;
     }
-
-    let stdout = io::stdout();
-    let mut out = stdout.lock();
-    writeln!(out)?;
-    writeln!(out, "vstack apply: pick a theme from `{}`", extra.name())?;
-    writeln!(
-        out,
-        "  targets: {} (auto-detect; --target on the CLI to filter)",
-        extra.theme_pack.targets.join(", ")
-    )?;
-    writeln!(out, "  default: {}", extra.theme_pack.default_theme)?;
-    writeln!(out)?;
-    for (i, theme) in themes.iter().enumerate() {
-        let default_marker = if theme.id == extra.theme_pack.default_theme {
-            "  (default)"
-        } else {
-            ""
-        };
-        writeln!(
-            out,
-            "  {:>2}  {:<32}  {}{}",
-            i + 1,
-            theme.id,
-            theme.display,
-            default_marker
-        )?;
-    }
-    writeln!(out)?;
-    write!(
-        out,
-        "Pick a theme (number or id, blank=default, q=cancel): "
-    )?;
-    out.flush()?;
-    drop(out);
-
-    let stdin = io::stdin();
-    let mut line = String::new();
-    stdin.lock().read_line(&mut line)?;
-    let pick = line.trim();
-
-    if pick.eq_ignore_ascii_case("q") || pick.eq_ignore_ascii_case("quit") {
-        return Ok(None);
-    }
-
-    let theme_id = if pick.is_empty() {
-        extra.theme_pack.default_theme.clone()
-    } else if let Ok(idx) = pick.parse::<usize>() {
-        themes
-            .get(idx.saturating_sub(1))
-            .map(|t| t.id.clone())
-            .ok_or_else(|| {
-                anyhow::anyhow!("theme index {idx} out of range (1..={})", themes.len())
-            })?
-    } else {
-        themes
-            .iter()
-            .find(|t| t.id.eq_ignore_ascii_case(pick) || t.display.eq_ignore_ascii_case(pick))
-            .map(|t| t.id.clone())
-            .ok_or_else(|| anyhow::anyhow!("no theme matches `{pick}`"))?
-    };
-
-    crate::commands::apply::run(extra.name().to_string(), Some(theme_id.clone()), None, false, false, false)?;
-
-    let mut trash = String::new();
-    print!("\nPress enter to return to vstack...");
-    io::stdout().flush()?;
-    let _ = io::stdin().lock().read_line(&mut trash);
-    Ok(Some(format!(
-        "applied `{}` theme `{theme_id}`",
-        extra.name()
-    )))
+    let active_theme_id = crate::commands::apply::active_theme_id(extra_name);
+    let cursor = active_theme_id
+        .as_ref()
+        .and_then(|active| themes.iter().position(|t| &t.id == active))
+        .unwrap_or(0);
+    state.select.apply_picker = Some(crate::tui::multiselect::ApplyPickerDialog {
+        extra_name: extra_name.to_string(),
+        default_theme_id: extra.theme_pack.default_theme.clone(),
+        targets: extra.theme_pack.targets.clone(),
+        themes,
+        cursor,
+        scroll: 0,
+        active_theme_id,
+    });
 }
+
+fn handle_apply_picker_key(
+    state: &mut FlowState,
+    key: crossterm::event::KeyEvent,
+) -> Result<Option<InstallFlowResult>> {
+    let visible_rows = state
+        .select
+        .apply_picker_row_areas
+        .len()
+        .max(1);
+    let mut action: Option<ConfirmAction> = None;
+    if let Some(dialog) = state.select.apply_picker.as_mut() {
+        match key.code {
+            KeyCode::Up => dialog.move_cursor(-1),
+            KeyCode::Down => dialog.move_cursor(1),
+            KeyCode::PageUp => dialog.move_cursor(-(visible_rows as isize)),
+            KeyCode::PageDown => dialog.move_cursor(visible_rows as isize),
+            KeyCode::Home => dialog.cursor = 0,
+            KeyCode::End => {
+                if !dialog.themes.is_empty() {
+                    dialog.cursor = dialog.themes.len() - 1;
+                }
+            }
+            KeyCode::Esc => {
+                state.select.apply_picker = None;
+                return Ok(None);
+            }
+            KeyCode::Enter => {
+                if let Some(theme_id) = dialog.cursor_theme_id().map(str::to_string) {
+                    action = Some(ConfirmAction::ApplyExtraTheme {
+                        extra_name: dialog.extra_name.clone(),
+                        theme_id,
+                    });
+                }
+            }
+            KeyCode::Char(ch) => {
+                if let Some(idx) = dialog.themes.iter().position(|t| {
+                    t.id.chars().next().is_some_and(|c| c.eq_ignore_ascii_case(&ch))
+                }) {
+                    dialog.cursor = idx;
+                }
+            }
+            _ => {}
+        }
+        dialog.scroll_into_view(visible_rows);
+    }
+    if let Some(action) = action {
+        // Picker intentionally stays open so the user can switch themes in
+        // quick succession; PostWork::ApplyPickerResult updates the active
+        // marker on the still-open dialog and flashes the result.
+        return execute_action(state, action);
+    }
+    Ok(None)
+}
+
+/// Drive an interactive theme picker for the given extra name by suspending
 
 fn open_install_confirm(state: &mut FlowState) {
     let to_install = marked_install_items(&state.select);
@@ -1895,6 +1885,29 @@ fn execute_action(
 ) -> Result<Option<InstallFlowResult>> {
     match action {
         ConfirmAction::Acknowledge => Ok(None),
+        ConfirmAction::ApplyExtraTheme { extra_name, theme_id } => {
+            let label = format!("Applying `{theme_id}`\u{2026}");
+            let extra_for_post = extra_name.clone();
+            let theme_for_post = theme_id.clone();
+            let result_slot: std::sync::Arc<
+                std::sync::Mutex<Option<anyhow::Result<crate::commands::apply::ApplyOutcome>>>,
+            > = std::sync::Arc::new(std::sync::Mutex::new(None));
+            let result_writer = std::sync::Arc::clone(&result_slot);
+            spawn_work(
+                state,
+                label,
+                PostWork::ApplyPickerResult {
+                    extra_name: extra_for_post,
+                    theme_id: theme_for_post,
+                    result: result_slot,
+                },
+                move || {
+                    let res = crate::commands::apply::run_silent(extra_name, theme_id);
+                    *result_writer.lock().unwrap() = Some(res);
+                },
+            );
+            Ok(None)
+        }
         ConfirmAction::InstallMarked => {
             let result = build_install_selections(state);
             Ok(Some(InstallFlowResult::Install(result)))
@@ -2023,6 +2036,42 @@ where
 /// mutation that touches TUI state, the terminal, or process lifetime.
 fn apply_post_work(state: &mut FlowState<'_>, post: PostWork) -> Result<Option<InstallFlowResult>> {
     match post {
+        PostWork::ApplyPickerResult {
+            extra_name,
+            theme_id,
+            result,
+        } => {
+            let outcome = result.lock().ok().and_then(|mut g| g.take());
+            match outcome {
+                Some(Ok(apply_outcome)) => {
+                    if let Some(dialog) = state.select.apply_picker.as_mut() {
+                        if dialog.extra_name == extra_name {
+                            dialog.active_theme_id = Some(theme_id.clone());
+                        }
+                    }
+                    // Rebuild tabs so the extras list row picks up the new
+                    // "active: <theme>" suffix from the cache marker.
+                    rebuild_tabs(state);
+                    let base = format!("Applied {theme_id} ({extra_name})");
+                    let msg = if apply_outcome.notices.is_empty() {
+                        base
+                    } else {
+                        format!("{base} \u{2014} {}", apply_outcome.notices.join(" / "))
+                    };
+                    state.select.flash_message = Some(msg);
+                }
+                Some(Err(err)) => {
+                    state.select.flash_message =
+                        Some(format!("Apply failed for {theme_id}: {err}"));
+                }
+                None => {
+                    state.select.flash_message = Some(format!(
+                        "Apply finished but produced no result for {theme_id}"
+                    ));
+                }
+            }
+            Ok(None)
+        }
         PostWork::Done(flash) => {
             rebuild_tabs(state);
             state.select.flash_message = Some(flash);
@@ -2512,7 +2561,6 @@ mod tests {
             source_selector: &source_selector,
             cli_update: None,
             pending_work: None,
-        pending_inline_apply: None,
         };
 
         open_install_confirm(&mut state);
@@ -2584,7 +2632,6 @@ mod tests {
             source_selector: &source_selector,
             cli_update: None,
             pending_work: None,
-        pending_inline_apply: None,
         };
 
         handle_key(&mut state, key(KeyCode::Down)).unwrap();
