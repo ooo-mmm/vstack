@@ -31,6 +31,14 @@ A package manager for AI coding workflows. Skills, agents, and hooks live in a s
 
 ## Quick Start
 
+Requires Rust. If you don't have it, install [rustup](https://rustup.rs) (Linux/macOS/WSL):
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+Then:
+
 ```bash
 cargo install --git https://github.com/vanillagreencom/vstack.git vstack
 vstack add vanillagreencom/vstack
