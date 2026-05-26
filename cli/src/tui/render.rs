@@ -3337,7 +3337,7 @@ mod tests {
             "Package manager",
             vec![updates, agents_tab, skills_tab, installed_tab],
         );
-        select.source_label = Some("local: /mnt/Tertiary/dev/vstack/main".into());
+        select.source_label = Some("local: /mnt/Tertiary/dev/vstack".into());
         select.harness_selection.insert("claude-code".into(), true);
         select.harness_selection.insert("opencode".into(), true);
         select.harness_selection.insert("codex".into(), true);

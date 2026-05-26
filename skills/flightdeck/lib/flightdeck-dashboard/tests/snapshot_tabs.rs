@@ -284,7 +284,7 @@ fn mixed_daemon_tab() {
 fn daemon_tab_file_mode_message() {
     let mut model = common::model_for_tab(Tab::Daemon);
     model.snapshot.master_state_path =
-        std::path::PathBuf::from("/mnt/Tertiary/dev/vstack/main/tmp/flightdeck-state-VS.json");
+        std::path::PathBuf::from("/mnt/Tertiary/dev/vstack/tmp/flightdeck-state-VS.json");
     model.read_source_state = flightdeck_dashboard::app::model::ReadSourceState::LiveFile;
     let rendered = common::render_model(&model);
     assert!(rendered.contains("live state file"));
