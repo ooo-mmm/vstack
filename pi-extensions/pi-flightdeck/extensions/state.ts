@@ -11,9 +11,11 @@ import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync, s
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { findNewestTerminatedArchive, listTerminatedArchives } from "./state-archive.js";
+import { resolveActiveRunStatePath } from "./run-store.js";
 import { normalizeConflictGraph, normalizeDecisionsLog, normalizeOwner } from "./state-normalizers.js";
 
 export { findNewestTerminatedArchive, listTerminatedArchives } from "./state-archive.js";
+export { resetRunStoreCacheForTests } from "./run-store.js";
 
 export type TrackedState = "waiting" | "prompting" | "submitting" | "merge-ready" | "merged" | "aborted" | "dead" | "ready" | "complete" | "cancelled" | string;
 export type TrackedKind = "adhoc" | "issue" | "workflow" | string;
@@ -788,11 +790,13 @@ export interface OwnerVisibilityProbe {
 // Cheap preflight for non-owner widget suppression. Reads only tmux context
 // + the live master state's owner pane before `buildSnapshot` tails daemon
 // logs, wake events, subscribers, and terminated archives.
-export function readOwnerVisibilityProbe(cwd: string, settings: SettingsLike): OwnerVisibilityProbe | undefined {
-	const tmux = resolveTmuxContext();
+export function readOwnerVisibilityProbe(cwd: string, settings: SettingsLike, tmuxOverride?: TmuxContext): OwnerVisibilityProbe | undefined {
+	const tmux = tmuxOverride ?? resolveTmuxContext();
 	if (!tmux) return undefined;
 	const projectRoot = resolveProjectRoot(cwd);
-	const path = masterStatePath(projectRoot, settings, tmux.sessionName);
+	const active = resolveActiveRunStatePath(projectRoot, tmux.sessionName);
+	if (active.error) return { tmux };
+	const path = active.statePath ?? masterStatePath(projectRoot, settings, tmux.sessionName);
 	const { state } = readMasterState(path);
 	return { ownerPaneId: state?.owner?.pane_id, tmux };
 }
@@ -834,10 +838,16 @@ export function readAwaitingWatchTrackedEntries(snapshot: FlightdeckSnapshot | u
 
 export function buildSnapshotFromInputs(inputs: BuildSnapshotInputs, settings: SettingsLike, options?: { logTailLines?: number; wakeEventsLines?: number }): FlightdeckSnapshot {
 	const { projectRoot, stateDir, tmux } = inputs;
-	const liveStatePath = masterStatePath(projectRoot, settings, tmux.sessionName);
+	const active = resolveActiveRunStatePath(projectRoot, tmux.sessionName);
+	const liveStatePath = active.statePath ?? masterStatePath(projectRoot, settings, tmux.sessionName);
 	let resolvedStatePath = liveStatePath;
 	let archiveError = false;
-	let { state, error } = readMasterState(liveStatePath);
+	let { state, error } = active.error ? { state: undefined, error: active.error } : readMasterState(liveStatePath);
+	if (active.error && active.diagnosticPath) resolvedStatePath = active.diagnosticPath;
+	if (active.statePath && !state && !error && !existsSync(active.statePath)) {
+		error = `active run state missing: ${active.statePath}`;
+		resolvedStatePath = active.statePath;
+	}
 	// Archive fallback (issue #17 BLOCKER #1, refined in rounds 3 and 4).
 	// When the live file is missing, walk the master-state directory's
 	// terminated archives newest-first and serve the first VALID
@@ -847,8 +857,11 @@ export function buildSnapshotFromInputs(inputs: BuildSnapshotInputs, settings: S
 	// A non-ENOENT readdir error (permission denied / IO) also surfaces
 	// as a diagnostic so the user sees "state was lost" instead of
 	// silently falling back to inactive. Live state always wins when
-	// present, so the fallback never shadows an in-flight session.
-	if (!state && !error) {
+	// present, so the fallback never shadows an in-flight session. The
+	// durable active-run pointer also wins when present, even if its
+	// current state is empty; archived runs are history, not live widget
+	// input.
+	if (!state && !error && !active.statePath) {
 		const dir = masterStateDir(projectRoot, settings);
 		const listing = listTerminatedArchives(dir, tmux.sessionName);
 		const failures: Array<{ path: string; reason: string }> = [];

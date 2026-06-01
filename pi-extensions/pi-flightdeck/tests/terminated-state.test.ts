@@ -24,9 +24,10 @@
 // and active-run policy (terminated archives do not render inline by default).
 
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join, resolve } from "node:path";
 import test from "node:test";
 import {
 	buildSnapshotFromInputs,
@@ -35,7 +36,10 @@ import {
 	flightdeckSessionStatus,
 	mergedIssueHistory,
 	readMasterState,
+	readOwnerVisibilityProbe,
 	readTrackedEntries,
+	resetRunStoreCacheForTests,
+	resetTmuxContextCacheForTests,
 	type SettingsLike,
 	type TmuxContext,
 } from "../extensions/state.js";
@@ -73,6 +77,84 @@ function simulateTerminateArchive(stateDir: string, sessionName: string, payload
 	const archive = join(stateDir, `flightdeck-state-${sessionName}-${safe}.json.archive`);
 	renameSync(live, archive);
 	return { archive, live };
+}
+
+function sha256(value: string): string {
+	return createHash("sha256").update(value).digest("hex");
+}
+
+function safeSegment(value: string, fallback = "project"): string {
+	const cleaned = value.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48);
+	return cleaned || fallback;
+}
+
+function projectIdentityForTest(projectRoot: string): { projectId: string; name: string; root: string; rootHash: string } {
+	const root = resolve(projectRoot);
+	const rootHash = sha256(root);
+	const name = basename(root) || "project";
+	return { name, projectId: `${safeSegment(name)}-${sha256(rootHash).slice(0, 16)}`, root, rootHash };
+}
+
+function writeJson0600(path: string, payload: Record<string, unknown>): void {
+	writeFileSync(path, JSON.stringify(payload), { encoding: "utf8", mode: 0o600 });
+	chmodSync(path, 0o600);
+}
+
+function activePointerPathForTest(runStoreRoot: string, projectRoot: string, sessionName: string): string {
+	return join(runStoreRoot, "projects", projectIdentityForTest(projectRoot).projectId, "active-runs", `${sessionName}.json`);
+}
+
+function writeDurableActiveRunState(runStoreRoot: string, projectRoot: string, sessionName: string, payload: Record<string, unknown>, runId = "run-current"): string {
+	const identity = projectIdentityForTest(projectRoot);
+	const projectId = identity.projectId;
+	const projectDir = join(runStoreRoot, "projects", projectId);
+	const runDir = join(projectDir, "runs", runId);
+	mkdirSync(join(projectDir, "active-runs"), { recursive: true });
+	mkdirSync(runDir, { recursive: true });
+	const now = "2026-05-13T00:30:00Z";
+	writeJson0600(join(projectDir, "project.json"), {
+		created_at: now,
+		id_source: "root",
+		last_seen_at: now,
+		name: identity.name,
+		project_id: projectId,
+		remote_url: null,
+		root_hash: identity.rootHash,
+		root_path: identity.root,
+		schema_version: 1,
+	});
+	const statePath = join(runDir, "state.json");
+	const activityPath = join(runDir, "activity.jsonl");
+	const snapshotsPath = join(runDir, "snapshots");
+	writeJson0600(statePath, payload);
+	writeJson0600(join(runDir, "metadata.json"), {
+		activity_path: activityPath,
+		imported: false,
+		imported_from: null,
+		last_seen_at: now,
+		legacy_activity_path: null,
+		project_id: projectId,
+		project_root: identity.root,
+		run_id: runId,
+		schema_version: 1,
+		snapshots_path: snapshotsPath,
+		started_at: now,
+		state_path: statePath,
+		summary_path: null,
+		terminated: false,
+		terminated_at: null,
+		tmux_session: sessionName,
+	});
+	writeJson0600(join(projectDir, "active-runs", `${sessionName}.json`), {
+		activity_path: join(runDir, "activity.jsonl"),
+		project_id: projectId,
+		run_id: runId,
+		schema_version: 1,
+		state_path: statePath,
+		tmux_session: sessionName,
+		updated_at: now,
+	});
+	return statePath;
 }
 
 interface MergedRecordOverrides {
@@ -327,6 +409,1037 @@ test("buildSnapshotFromInputs prefers live file over archive when both exist (no
 		assert.notEqual(flightdeckSessionStatus(snapshot), "terminated");
 		assert.notEqual(flightdeckSessionStatus(snapshot), "inactive");
 	} finally {
+		cleanup();
+	}
+});
+
+test("buildSnapshotFromInputs prefers durable active run over legacy terminated archive", () => {
+	const { projectRoot, stateDir, tmpDir, cleanup } = makeProject();
+	const previousRunStoreRoot = process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	const runStoreRoot = mkdtempSync(join(tmpdir(), "pi-flightdeck-run-store-"));
+	process.env.FLIGHTDECK_RUN_STORE_ROOT = runStoreRoot;
+	resetRunStoreCacheForTests();
+	try {
+		simulateTerminateArchive(tmpDir, "HT", terminatedPayload({
+			"OLD-1": makeMergedIssueRecord("OLD-1"),
+		}));
+		const activeStatePath = writeDurableActiveRunState(runStoreRoot, projectRoot, "HT", {
+			conflict_graph: { computed_at: null, edges: [] },
+			entries: {},
+			merge_queue: [],
+			paused_for_user: null,
+			started_at: "2026-05-13T00:30:00Z",
+			terminated: false,
+		});
+
+		const snapshot = buildSnapshotFromInputs({ projectRoot, stateDir, tmux: TMUX }, SETTINGS);
+
+		assert.equal(snapshot.masterStatePath, activeStatePath);
+		assert.equal(snapshot.master?.terminated, false);
+		assert.equal(readTrackedEntries(snapshot.master).length, 0);
+		assert.equal(snapshot.master?.issues["OLD-1"], undefined, "archived entries must not leak into a fresh empty active run");
+		assert.equal(flightdeckSessionStatus(snapshot), "inactive");
+	} finally {
+		if (previousRunStoreRoot === undefined) delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+		else process.env.FLIGHTDECK_RUN_STORE_ROOT = previousRunStoreRoot;
+		resetRunStoreCacheForTests();
+		rmSync(runStoreRoot, { force: true, recursive: true });
+		cleanup();
+	}
+});
+
+test("buildSnapshotFromInputs prefers durable active run over stale legacy live file", () => {
+	const { projectRoot, stateDir, tmpDir, cleanup } = makeProject();
+	const previousRunStoreRoot = process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	const runStoreRoot = mkdtempSync(join(tmpdir(), "pi-flightdeck-run-store-"));
+	process.env.FLIGHTDECK_RUN_STORE_ROOT = runStoreRoot;
+	resetRunStoreCacheForTests();
+	try {
+		writeLive(tmpDir, "HT", {
+			conflict_graph: { computed_at: null, edges: [] },
+			entries: { "LEGACY-1": makeMergedIssueRecord("LEGACY-1", { state: "waiting" }) },
+			merge_queue: [],
+			paused_for_user: null,
+			started_at: "2026-05-12T00:00:00Z",
+			terminated: false,
+		});
+		const activeStatePath = writeDurableActiveRunState(runStoreRoot, projectRoot, "HT", {
+			conflict_graph: { computed_at: null, edges: [] },
+			entries: {},
+			merge_queue: [],
+			paused_for_user: null,
+			started_at: "2026-05-13T00:30:00Z",
+			terminated: false,
+		});
+
+		const snapshot = buildSnapshotFromInputs({ projectRoot, stateDir, tmux: TMUX }, SETTINGS);
+
+		assert.equal(snapshot.masterStatePath, activeStatePath);
+		assert.equal(readTrackedEntries(snapshot.master).length, 0);
+		assert.equal(snapshot.master?.entries?.["LEGACY-1"], undefined, "legacy live file must not shadow durable active run");
+	} finally {
+		if (previousRunStoreRoot === undefined) delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+		else process.env.FLIGHTDECK_RUN_STORE_ROOT = previousRunStoreRoot;
+		resetRunStoreCacheForTests();
+		rmSync(runStoreRoot, { force: true, recursive: true });
+		cleanup();
+	}
+});
+
+test("buildSnapshotFromInputs honors FLIGHTDECK_RUN_STORE_ROOT from .env.local over stale legacy live file", () => {
+	const { projectRoot, stateDir, tmpDir, cleanup } = makeProject();
+	const previousRunStoreRoot = process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	const runStoreRoot = mkdtempSync(join(tmpdir(), "pi-flightdeck-run-store-env-"));
+	delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	writeFileSync(join(projectRoot, ".env.local"), `FLIGHTDECK_RUN_STORE_ROOT=${runStoreRoot}\n`, "utf8");
+	resetRunStoreCacheForTests();
+	try {
+		writeLive(tmpDir, "HT", {
+			conflict_graph: { computed_at: null, edges: [] },
+			entries: { "LEGACY-1": makeMergedIssueRecord("LEGACY-1", { state: "waiting" }) },
+			merge_queue: [],
+			paused_for_user: null,
+			started_at: "2026-05-12T00:00:00Z",
+			terminated: false,
+		});
+		const activeStatePath = writeDurableActiveRunState(runStoreRoot, projectRoot, "HT", {
+			conflict_graph: { computed_at: null, edges: [] },
+			entries: {},
+			merge_queue: [],
+			paused_for_user: null,
+			started_at: "2026-05-13T00:30:00Z",
+			terminated: false,
+		});
+
+		const snapshot = buildSnapshotFromInputs({ projectRoot, stateDir, tmux: TMUX }, SETTINGS);
+
+		assert.equal(snapshot.masterStatePath, activeStatePath);
+		assert.equal(readTrackedEntries(snapshot.master).length, 0);
+		assert.equal(snapshot.master?.entries?.["LEGACY-1"], undefined, ".env run-store active run must not be shadowed by stale legacy state");
+	} finally {
+		if (previousRunStoreRoot === undefined) delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+		else process.env.FLIGHTDECK_RUN_STORE_ROOT = previousRunStoreRoot;
+		resetRunStoreCacheForTests();
+		rmSync(runStoreRoot, { force: true, recursive: true });
+		cleanup();
+	}
+});
+
+test("project .env run-store override does not leak into a later project without override", () => {
+	const first = makeProject();
+	const second = makeProject();
+	const previousRunStoreRoot = process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	const firstRunStoreRoot = mkdtempSync(join(tmpdir(), "pi-flightdeck-run-store-first-"));
+	const secondRunStoreRoot = mkdtempSync(join(tmpdir(), "pi-flightdeck-run-store-second-"));
+	process.env.FLIGHTDECK_RUN_STORE_ROOT = secondRunStoreRoot;
+	writeFileSync(join(first.projectRoot, ".env.local"), `FLIGHTDECK_RUN_STORE_ROOT=${firstRunStoreRoot}\n`, "utf8");
+	resetRunStoreCacheForTests();
+	try {
+		const firstActiveStatePath = writeDurableActiveRunState(firstRunStoreRoot, first.projectRoot, "HT", {
+			conflict_graph: { computed_at: null, edges: [] },
+			entries: {},
+			merge_queue: [],
+			paused_for_user: null,
+			terminated: false,
+		});
+		writeLive(second.tmpDir, "HT", {
+			conflict_graph: { computed_at: null, edges: [] },
+			entries: { "LEGACY-2": makeMergedIssueRecord("LEGACY-2", { state: "waiting" }) },
+			merge_queue: [],
+			paused_for_user: null,
+			terminated: false,
+		});
+		const secondActiveStatePath = writeDurableActiveRunState(secondRunStoreRoot, second.projectRoot, "HT", {
+			conflict_graph: { computed_at: null, edges: [] },
+			entries: {},
+			merge_queue: [],
+			paused_for_user: null,
+			terminated: false,
+		});
+
+		const firstSnapshot = buildSnapshotFromInputs({ projectRoot: first.projectRoot, stateDir: first.stateDir, tmux: TMUX }, SETTINGS);
+		const secondSnapshot = buildSnapshotFromInputs({ projectRoot: second.projectRoot, stateDir: second.stateDir, tmux: TMUX }, SETTINGS);
+
+		assert.equal(process.env.FLIGHTDECK_RUN_STORE_ROOT, secondRunStoreRoot, ".env override must stay scoped and not mutate process.env");
+		assert.equal(firstSnapshot.masterStatePath, firstActiveStatePath);
+		assert.equal(secondSnapshot.masterStatePath, secondActiveStatePath);
+		assert.equal(secondSnapshot.master?.entries?.["LEGACY-2"], undefined, "first project override must not make second project fall back to stale legacy state");
+	} finally {
+		if (previousRunStoreRoot === undefined) delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+		else process.env.FLIGHTDECK_RUN_STORE_ROOT = previousRunStoreRoot;
+		resetRunStoreCacheForTests();
+		rmSync(firstRunStoreRoot, { force: true, recursive: true });
+		rmSync(secondRunStoreRoot, { force: true, recursive: true });
+		first.cleanup();
+		second.cleanup();
+	}
+});
+
+test("blank project FLIGHTDECK_RUN_STORE_ROOT uses default store instead of inherited stale root", () => {
+	const { projectRoot, stateDir, tmpDir, cleanup } = makeProject();
+	const previousRunStoreRoot = process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	const previousHome = process.env.HOME;
+	const staleRunStoreRoot = mkdtempSync(join(tmpdir(), "pi-flightdeck-run-store-stale-"));
+	const home = mkdtempSync(join(tmpdir(), "pi-flightdeck-home-"));
+	const defaultRunStoreRoot = join(home, ".vstack", "flightdeck");
+	process.env.FLIGHTDECK_RUN_STORE_ROOT = staleRunStoreRoot;
+	process.env.HOME = home;
+	writeFileSync(join(projectRoot, ".env.local"), "FLIGHTDECK_RUN_STORE_ROOT=\n", "utf8");
+	resetRunStoreCacheForTests();
+	try {
+		writeLive(tmpDir, "HT", {
+			conflict_graph: { computed_at: null, edges: [] },
+			entries: { "LEGACY-1": makeMergedIssueRecord("LEGACY-1", { state: "waiting" }) },
+			merge_queue: [],
+			paused_for_user: null,
+			terminated: false,
+		});
+		const activeStatePath = writeDurableActiveRunState(defaultRunStoreRoot, projectRoot, "HT", {
+			conflict_graph: { computed_at: null, edges: [] },
+			entries: {},
+			merge_queue: [],
+			paused_for_user: null,
+			terminated: false,
+		});
+
+		const snapshot = buildSnapshotFromInputs({ projectRoot, stateDir, tmux: TMUX }, SETTINGS);
+
+		assert.equal(snapshot.masterStatePath, activeStatePath);
+		assert.equal(snapshot.master?.entries?.["LEGACY-1"], undefined, "blank project override must suppress inherited stale run-store root");
+	} finally {
+		if (previousRunStoreRoot === undefined) delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+		else process.env.FLIGHTDECK_RUN_STORE_ROOT = previousRunStoreRoot;
+		if (previousHome === undefined) delete process.env.HOME;
+		else process.env.HOME = previousHome;
+		resetRunStoreCacheForTests();
+		rmSync(staleRunStoreRoot, { force: true, recursive: true });
+		rmSync(home, { force: true, recursive: true });
+		cleanup();
+	}
+});
+
+test("project .env shell override wins over inherited stale FLIGHTDECK_RUN_STORE_ROOT", () => {
+	const { projectRoot, stateDir, tmpDir, cleanup } = makeProject();
+	const previousRunStoreRoot = process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	const staleRunStoreRoot = mkdtempSync(join(tmpdir(), "pi-flightdeck-run-store-stale-"));
+	const projectRunStoreRoot = mkdtempSync(join(tmpdir(), "pi-flightdeck-run-store-shell-"));
+	process.env.FLIGHTDECK_RUN_STORE_ROOT = staleRunStoreRoot;
+	writeFileSync(join(projectRoot, ".env.local"), `CUSTOM_ROOT=${projectRunStoreRoot}\nFLIGHTDECK_RUN_STORE_ROOT="$CUSTOM_ROOT"\n`, "utf8");
+	resetRunStoreCacheForTests();
+	try {
+		writeLive(tmpDir, "HT", {
+			conflict_graph: { computed_at: null, edges: [] },
+			entries: { "LEGACY-1": makeMergedIssueRecord("LEGACY-1", { state: "waiting" }) },
+			merge_queue: [],
+			paused_for_user: null,
+			terminated: false,
+		});
+		const activeStatePath = writeDurableActiveRunState(projectRunStoreRoot, projectRoot, "HT", {
+			conflict_graph: { computed_at: null, edges: [] },
+			entries: {},
+			merge_queue: [],
+			paused_for_user: null,
+			terminated: false,
+		});
+
+		const snapshot = buildSnapshotFromInputs({ projectRoot, stateDir, tmux: TMUX }, SETTINGS);
+
+		assert.equal(snapshot.masterStatePath, activeStatePath);
+		assert.equal(snapshot.master?.entries?.["LEGACY-1"], undefined, "shell-expanded .env override must beat inherited stale run-store root");
+	} finally {
+		if (previousRunStoreRoot === undefined) delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+		else process.env.FLIGHTDECK_RUN_STORE_ROOT = previousRunStoreRoot;
+		resetRunStoreCacheForTests();
+		rmSync(staleRunStoreRoot, { force: true, recursive: true });
+		rmSync(projectRunStoreRoot, { force: true, recursive: true });
+		cleanup();
+	}
+});
+
+test("project .env run-store assignment with whitespace around equals fails closed", () => {
+	const { projectRoot, stateDir, tmpDir, cleanup } = makeProject();
+	const previousRunStoreRoot = process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	const runStoreRoot = mkdtempSync(join(tmpdir(), "pi-flightdeck-run-store-spaced-equals-"));
+	delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	writeFileSync(join(projectRoot, ".env.local"), `FLIGHTDECK_RUN_STORE_ROOT = ${runStoreRoot}\n`, "utf8");
+	resetRunStoreCacheForTests();
+	try {
+		writeLive(tmpDir, "HT", {
+			conflict_graph: { computed_at: null, edges: [] },
+			entries: { "LEGACY-1": makeMergedIssueRecord("LEGACY-1", { state: "waiting" }) },
+			merge_queue: [],
+			paused_for_user: null,
+			terminated: false,
+		});
+		writeDurableActiveRunState(runStoreRoot, projectRoot, "HT", {
+			conflict_graph: { computed_at: null, edges: [] },
+			entries: {},
+			merge_queue: [],
+			paused_for_user: null,
+			terminated: false,
+		});
+
+		const snapshot = buildSnapshotFromInputs({ projectRoot, stateDir, tmux: TMUX }, SETTINGS);
+
+		assert.equal(flightdeckSessionStatus(snapshot), "state-error");
+		assert.match(snapshot.masterError ?? "", /unsupported whitespace around assignment/);
+		assert.equal(snapshot.master?.entries?.["LEGACY-1"], undefined);
+	} finally {
+		if (previousRunStoreRoot === undefined) delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+		else process.env.FLIGHTDECK_RUN_STORE_ROOT = previousRunStoreRoot;
+		resetRunStoreCacheForTests();
+		rmSync(runStoreRoot, { force: true, recursive: true });
+		cleanup();
+	}
+});
+
+test("project .env unsupported run-store assignment forms fail closed", () => {
+	const cases = [
+		"FLIGHTDECK_RUN_STORE_ROOT+=/tmp/unsupported\n",
+		"FLIGHTDECK_RUN_STORE_ROOT[0]=/tmp/unsupported\n",
+		"FLIGHTDECK_RUN_STORE_ROOT=/tmp/unsupported\nunset FLIGHTDECK_RUN_STORE_ROOT\n",
+		": ${FLIGHTDECK_RUN_STORE_ROOT:=/tmp/unsupported}\n",
+	];
+	const previousRunStoreRoot = process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	try {
+		for (const envText of cases) {
+			const { projectRoot, stateDir, tmpDir, cleanup } = makeProject();
+			resetRunStoreCacheForTests();
+			try {
+				writeFileSync(join(projectRoot, ".env.local"), envText, "utf8");
+				writeLive(tmpDir, "HT", {
+					conflict_graph: { computed_at: null, edges: [] },
+					entries: { "LEGACY-1": makeMergedIssueRecord("LEGACY-1", { state: "waiting" }) },
+					merge_queue: [],
+					paused_for_user: null,
+					terminated: false,
+				});
+
+				const snapshot = buildSnapshotFromInputs({ projectRoot, stateDir, tmux: TMUX }, SETTINGS);
+
+				assert.equal(flightdeckSessionStatus(snapshot), "state-error", envText.trim());
+				assert.match(snapshot.masterError ?? "", /unsupported (.*FLIGHTDECK_RUN_STORE_ROOT|\.env directive|\.env assignment)/, envText.trim());
+				assert.equal(snapshot.master?.entries?.["LEGACY-1"], undefined, envText.trim());
+			} finally {
+				resetRunStoreCacheForTests();
+				cleanup();
+			}
+		}
+	} finally {
+		if (previousRunStoreRoot === undefined) delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+		else process.env.FLIGHTDECK_RUN_STORE_ROOT = previousRunStoreRoot;
+		resetRunStoreCacheForTests();
+	}
+});
+
+test("project .env unsupported helper assignment referenced by run-store fails closed", () => {
+	const cases = [
+		"CUSTOM_ROOT=/tmp/unsupported\nCUSTOM_ROOT+=-suffix\nFLIGHTDECK_RUN_STORE_ROOT=$CUSTOM_ROOT\n",
+		"CUSTOM_ROOT=/tmp/unsupported\nCUSTOM_ROOT[0]=/tmp/unsupported\nFLIGHTDECK_RUN_STORE_ROOT=$CUSTOM_ROOT\n",
+		"CUSTOM_ROOT=/tmp/unsupported\nCUSTOM_ROOT[0]+=-suffix\nFLIGHTDECK_RUN_STORE_ROOT=$CUSTOM_ROOT\n",
+		"CUSTOM_ROOT=/tmp/unsupported\nunset CUSTOM_ROOT\nFLIGHTDECK_RUN_STORE_ROOT=$CUSTOM_ROOT\n",
+		": ${CUSTOM_ROOT:=/tmp/unsupported}\nFLIGHTDECK_RUN_STORE_ROOT=$CUSTOM_ROOT\n",
+	];
+	const previousRunStoreRoot = process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	try {
+		for (const envText of cases) {
+			const { projectRoot, stateDir, tmpDir, cleanup } = makeProject();
+			resetRunStoreCacheForTests();
+			try {
+				writeFileSync(join(projectRoot, ".env.local"), envText, "utf8");
+				writeLive(tmpDir, "HT", {
+					conflict_graph: { computed_at: null, edges: [] },
+					entries: { "LEGACY-1": makeMergedIssueRecord("LEGACY-1", { state: "waiting" }) },
+					merge_queue: [],
+					paused_for_user: null,
+					terminated: false,
+				});
+
+				const snapshot = buildSnapshotFromInputs({ projectRoot, stateDir, tmux: TMUX }, SETTINGS);
+
+				assert.equal(flightdeckSessionStatus(snapshot), "state-error", envText.trim());
+				assert.match(snapshot.masterError ?? "", /unsupported (assignment for CUSTOM_ROOT|variable reference CUSTOM_ROOT|\.env assignment|\.env directive)/, envText.trim());
+				assert.equal(snapshot.master?.entries?.["LEGACY-1"], undefined, envText.trim());
+			} finally {
+				resetRunStoreCacheForTests();
+				cleanup();
+			}
+		}
+	} finally {
+		if (previousRunStoreRoot === undefined) delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+		else process.env.FLIGHTDECK_RUN_STORE_ROOT = previousRunStoreRoot;
+		resetRunStoreCacheForTests();
+	}
+});
+
+test("project .env source-provided run-store root fails closed before legacy fallback", () => {
+	const cases = [
+		"source ./flightdeck.env",
+		". ./flightdeck.env",
+		"source${IFS}./flightdeck.env",
+		".${IFS}./flightdeck.env",
+		"source${IFS:- }./flightdeck.env",
+		".${IFS:- }./flightdeck.env",
+		"\\source ./flightdeck.env",
+		"\\. ./flightdeck.env",
+		"source${SPACE}./flightdeck.env",
+		".${SPACE}./flightdeck.env",
+	];
+	const previousRunStoreRoot = process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	try {
+		for (const directive of cases) {
+			const { projectRoot, stateDir, tmpDir, cleanup } = makeProject();
+			const runStoreRoot = mkdtempSync(join(tmpdir(), "pi-flightdeck-run-store-sourced-"));
+			resetRunStoreCacheForTests();
+			try {
+				writeFileSync(join(projectRoot, ".env.local"), `${directive}\n`, "utf8");
+				writeFileSync(join(projectRoot, "flightdeck.env"), `FLIGHTDECK_RUN_STORE_ROOT=${runStoreRoot}\n`, "utf8");
+				writeLive(tmpDir, "HT", {
+					conflict_graph: { computed_at: null, edges: [] },
+					entries: { "LEGACY-1": makeMergedIssueRecord("LEGACY-1", { state: "waiting" }) },
+					merge_queue: [],
+					paused_for_user: null,
+					terminated: false,
+				});
+				writeDurableActiveRunState(runStoreRoot, projectRoot, "HT", {
+					conflict_graph: { computed_at: null, edges: [] },
+					entries: {},
+					merge_queue: [],
+					paused_for_user: null,
+					terminated: false,
+				});
+
+				const snapshot = buildSnapshotFromInputs({ projectRoot, stateDir, tmux: TMUX }, SETTINGS);
+
+				assert.equal(flightdeckSessionStatus(snapshot), "state-error", directive);
+				assert.match(snapshot.masterError ?? "", /unsupported (env-mutating directive|\.env directive)/, directive);
+				assert.equal(snapshot.master?.entries?.["LEGACY-1"], undefined, directive);
+			} finally {
+				resetRunStoreCacheForTests();
+				rmSync(runStoreRoot, { force: true, recursive: true });
+				cleanup();
+			}
+		}
+	} finally {
+		if (previousRunStoreRoot === undefined) delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+		else process.env.FLIGHTDECK_RUN_STORE_ROOT = previousRunStoreRoot;
+		resetRunStoreCacheForTests();
+	}
+});
+
+test("project .env source-tainted helper reference fails closed before legacy fallback", () => {
+	const cases = ["source ./flightdeck.env", ". ./flightdeck.env"];
+	const previousRunStoreRoot = process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	try {
+		for (const directive of cases) {
+			const { projectRoot, stateDir, tmpDir, cleanup } = makeProject();
+			const runStoreRoot = mkdtempSync(join(tmpdir(), "pi-flightdeck-run-store-source-taint-"));
+			resetRunStoreCacheForTests();
+			try {
+				writeFileSync(join(projectRoot, ".env.local"), `CUSTOM_ROOT=${runStoreRoot}\n${directive}\nFLIGHTDECK_RUN_STORE_ROOT=$CUSTOM_ROOT\n`, "utf8");
+				writeFileSync(join(projectRoot, "flightdeck.env"), "CUSTOM_ROOT=/tmp/source-mutated-root\n", "utf8");
+				writeLive(tmpDir, "HT", {
+					conflict_graph: { computed_at: null, edges: [] },
+					entries: { "LEGACY-1": makeMergedIssueRecord("LEGACY-1", { state: "waiting" }) },
+					merge_queue: [],
+					paused_for_user: null,
+					terminated: false,
+				});
+				writeDurableActiveRunState(runStoreRoot, projectRoot, "HT", {
+					conflict_graph: { computed_at: null, edges: [] },
+					entries: {},
+					merge_queue: [],
+					paused_for_user: null,
+					terminated: false,
+				});
+
+				const snapshot = buildSnapshotFromInputs({ projectRoot, stateDir, tmux: TMUX }, SETTINGS);
+
+				assert.equal(flightdeckSessionStatus(snapshot), "state-error", directive);
+				assert.match(snapshot.masterError ?? "", /unsupported (variable reference CUSTOM_ROOT|env-mutating directive|\.env directive)/, directive);
+				assert.equal(snapshot.master?.entries?.["LEGACY-1"], undefined, directive);
+			} finally {
+				resetRunStoreCacheForTests();
+				rmSync(runStoreRoot, { force: true, recursive: true });
+				cleanup();
+			}
+		}
+	} finally {
+		if (previousRunStoreRoot === undefined) delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+		else process.env.FLIGHTDECK_RUN_STORE_ROOT = previousRunStoreRoot;
+		resetRunStoreCacheForTests();
+	}
+});
+
+test("project .env array-style run-store value fails closed before legacy fallback", () => {
+	const { projectRoot, stateDir, tmpDir, cleanup } = makeProject();
+	const previousRunStoreRoot = process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	writeFileSync(join(projectRoot, ".env.local"), "FLIGHTDECK_RUN_STORE_ROOT=(/tmp/unsupported)\n", "utf8");
+	resetRunStoreCacheForTests();
+	try {
+		writeLive(tmpDir, "HT", {
+			conflict_graph: { computed_at: null, edges: [] },
+			entries: { "LEGACY-1": makeMergedIssueRecord("LEGACY-1", { state: "waiting" }) },
+			merge_queue: [],
+			paused_for_user: null,
+			terminated: false,
+		});
+
+		const snapshot = buildSnapshotFromInputs({ projectRoot, stateDir, tmux: TMUX }, SETTINGS);
+
+		assert.equal(flightdeckSessionStatus(snapshot), "state-error");
+		assert.match(snapshot.masterError ?? "", /unsupported shell expansion/);
+		assert.equal(snapshot.master?.entries?.["LEGACY-1"], undefined);
+	} finally {
+		if (previousRunStoreRoot === undefined) delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+		else process.env.FLIGHTDECK_RUN_STORE_ROOT = previousRunStoreRoot;
+		resetRunStoreCacheForTests();
+		cleanup();
+	}
+});
+
+test("project .env escaped run-store root fails closed before legacy fallback", () => {
+	const { projectRoot, stateDir, tmpDir, cleanup } = makeProject();
+	const previousRunStoreRoot = process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	writeFileSync(join(projectRoot, ".env.local"), "FLIGHTDECK_RUN_STORE_ROOT=\\/tmp/pi-fd-root\n", "utf8");
+	resetRunStoreCacheForTests();
+	try {
+		writeLive(tmpDir, "HT", {
+			conflict_graph: { computed_at: null, edges: [] },
+			entries: { "LEGACY-1": makeMergedIssueRecord("LEGACY-1", { state: "waiting" }) },
+			merge_queue: [],
+			paused_for_user: null,
+			terminated: false,
+		});
+
+		const snapshot = buildSnapshotFromInputs({ projectRoot, stateDir, tmux: TMUX }, SETTINGS);
+
+		assert.equal(flightdeckSessionStatus(snapshot), "state-error");
+		assert.match(snapshot.masterError ?? "", /unsupported escape syntax/);
+		assert.equal(snapshot.master?.entries?.["LEGACY-1"], undefined);
+	} finally {
+		if (previousRunStoreRoot === undefined) delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+		else process.env.FLIGHTDECK_RUN_STORE_ROOT = previousRunStoreRoot;
+		resetRunStoreCacheForTests();
+		cleanup();
+	}
+});
+
+test("project .env escaped helper root fails closed before legacy fallback", () => {
+	const { projectRoot, stateDir, tmpDir, cleanup } = makeProject();
+	const previousRunStoreRoot = process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	writeFileSync(join(projectRoot, ".env.local"), "CUSTOM_ROOT=/tmp/pi\\-fd-root\nFLIGHTDECK_RUN_STORE_ROOT=$CUSTOM_ROOT\n", "utf8");
+	resetRunStoreCacheForTests();
+	try {
+		writeLive(tmpDir, "HT", {
+			conflict_graph: { computed_at: null, edges: [] },
+			entries: { "LEGACY-1": makeMergedIssueRecord("LEGACY-1", { state: "waiting" }) },
+			merge_queue: [],
+			paused_for_user: null,
+			terminated: false,
+		});
+
+		const snapshot = buildSnapshotFromInputs({ projectRoot, stateDir, tmux: TMUX }, SETTINGS);
+
+		assert.equal(flightdeckSessionStatus(snapshot), "state-error");
+		assert.match(snapshot.masterError ?? "", /unsupported (escape syntax|variable reference CUSTOM_ROOT)/);
+		assert.equal(snapshot.master?.entries?.["LEGACY-1"], undefined);
+	} finally {
+		if (previousRunStoreRoot === undefined) delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+		else process.env.FLIGHTDECK_RUN_STORE_ROOT = previousRunStoreRoot;
+		resetRunStoreCacheForTests();
+		cleanup();
+	}
+});
+
+test("project .env tilde run-store root fails closed before legacy fallback", () => {
+	const { projectRoot, stateDir, tmpDir, cleanup } = makeProject();
+	const previousRunStoreRoot = process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	const homeRoot = mkdtempSync(join(tmpdir(), "pi-flightdeck-home-env-"));
+	const runStoreRoot = join(homeRoot, "store");
+	delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	writeFileSync(join(projectRoot, ".env.local"), `HOME=${homeRoot}\nFLIGHTDECK_RUN_STORE_ROOT=~/store\n`, "utf8");
+	resetRunStoreCacheForTests();
+	try {
+		writeLive(tmpDir, "HT", {
+			conflict_graph: { computed_at: null, edges: [] },
+			entries: { "LEGACY-1": makeMergedIssueRecord("LEGACY-1", { state: "waiting" }) },
+			merge_queue: [],
+			paused_for_user: null,
+			terminated: false,
+		});
+		writeDurableActiveRunState(runStoreRoot, projectRoot, "HT", {
+			conflict_graph: { computed_at: null, edges: [] },
+			entries: {},
+			merge_queue: [],
+			paused_for_user: null,
+			terminated: false,
+		});
+
+		const snapshot = buildSnapshotFromInputs({ projectRoot, stateDir, tmux: TMUX }, SETTINGS);
+
+		assert.equal(flightdeckSessionStatus(snapshot), "state-error");
+		assert.match(snapshot.masterError ?? "", /unsupported tilde expansion/);
+		assert.equal(snapshot.master?.entries?.["LEGACY-1"], undefined);
+	} finally {
+		if (previousRunStoreRoot === undefined) delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+		else process.env.FLIGHTDECK_RUN_STORE_ROOT = previousRunStoreRoot;
+		resetRunStoreCacheForTests();
+		rmSync(homeRoot, { force: true, recursive: true });
+		cleanup();
+	}
+});
+
+test("project .env tilde helper root fails closed before legacy fallback", () => {
+	const { projectRoot, stateDir, tmpDir, cleanup } = makeProject();
+	const previousRunStoreRoot = process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	writeFileSync(join(projectRoot, ".env.local"), "CUSTOM_ROOT=~/store\nFLIGHTDECK_RUN_STORE_ROOT=$CUSTOM_ROOT\n", "utf8");
+	resetRunStoreCacheForTests();
+	try {
+		writeLive(tmpDir, "HT", {
+			conflict_graph: { computed_at: null, edges: [] },
+			entries: { "LEGACY-1": makeMergedIssueRecord("LEGACY-1", { state: "waiting" }) },
+			merge_queue: [],
+			paused_for_user: null,
+			terminated: false,
+		});
+
+		const snapshot = buildSnapshotFromInputs({ projectRoot, stateDir, tmux: TMUX }, SETTINGS);
+
+		assert.equal(flightdeckSessionStatus(snapshot), "state-error");
+		assert.match(snapshot.masterError ?? "", /unsupported tilde expansion/);
+		assert.equal(snapshot.master?.entries?.["LEGACY-1"], undefined);
+	} finally {
+		if (previousRunStoreRoot === undefined) delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+		else process.env.FLIGHTDECK_RUN_STORE_ROOT = previousRunStoreRoot;
+		resetRunStoreCacheForTests();
+		cleanup();
+	}
+});
+
+test("project .env run-store expansion uses sequential assignment order", () => {
+	const { projectRoot, stateDir, tmpDir, cleanup } = makeProject();
+	const previousRunStoreRoot = process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	const firstRunStoreRoot = mkdtempSync(join(tmpdir(), "pi-flightdeck-run-store-first-"));
+	const secondRunStoreRoot = mkdtempSync(join(tmpdir(), "pi-flightdeck-run-store-second-"));
+	delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	writeFileSync(join(projectRoot, ".env.local"), `CUSTOM_ROOT=${firstRunStoreRoot}\nFLIGHTDECK_RUN_STORE_ROOT=$CUSTOM_ROOT\nCUSTOM_ROOT=${secondRunStoreRoot}\n`, "utf8");
+	resetRunStoreCacheForTests();
+	try {
+		writeLive(tmpDir, "HT", {
+			conflict_graph: { computed_at: null, edges: [] },
+			entries: { "LEGACY-1": makeMergedIssueRecord("LEGACY-1", { state: "waiting" }) },
+			merge_queue: [],
+			paused_for_user: null,
+			terminated: false,
+		});
+		const activeStatePath = writeDurableActiveRunState(firstRunStoreRoot, projectRoot, "HT", {
+			conflict_graph: { computed_at: null, edges: [] },
+			entries: {},
+			merge_queue: [],
+			paused_for_user: null,
+			terminated: false,
+		});
+
+		const snapshot = buildSnapshotFromInputs({ projectRoot, stateDir, tmux: TMUX }, SETTINGS);
+
+		assert.equal(snapshot.masterStatePath, activeStatePath);
+		assert.equal(snapshot.master?.entries?.["LEGACY-1"], undefined, "later .env assignments must not change already-expanded run-store root");
+	} finally {
+		if (previousRunStoreRoot === undefined) delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+		else process.env.FLIGHTDECK_RUN_STORE_ROOT = previousRunStoreRoot;
+		resetRunStoreCacheForTests();
+		rmSync(firstRunStoreRoot, { force: true, recursive: true });
+		rmSync(secondRunStoreRoot, { force: true, recursive: true });
+		cleanup();
+	}
+});
+
+test("project .env run-store forward reference fails closed before legacy fallback", () => {
+	const { projectRoot, stateDir, tmpDir, cleanup } = makeProject();
+	const previousRunStoreRoot = process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	const runStoreRoot = mkdtempSync(join(tmpdir(), "pi-flightdeck-run-store-forward-"));
+	delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	writeFileSync(join(projectRoot, ".env.local"), `FLIGHTDECK_RUN_STORE_ROOT=$CUSTOM_ROOT\nCUSTOM_ROOT=${runStoreRoot}\n`, "utf8");
+	resetRunStoreCacheForTests();
+	try {
+		writeLive(tmpDir, "HT", {
+			conflict_graph: { computed_at: null, edges: [] },
+			entries: { "LEGACY-1": makeMergedIssueRecord("LEGACY-1", { state: "waiting" }) },
+			merge_queue: [],
+			paused_for_user: null,
+			terminated: false,
+		});
+
+		const snapshot = buildSnapshotFromInputs({ projectRoot, stateDir, tmux: TMUX }, SETTINGS);
+
+		assert.equal(flightdeckSessionStatus(snapshot), "state-error");
+		assert.match(snapshot.masterError ?? "", /undefined variable CUSTOM_ROOT/);
+		assert.equal(snapshot.master?.entries?.["LEGACY-1"], undefined);
+	} finally {
+		if (previousRunStoreRoot === undefined) delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+		else process.env.FLIGHTDECK_RUN_STORE_ROOT = previousRunStoreRoot;
+		resetRunStoreCacheForTests();
+		rmSync(runStoreRoot, { force: true, recursive: true });
+		cleanup();
+	}
+});
+
+test("project .env same-line run-store assignment fails closed before legacy fallback", () => {
+	const { projectRoot, stateDir, tmpDir, cleanup } = makeProject();
+	const previousRunStoreRoot = process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	const firstRunStoreRoot = mkdtempSync(join(tmpdir(), "pi-flightdeck-run-store-sameline-first-"));
+	const secondRunStoreRoot = mkdtempSync(join(tmpdir(), "pi-flightdeck-run-store-sameline-second-"));
+	delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	writeFileSync(join(projectRoot, ".env.local"), `CUSTOM_ROOT=${firstRunStoreRoot}; FLIGHTDECK_RUN_STORE_ROOT=$CUSTOM_ROOT; CUSTOM_ROOT=${secondRunStoreRoot}\n`, "utf8");
+	resetRunStoreCacheForTests();
+	try {
+		writeLive(tmpDir, "HT", {
+			conflict_graph: { computed_at: null, edges: [] },
+			entries: { "LEGACY-1": makeMergedIssueRecord("LEGACY-1", { state: "waiting" }) },
+			merge_queue: [],
+			paused_for_user: null,
+			terminated: false,
+		});
+
+		const snapshot = buildSnapshotFromInputs({ projectRoot, stateDir, tmux: TMUX }, SETTINGS);
+
+		assert.equal(flightdeckSessionStatus(snapshot), "state-error");
+		assert.match(snapshot.masterError ?? "", /unsupported FLIGHTDECK_RUN_STORE_ROOT assignment/);
+		assert.equal(snapshot.master?.entries?.["LEGACY-1"], undefined);
+	} finally {
+		if (previousRunStoreRoot === undefined) delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+		else process.env.FLIGHTDECK_RUN_STORE_ROOT = previousRunStoreRoot;
+		resetRunStoreCacheForTests();
+		rmSync(firstRunStoreRoot, { force: true, recursive: true });
+		rmSync(secondRunStoreRoot, { force: true, recursive: true });
+		cleanup();
+	}
+});
+
+test("project .env run-store export with extra assignment fails closed before legacy fallback", () => {
+	const { projectRoot, stateDir, tmpDir, cleanup } = makeProject();
+	const previousRunStoreRoot = process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	const runStoreRoot = mkdtempSync(join(tmpdir(), "pi-flightdeck-run-store-export-extra-"));
+	delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	writeFileSync(join(projectRoot, ".env.local"), `CUSTOM_ROOT=${runStoreRoot}\nexport FLIGHTDECK_RUN_STORE_ROOT=$CUSTOM_ROOT OTHER=/x\n`, "utf8");
+	resetRunStoreCacheForTests();
+	try {
+		writeLive(tmpDir, "HT", {
+			conflict_graph: { computed_at: null, edges: [] },
+			entries: { "LEGACY-1": makeMergedIssueRecord("LEGACY-1", { state: "waiting" }) },
+			merge_queue: [],
+			paused_for_user: null,
+			terminated: false,
+		});
+
+		const snapshot = buildSnapshotFromInputs({ projectRoot, stateDir, tmux: TMUX }, SETTINGS);
+
+		assert.equal(flightdeckSessionStatus(snapshot), "state-error");
+		assert.match(snapshot.masterError ?? "", /unsupported whitespace in value/);
+		assert.equal(snapshot.master?.entries?.["LEGACY-1"], undefined);
+	} finally {
+		if (previousRunStoreRoot === undefined) delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+		else process.env.FLIGHTDECK_RUN_STORE_ROOT = previousRunStoreRoot;
+		resetRunStoreCacheForTests();
+		rmSync(runStoreRoot, { force: true, recursive: true });
+		cleanup();
+	}
+});
+
+test("project .env quoted run-store export with extra assignment fails closed before legacy fallback", () => {
+	const { projectRoot, stateDir, tmpDir, cleanup } = makeProject();
+	const previousRunStoreRoot = process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	const runStoreRoot = mkdtempSync(join(tmpdir(), "pi-flightdeck-run-store-quoted-export-extra-"));
+	delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	writeFileSync(join(projectRoot, ".env.local"), `CUSTOM_ROOT=${runStoreRoot}\nexport FLIGHTDECK_RUN_STORE_ROOT="$CUSTOM_ROOT" OTHER="/x"\n`, "utf8");
+	resetRunStoreCacheForTests();
+	try {
+		writeLive(tmpDir, "HT", {
+			conflict_graph: { computed_at: null, edges: [] },
+			entries: { "LEGACY-1": makeMergedIssueRecord("LEGACY-1", { state: "waiting" }) },
+			merge_queue: [],
+			paused_for_user: null,
+			terminated: false,
+		});
+
+		const snapshot = buildSnapshotFromInputs({ projectRoot, stateDir, tmux: TMUX }, SETTINGS);
+
+		assert.equal(flightdeckSessionStatus(snapshot), "state-error");
+		assert.match(snapshot.masterError ?? "", /unsupported trailing tokens after quoted value/);
+		assert.equal(snapshot.master?.entries?.["LEGACY-1"], undefined);
+	} finally {
+		if (previousRunStoreRoot === undefined) delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+		else process.env.FLIGHTDECK_RUN_STORE_ROOT = previousRunStoreRoot;
+		resetRunStoreCacheForTests();
+		rmSync(runStoreRoot, { force: true, recursive: true });
+		cleanup();
+	}
+});
+
+test("source directives fail closed even when project run-store override follows", () => {
+	const { projectRoot, stateDir, tmpDir, cleanup } = makeProject();
+	const previousRunStoreRoot = process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	const runStoreRoot = mkdtempSync(join(tmpdir(), "pi-flightdeck-run-store-source-"));
+	delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	writeFileSync(join(projectRoot, ".env.local"), `source ./flightdeck.env\nCUSTOM_ROOT=${runStoreRoot}\nFLIGHTDECK_RUN_STORE_ROOT=$CUSTOM_ROOT\n`, "utf8");
+	writeFileSync(join(projectRoot, "flightdeck.env"), "FLIGHTDECK_RUN_STORE_ROOT=/tmp/should-not-be-sourced\n", "utf8");
+	resetRunStoreCacheForTests();
+	try {
+		writeLive(tmpDir, "HT", {
+			conflict_graph: { computed_at: null, edges: [] },
+			entries: { "LEGACY-1": makeMergedIssueRecord("LEGACY-1", { state: "waiting" }) },
+			merge_queue: [],
+			paused_for_user: null,
+			terminated: false,
+		});
+		writeDurableActiveRunState(runStoreRoot, projectRoot, "HT", {
+			conflict_graph: { computed_at: null, edges: [] },
+			entries: {},
+			merge_queue: [],
+			paused_for_user: null,
+			terminated: false,
+		});
+
+		const snapshot = buildSnapshotFromInputs({ projectRoot, stateDir, tmux: TMUX }, SETTINGS);
+
+		assert.equal(flightdeckSessionStatus(snapshot), "state-error");
+		assert.match(snapshot.masterError ?? "", /unsupported (env-mutating directive|\.env directive)/);
+		assert.equal(snapshot.master?.entries?.["LEGACY-1"], undefined);
+	} finally {
+		if (previousRunStoreRoot === undefined) delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+		else process.env.FLIGHTDECK_RUN_STORE_ROOT = previousRunStoreRoot;
+		resetRunStoreCacheForTests();
+		rmSync(runStoreRoot, { force: true, recursive: true });
+		cleanup();
+	}
+});
+
+test("command substitution in project .env fails closed without execution", () => {
+	const { projectRoot, stateDir, tmpDir, cleanup } = makeProject();
+	const previousRunStoreRoot = process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	writeFileSync(join(projectRoot, ".env.local"), "FLIGHTDECK_RUN_STORE_ROOT=$(touch SHOULD_NOT_EXIST)\n", "utf8");
+	resetRunStoreCacheForTests();
+	try {
+		writeLive(tmpDir, "HT", {
+			conflict_graph: { computed_at: null, edges: [] },
+			entries: { "LEGACY-1": makeMergedIssueRecord("LEGACY-1", { state: "waiting" }) },
+			merge_queue: [],
+			paused_for_user: null,
+			terminated: false,
+		});
+
+		const snapshot = buildSnapshotFromInputs({ projectRoot, stateDir, tmux: TMUX }, SETTINGS);
+
+		assert.equal(flightdeckSessionStatus(snapshot), "state-error");
+		assert.match(snapshot.masterError ?? "", /unsupported shell expansion/);
+		assert.equal(existsSync(join(projectRoot, "SHOULD_NOT_EXIST")), false);
+		assert.equal(snapshot.master?.entries?.["LEGACY-1"], undefined);
+	} finally {
+		if (previousRunStoreRoot === undefined) delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+		else process.env.FLIGHTDECK_RUN_STORE_ROOT = previousRunStoreRoot;
+		resetRunStoreCacheForTests();
+		cleanup();
+	}
+});
+
+test("failed .env load stays state-error on repeated snapshot attempts", () => {
+	const { projectRoot, stateDir, tmpDir, cleanup } = makeProject();
+	const previousRunStoreRoot = process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	writeFileSync(join(projectRoot, ".env.local"), "FLIGHTDECK_RUN_STORE_ROOT=$MISSING_FLIGHTDECK_ROOT\n", "utf8");
+	resetRunStoreCacheForTests();
+	try {
+		writeLive(tmpDir, "HT", {
+			conflict_graph: { computed_at: null, edges: [] },
+			entries: { "LEGACY-1": makeMergedIssueRecord("LEGACY-1", { state: "waiting" }) },
+			merge_queue: [],
+			paused_for_user: null,
+			terminated: false,
+		});
+
+		const first = buildSnapshotFromInputs({ projectRoot, stateDir, tmux: TMUX }, SETTINGS);
+		const second = buildSnapshotFromInputs({ projectRoot, stateDir, tmux: TMUX }, SETTINGS);
+
+		assert.equal(flightdeckSessionStatus(first), "state-error");
+		assert.equal(flightdeckSessionStatus(second), "state-error");
+		assert.match(first.masterError ?? "", /\.env load failed/);
+		assert.match(second.masterError ?? "", /\.env load failed/);
+		assert.equal(first.master?.entries?.["LEGACY-1"], undefined);
+		assert.equal(second.master?.entries?.["LEGACY-1"], undefined);
+	} finally {
+		if (previousRunStoreRoot === undefined) delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+		else process.env.FLIGHTDECK_RUN_STORE_ROOT = previousRunStoreRoot;
+		resetRunStoreCacheForTests();
+		cleanup();
+	}
+});
+
+test("buildSnapshotFromInputs fails closed when project index is missing but active pointer exists", () => {
+	const { projectRoot, stateDir, tmpDir, cleanup } = makeProject();
+	const previousRunStoreRoot = process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	const runStoreRoot = mkdtempSync(join(tmpdir(), "pi-flightdeck-run-store-"));
+	process.env.FLIGHTDECK_RUN_STORE_ROOT = runStoreRoot;
+	resetRunStoreCacheForTests();
+	try {
+		writeLive(tmpDir, "HT", {
+			conflict_graph: { computed_at: null, edges: [] },
+			entries: { "LEGACY-1": makeMergedIssueRecord("LEGACY-1", { state: "waiting" }) },
+			merge_queue: [],
+			paused_for_user: null,
+			terminated: false,
+		});
+		const identity = projectIdentityForTest(projectRoot);
+		const projectDir = join(runStoreRoot, "projects", identity.projectId);
+		const runDir = join(projectDir, "runs", "run-current");
+		mkdirSync(join(projectDir, "active-runs"), { recursive: true });
+		mkdirSync(runDir, { recursive: true });
+		writeJson0600(join(projectDir, "active-runs", "HT.json"), {
+			activity_path: join(runDir, "activity.jsonl"),
+			project_id: identity.projectId,
+			run_id: "run-current",
+			schema_version: 1,
+			state_path: join(runDir, "state.json"),
+			tmux_session: "HT",
+			updated_at: "2026-05-13T00:30:00Z",
+		});
+
+		const snapshot = buildSnapshotFromInputs({ projectRoot, stateDir, tmux: TMUX }, SETTINGS);
+
+		assert.equal(snapshot.master, undefined);
+		assert.match(snapshot.masterError ?? "", /project index missing while durable run artifacts exist/);
+		assert.ok(snapshot.masterStatePath?.endsWith("project.json"));
+		assert.equal(flightdeckSessionStatus(snapshot), "state-error");
+	} finally {
+		if (previousRunStoreRoot === undefined) delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+		else process.env.FLIGHTDECK_RUN_STORE_ROOT = previousRunStoreRoot;
+		resetRunStoreCacheForTests();
+		rmSync(runStoreRoot, { force: true, recursive: true });
+		cleanup();
+	}
+});
+
+test("buildSnapshotFromInputs fails closed when active run state file is missing", () => {
+	const { projectRoot, stateDir, tmpDir, cleanup } = makeProject();
+	const previousRunStoreRoot = process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	const runStoreRoot = mkdtempSync(join(tmpdir(), "pi-flightdeck-run-store-"));
+	process.env.FLIGHTDECK_RUN_STORE_ROOT = runStoreRoot;
+	resetRunStoreCacheForTests();
+	try {
+		writeLive(tmpDir, "HT", {
+			conflict_graph: { computed_at: null, edges: [] },
+			entries: { "LEGACY-1": makeMergedIssueRecord("LEGACY-1", { state: "waiting" }) },
+			merge_queue: [],
+			paused_for_user: null,
+			terminated: false,
+		});
+		const activeStatePath = writeDurableActiveRunState(runStoreRoot, projectRoot, "HT", {
+			conflict_graph: { computed_at: null, edges: [] },
+			entries: {},
+			merge_queue: [],
+			paused_for_user: null,
+			terminated: false,
+		});
+		rmSync(activeStatePath, { force: true });
+
+		const snapshot = buildSnapshotFromInputs({ projectRoot, stateDir, tmux: TMUX }, SETTINGS);
+
+		assert.equal(snapshot.master, undefined);
+		assert.match(snapshot.masterError ?? "", /active run state missing/);
+		assert.equal(snapshot.master?.entries?.["LEGACY-1"], undefined);
+		assert.equal(flightdeckSessionStatus(snapshot), "state-error");
+	} finally {
+		if (previousRunStoreRoot === undefined) delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+		else process.env.FLIGHTDECK_RUN_STORE_ROOT = previousRunStoreRoot;
+		resetRunStoreCacheForTests();
+		rmSync(runStoreRoot, { force: true, recursive: true });
+		cleanup();
+	}
+});
+
+test("buildSnapshotFromInputs fails closed when active pointer state_path is not canonical", () => {
+	const { projectRoot, stateDir, tmpDir, cleanup } = makeProject();
+	const previousRunStoreRoot = process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	const runStoreRoot = mkdtempSync(join(tmpdir(), "pi-flightdeck-run-store-"));
+	process.env.FLIGHTDECK_RUN_STORE_ROOT = runStoreRoot;
+	resetRunStoreCacheForTests();
+	try {
+		writeLive(tmpDir, "HT", {
+			conflict_graph: { computed_at: null, edges: [] },
+			entries: { "LEGACY-1": makeMergedIssueRecord("LEGACY-1", { state: "waiting" }) },
+			merge_queue: [],
+			paused_for_user: null,
+			terminated: false,
+		});
+		writeDurableActiveRunState(runStoreRoot, projectRoot, "HT", {
+			conflict_graph: { computed_at: null, edges: [] },
+			entries: {},
+			merge_queue: [],
+			paused_for_user: null,
+			terminated: false,
+		});
+		const pointerPath = activePointerPathForTest(runStoreRoot, projectRoot, "HT");
+		const pointer = JSON.parse(readFileSync(pointerPath, "utf8")) as Record<string, unknown>;
+		writeJson0600(pointerPath, { ...pointer, state_path: join(runStoreRoot, "outside-state.json") });
+
+		const snapshot = buildSnapshotFromInputs({ projectRoot, stateDir, tmux: TMUX }, SETTINGS);
+
+		assert.equal(snapshot.master, undefined);
+		assert.match(snapshot.masterError ?? "", /state_path .* does not match canonical path/);
+		assert.equal(snapshot.master?.entries?.["LEGACY-1"], undefined);
+		assert.equal(flightdeckSessionStatus(snapshot), "state-error");
+	} finally {
+		if (previousRunStoreRoot === undefined) delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+		else process.env.FLIGHTDECK_RUN_STORE_ROOT = previousRunStoreRoot;
+		resetRunStoreCacheForTests();
+		rmSync(runStoreRoot, { force: true, recursive: true });
+		cleanup();
+	}
+});
+
+test("readOwnerVisibilityProbe reads durable active-run owner instead of legacy tmp owner", () => {
+	const { projectRoot, tmpDir, cleanup } = makeProject();
+	const previousRunStoreRoot = process.env.FLIGHTDECK_RUN_STORE_ROOT;
+	const runStoreRoot = mkdtempSync(join(tmpdir(), "pi-flightdeck-run-store-"));
+	process.env.FLIGHTDECK_RUN_STORE_ROOT = runStoreRoot;
+	resetRunStoreCacheForTests();
+	resetTmuxContextCacheForTests();
+	try {
+		writeLive(tmpDir, "HT", {
+			conflict_graph: { computed_at: null, edges: [] },
+			entries: {},
+			merge_queue: [],
+			owner: { cwd: projectRoot, harness: "pi", pane_id: "%legacy" },
+			paused_for_user: null,
+			terminated: false,
+		});
+		writeDurableActiveRunState(runStoreRoot, projectRoot, "HT", {
+			conflict_graph: { computed_at: null, edges: [] },
+			entries: {},
+			merge_queue: [],
+			owner: { cwd: projectRoot, harness: "pi", pane_id: "%active" },
+			paused_for_user: null,
+			terminated: false,
+		});
+
+		const probe = readOwnerVisibilityProbe(projectRoot, SETTINGS, TMUX);
+
+		assert.equal(probe?.ownerPaneId, "%active");
+	} finally {
+		if (previousRunStoreRoot === undefined) delete process.env.FLIGHTDECK_RUN_STORE_ROOT;
+		else process.env.FLIGHTDECK_RUN_STORE_ROOT = previousRunStoreRoot;
+		resetRunStoreCacheForTests();
+		resetTmuxContextCacheForTests();
+		rmSync(runStoreRoot, { force: true, recursive: true });
 		cleanup();
 	}
 });
