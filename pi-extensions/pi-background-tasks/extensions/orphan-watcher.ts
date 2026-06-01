@@ -37,8 +37,8 @@ export interface OrphanWatcherDeps {
 	// hitting an unrelated process is detected as a mismatch and treated
 	// like the pid is gone (reviewer-error MAJOR, vstack#15 round 4).
 	identityProbe?: (pid: number) => ProcessIdentity | null;
-	// For resource-controlled systemd scopes, the wrapper pid can be less
-	// authoritative than the transient scope. true = still running, false =
+	// For resource-controlled systemd units, the wrapper pid can be less
+	// authoritative than the transient unit. true = still running, false =
 	// known inactive, null = unavailable so the watcher falls back to pid.
 	unitActiveProbe?: (unitName: string) => boolean | null;
 	setIntervalFn?: (cb: () => void, ms: number) => NodeJS.Timeout;

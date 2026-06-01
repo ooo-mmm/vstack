@@ -168,8 +168,8 @@ export interface RestoreOptions {
 	// state) but are not eligible for missed-exit replay; replay is scoped
 	// to the session that originally spawned the task.
 	sessionId?: string;
-	// Optional systemd scope liveness probe for resource-controlled tasks.
-	// Returns true while the persisted transient scope/unit is active, false
+	// Optional systemd unit liveness probe for resource-controlled tasks.
+	// Returns true while the persisted transient unit is active, false
 	// when it is known inactive, and null when the unit cannot be queried.
 	unitActiveProbe?: (unitName: string) => boolean | null;
 }

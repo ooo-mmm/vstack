@@ -71,6 +71,7 @@ const DEFAULT_NICE = 10;
 const DEFAULT_IONICE_CLASS: ResourceControlIoniceClass = "best-effort";
 const DEFAULT_IONICE_LEVEL = 7;
 const SYSTEMCTL_TIMEOUT_MS = 2_000;
+let cachedUserSystemdRunnable: boolean | undefined;
 
 function finiteInt(value: number, fallback: number): number {
 	return Number.isFinite(value) ? Math.round(value) : fallback;
@@ -111,10 +112,23 @@ function commandExists(command: string, platform: NodeJS.Platform): boolean {
 function userSystemdAvailable(commandProbe: (command: string) => boolean, platform: NodeJS.Platform): boolean {
 	if (platform !== "linux") return false;
 	if (!commandProbe("systemd-run") || !commandProbe("systemctl")) return false;
+	if (cachedUserSystemdRunnable !== undefined) return cachedUserSystemdRunnable;
 	try {
 		const result = spawnSync("systemctl", ["--user", "show-environment"], { stdio: "ignore", timeout: 1_500 });
-		return result.status === 0;
+		if (result.status !== 0) {
+			cachedUserSystemdRunnable = false;
+			return false;
+		}
+		// Probe the exact transient-service shape used below. Older scope-based
+		// plans accepted availability checks but failed at spawn time on hosts
+		// where `--scope --wait` or scope-level Nice/IOScheduling properties are
+		// rejected by systemd-run.
+		const unitName = `vstack-pi-bg-probe-${process.pid}-${Date.now()}.service`;
+		const probe = spawnSync("systemd-run", ["--user", "--wait", "--pipe", "--quiet", "--collect", `--unit=${unitName}`, "--", "/usr/bin/true"], { stdio: "ignore", timeout: 3_000 });
+		cachedUserSystemdRunnable = probe.status === 0;
+		return cachedUserSystemdRunnable;
 	} catch {
+		cachedUserSystemdRunnable = false;
 		return false;
 	}
 }
@@ -148,7 +162,7 @@ function ioniceClassNumber(value: ResourceControlIoniceClass): string {
 
 function makeSystemdUnitName(taskId: string, now: number): string {
 	const safe = `${taskId}-${now}`.replaceAll(/[^A-Za-z0-9_.:-]/g, "-").slice(0, 96) || "task";
-	return `vstack-pi-bg-${safe}.scope`;
+	return `vstack-pi-bg-${safe}.service`;
 }
 
 function basePlan(input: ResourceControlSpawnInput): ResourceControlSpawnPlan {
@@ -171,7 +185,7 @@ function resolveMode(
 	if (settings.mode === "systemd-run") {
 		return systemdOk
 			? { mode: "systemd-run" }
-			: { mode: "none", warning: "resourceControlMode=systemd-run requested, but usable user systemd-run scope support was not detected; spawning without resource controls." };
+			: { mode: "none", warning: "resourceControlMode=systemd-run requested, but usable user systemd-run support was not detected; spawning without resource controls." };
 	}
 
 	if (settings.mode === "nice-ionice") {
@@ -181,7 +195,7 @@ function resolveMode(
 	}
 
 	if (systemdOk) return { mode: "systemd-run" };
-	if (niceOk) return { mode: "nice-ionice", warning: "resourceControlMode=auto could not use user systemd-run scopes; using nice/ionice fallback." };
+	if (niceOk) return { mode: "nice-ionice", warning: "resourceControlMode=auto could not use user systemd-run; using nice/ionice fallback." };
 	return { mode: "none", warning: "resource controls are enabled, but no supported helper was detected; spawning without resource controls." };
 }
 
@@ -189,9 +203,9 @@ function systemdPlan(input: ResourceControlSpawnInput, settings: ResourceControl
 	const unitName = makeSystemdUnitName(input.taskId, input.now ?? Date.now());
 	const args = [
 		"--user",
-		"--scope",
 		"--quiet",
 		"--wait",
+		"--pipe",
 		"--collect",
 		`--unit=${unitName}`,
 		`--working-directory=${input.cwd}`,

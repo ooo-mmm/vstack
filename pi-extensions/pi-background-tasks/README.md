@@ -14,7 +14,7 @@ Run shell commands in the background without blocking the conversation.
 - `/bg:next` or the shortcut sends the next bash command to the background.
 - Blocking monitors (`watch`, `tail -f`, `journalctl -f`, polling loops) auto-background before they freeze the turn.
 - Exit and output-match wakeups bring the agent back when work finishes or important text appears.
-- Optional resource controls lower CPU/I/O priority via `systemd-run` scopes or `nice`/`ionice` fallback.
+- Optional resource controls lower CPU/I/O priority via `systemd-run` or `nice`/`ionice` fallback.
 - Full logs stay on disk even when chat/tool output is truncated.
 - Session sidecar state restores task history across reloads and resumes.
 - Inline mini-dashboard shows live task state; full dashboard handles larger fleets without bloating chat history.
@@ -77,7 +77,7 @@ Glyph style: each package exposes `glyphStyle` (`unicode` default, `ascii` for t
 | Shortcut arming window | Seconds the arm-next-bash shortcut / `/bg:next` stays armed. |
 | Force-kill grace | Milliseconds between SIGTERM and SIGKILL. |
 | Resource controls | Opt-in lower-priority execution for spawned background tasks. Off by default; when off, spawn/stop behavior is unchanged. |
-| Resource control mode | `auto` prefers `systemd-run --user --scope` on Linux, then `nice`/`ionice` fallback. `systemd-run`, `nice-ionice`, and `off` force one path. |
+| Resource control mode | `auto` prefers a probed `systemd-run --user` transient service on Linux, then `nice`/`ionice` fallback. `systemd-run`, `nice-ionice`, and `off` force one path. |
 | Apply controls to bg_task | Apply controls to explicit `bg_task` and `/bg:run` spawns. |
 | Apply controls to auto-backgrounded bash | Apply controls to bash commands diverted by auto-backgrounding, `/bg next`, or the arm-next-bash shortcut. |
 | CPU weight / I/O weight | `systemd-run` `CPUWeight=` / `IOWeight=` values (1-10000). Lower values yield resources. Defaults are 100. |
@@ -129,7 +129,7 @@ Routine wake/persistence diagnostics are written only when `PI_BG_TASK_DEBUG=1`,
 
 ## Notes
 
-Tasks are scoped to the current Pi runtime and stopped on session shutdown. Shells start in their own process group so `/bg:stop` and shutdown terminate children. Tasks inherit Pi's environment and working directory. Resource controls are disabled by default; when enabled, `systemd-run` tasks persist their transient scope unit so `/bg:stop`, timeouts, and shutdown stop the actual scope, not just the wrapper process.
+Tasks are scoped to the current Pi runtime and stopped on session shutdown. Shells start in their own process group so `/bg:stop` and shutdown terminate children. Tasks inherit Pi's environment and working directory. Resource controls are disabled by default; when enabled, `systemd-run` tasks persist their transient service unit so `/bg:stop`, timeouts, and shutdown stop the actual workload, not just the wrapper process.
 
 Exit wakeups are durable across session restarts and PID reuse — if a task ends while Pi is gone, the next session replays the missed wake. Output wakes scheduled before `stop` / `clear` are voided.
 

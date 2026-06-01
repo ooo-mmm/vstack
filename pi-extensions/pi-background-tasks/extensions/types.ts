@@ -175,7 +175,7 @@ export interface BackgroundTaskSnapshot {
 	// identity check degrades to PID-only for those.
 	procIdent?: ProcessIdentity;
 	/**
-	 * Optional metadata for opt-in resource controls (vstack#300). Systemd scope
+	 * Optional metadata for opt-in resource controls (vstack#300). Systemd-run
 	 * tasks persist their transient unit name so stop/timeout/shutdown paths can
 	 * stop the actual workload instead of only signaling the systemd-run wrapper.
 	 */

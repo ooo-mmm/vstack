@@ -190,16 +190,17 @@ describe("resource-control spawn planning", () => {
 		expect(plan.warnings).toEqual([]);
 	});
 
-	test("systemd-run plan keeps command and cwd as argv, not shell-quoted text", () => {
+	test("systemd-run service plan keeps command and cwd as argv, not shell-quoted text", () => {
 		const input = spawnInput({ settings: settings({ cpuWeight: 25, ioWeight: 50, nice: 12, ioniceLevel: 6 }), probes: probes(true) });
 		const plan = planResourceControlledSpawn(input);
 		expect(plan.file).toBe("systemd-run");
-		expect(plan.metadata).toEqual({ mode: "systemd-run", requestedMode: "auto", unitName: "vstack-pi-bg-bg-7-123456.scope", warning: undefined });
+		expect(plan.metadata).toEqual({ mode: "systemd-run", requestedMode: "auto", unitName: "vstack-pi-bg-bg-7-123456.service", warning: undefined });
 		expect(plan.args).toContain("--user");
-		expect(plan.args).toContain("--scope");
+		expect(plan.args).not.toContain("--scope");
 		expect(plan.args).toContain("--wait");
+		expect(plan.args).toContain("--pipe");
 		expect(plan.args).toContain("--collect");
-		expect(plan.args).toContain("--unit=vstack-pi-bg-bg-7-123456.scope");
+		expect(plan.args).toContain("--unit=vstack-pi-bg-bg-7-123456.service");
 		expect(plan.args).toContain("--working-directory=/tmp/work tree");
 		expect(plan.args).toContain("--property=CPUWeight=25");
 		expect(plan.args).toContain("--property=IOWeight=50");
@@ -210,7 +211,7 @@ describe("resource-control spawn planning", () => {
 		expect(plan.warnings).toEqual([]);
 	});
 
-	test("auto falls back to nice and ionice when user systemd scopes are unavailable", () => {
+	test("auto falls back to nice and ionice when user systemd is unavailable", () => {
 		const input = spawnInput({ settings: settings(), probes: probes(false) });
 		const plan = planResourceControlledSpawn(input);
 		expect(plan.file).toBe("nice");
@@ -247,18 +248,18 @@ describe("resource-control spawn planning", () => {
 });
 
 describe("resource-control stop and restore semantics", () => {
-	test("systemd scope stop persists enough metadata to stop actual workload", () => {
+	test("systemd unit stop persists enough metadata to stop actual workload", () => {
 		const calls: { command: string; args: string[] }[] = [];
 		const runner = (command: string, args: string[]) => {
 			calls.push({ command, args });
 			return { status: 0 };
 		};
-		const metadata = { mode: "systemd-run" as const, requestedMode: "auto" as const, unitName: "vstack-pi-bg-bg-7.scope" };
+		const metadata = { mode: "systemd-run" as const, requestedMode: "auto" as const, unitName: "vstack-pi-bg-bg-7.service" };
 		expect(stopResourceControlledTask(metadata, "SIGTERM", runner)).toMatchObject({ attempted: true, ok: true });
 		expect(stopResourceControlledTask(metadata, "SIGKILL", runner)).toMatchObject({ attempted: true, ok: true });
 		expect(calls).toEqual([
-			{ command: "systemctl", args: ["--user", "stop", "--no-block", "vstack-pi-bg-bg-7.scope"] },
-			{ command: "systemctl", args: ["--user", "kill", "--signal=SIGKILL", "vstack-pi-bg-bg-7.scope"] },
+			{ command: "systemctl", args: ["--user", "stop", "--no-block", "vstack-pi-bg-bg-7.service"] },
+			{ command: "systemctl", args: ["--user", "kill", "--signal=SIGKILL", "vstack-pi-bg-bg-7.service"] },
 		]);
 	});
 
@@ -266,9 +267,9 @@ describe("resource-control stop and restore semantics", () => {
 		expect(stopResourceControlledTask({ mode: "nice-ionice", requestedMode: "nice-ionice" }, "SIGTERM")).toEqual({ attempted: false, ok: false });
 	});
 
-	test("restore keeps a systemd scope running when the unit is active even if wrapper pid probe is gone", () => {
+	test("restore keeps a systemd unit running when the unit is active even if wrapper pid probe is gone", () => {
 		const restored = restoredTaskFromSnapshot(fakeSnapshot({
-			resourceControl: { mode: "systemd-run", requestedMode: "auto", unitName: "vstack-pi-bg-bg-7.scope" },
+			resourceControl: { mode: "systemd-run", requestedMode: "auto", unitName: "vstack-pi-bg-bg-7.service" },
 		}), {
 			sessionId: "session-A",
 			identityProbe: () => null,
@@ -282,7 +283,7 @@ describe("resource-control stop and restore semantics", () => {
 
 	test("restore finalizes a running systemd task when the persisted unit is inactive", () => {
 		const restored = restoredTaskFromSnapshot(fakeSnapshot({
-			resourceControl: { mode: "systemd-run", requestedMode: "auto", unitName: "vstack-pi-bg-bg-7.scope" },
+			resourceControl: { mode: "systemd-run", requestedMode: "auto", unitName: "vstack-pi-bg-bg-7.service" },
 		}), {
 			sessionId: "session-A",
 			identityProbe: () => ({ comm: "systemd-run", pid: 4242, startToken: "start-4242" }),
@@ -297,7 +298,7 @@ describe("resource-control stop and restore semantics", () => {
 
 	test("orphan watcher checks active systemd units before pid identity", () => {
 		const task = fakeManaged({
-			resourceControl: { mode: "systemd-run", requestedMode: "auto", unitName: "vstack-pi-bg-bg-7.scope" },
+			resourceControl: { mode: "systemd-run", requestedMode: "auto", unitName: "vstack-pi-bg-bg-7.service" },
 		});
 		const watcher = createOrphanWatcher({
 			getTasks: () => [task],
