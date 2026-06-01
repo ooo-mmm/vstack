@@ -1,6 +1,6 @@
 {
   "name": "@vanillagreen/pi-questions",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Pi extension for structured multi-tab inline questions and bridge-driven replies.",
   "license": "MIT",
   "keywords": [

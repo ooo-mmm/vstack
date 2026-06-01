@@ -1,6 +1,6 @@
 {
   "name": "@vanillagreen/pi-flightdeck",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Optional Pi status shell for the flightdeck skill: owner-scoped mini-dashboard, pause banner, notifications, and /flightdeck focus/open integration for the Rust app.",
   "license": "MIT",
   "keywords": [
