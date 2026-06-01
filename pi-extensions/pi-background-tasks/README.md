@@ -9,18 +9,16 @@ Run shell commands in the background without blocking the conversation.
 
 ## Highlights
 
-- `bg_task` tool spawns, lists, tails, stops, and clears tracked tasks.
-- `/bg` dashboard for browsing and controlling tasks interactively.
-- Arm-next-bash shortcut runs the next bash command in the background.
-- Long-running monitors (`watch`, `tail -f`, `journalctl -f`, polling loops) are auto-backgrounded.
-- Wakeups when a task exits, with optional wakeups on matching output.
-- When `pi-session-bridge` is loaded, task start/output/terminal transitions also publish structured `bg_task.*` activity broker events without adding chat messages (`bg_task.started`, `bg_task.output_matched`, `bg_task.completed`, `bg_task.failed`, `bg_task.timed_out`, `bg_task.stopped`).
-- Inline mini-dashboard above the editor; full dashboard popup for browsing details. Manual hide stays hidden across task output, exit, restore, and retention updates until toggled back in.
-- Inline mini-dashboard participates in vstack's stable stack order: Flightdeck → Tasks → Agents → BG tasks.
-- Persistent log files keep full output even when tool output is truncated.
-- Per-session sidecar state keeps `/bg` task history resumable for both tool-spawned and slash-command-spawned tasks.
-- Large task fleets keep `bg_task list` / `bg_status list` tool-result history compact; details store only counts and id samples while sidecar state remains canonical for resume.
-- The `/bg` dashboard wraps multi-line commands and strips terminal control sequences from preview rows so task details stay inside the popup frame; the popup documents its own keys in the footer.
+- `bg_task` spawns, lists, tails, stops, and clears background commands.
+- `/bg` opens an interactive dashboard with task logs, details, and controls.
+- `/bg:next` or the shortcut sends the next bash command to the background.
+- Blocking monitors (`watch`, `tail -f`, `journalctl -f`, polling loops) auto-background before they freeze the turn.
+- Exit and output-match wakeups bring the agent back when work finishes or important text appears.
+- Optional resource controls lower CPU/I/O priority via `systemd-run` scopes or `nice`/`ionice` fallback.
+- Full logs stay on disk even when chat/tool output is truncated.
+- Session sidecar state restores task history across reloads and resumes.
+- Inline mini-dashboard shows live task state; full dashboard handles larger fleets without bloating chat history.
+- `pi-session-bridge` can publish structured `bg_task.*` activity events as a side channel, not chat messages.
 
 ## Install
 
