@@ -238,6 +238,8 @@ assert_eq "$(compute_sticky_verdict_from_body "$(jq -r '.[0].body' "$FIXTURES/cl
 assert_eq "$(compute_sticky_verdict_from_body "Verdict: changes")" "changes" "bare Verdict: changes = changes"
 assert_eq "$(compute_sticky_verdict_from_body "Status: changes")" "changes" "bare Status: changes = changes"
 assert_eq "$(compute_sticky_verdict_from_body "Recommendation: approve")" "approved" "bare Recommendation: approve = approved"
+assert_eq "$(compute_sticky_verdict_from_body "Recommendation: do not approve")" "changes" "negated Recommendation approval = changes"
+assert_eq "$(compute_sticky_verdict_from_body "Verdict: approval not recommended")" "changes" "approval-not-recommended verdict = changes"
 
 echo
 echo "----"

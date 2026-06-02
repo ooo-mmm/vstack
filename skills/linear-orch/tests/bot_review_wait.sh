@@ -86,7 +86,25 @@ case "${1:-}" in
         echo '[{"user":{"login":"review-bot[bot]"},"state":"APPROVED","submitted_at":"2026-01-01T00:00:00Z"}]'
         exit 0
         ;;
-      repos/*/issues/1/comments|repos/*/issues/1/reactions|repos/*/issues/comments/*/reactions)
+      repos/*/pulls/2/reviews)
+        echo '[]'
+        exit 0
+        ;;
+      repos/*/issues/2/comments)
+        cat <<'JSON'
+[
+  {
+    "id": 2001,
+    "user": {"login": "claude[bot]"},
+    "body": "**Claude finished @vg-claude's task in 1m 44s** —— [View job](https://github.com/example/actions/runs/1)\n\n---\n### Review Summary\n✅ Approved — 0 inline comments posted",
+    "created_at": "2026-06-02T08:18:35Z",
+    "updated_at": "2026-06-02T08:20:33Z"
+  }
+]
+JSON
+        exit 0
+        ;;
+      repos/*/issues/1/comments|repos/*/issues/1/reactions|repos/*/issues/2/reactions|repos/*/issues/comments/*/reactions)
         echo '[]'
         exit 0
         ;;
@@ -113,6 +131,14 @@ output=$(run_wait 1 1 5 --json --reviewers 'review-bot[bot]' 2>"$stderr")
 assert_eq "$(jq -r .status <<<"$output")" "complete" "bad GH_TOKEN falls back to gh keyring auth"
 assert_eq "$(jq -r .verdict <<<"$output")" "approved" "approved formal review returns terminal JSON"
 assert_contains "$(cat "$stderr")" "unsetting them" "fallback warning explains masked gh auth"
+
+cat > "$TMP_ROOT/repo/.env.local" <<EOF
+GIT_HOST_CLI="$FAKE_GITHUB_SH"
+EOF
+output=$(run_wait 2 1 5 --json)
+assert_eq "$(jq -r .status <<<"$output")" "complete" "Claude comment-only auto-detect completes without reviewers arg"
+assert_eq "$(jq -r .verdict <<<"$output")" "approved" "Claude comment-only auto-detect returns approved verdict"
+assert_eq "$(jq -r '.approved_reviewers | join(",")' <<<"$output")" "claude[bot]" "Claude comment-only auto-detect records reviewer"
 
 cat > "$TMP_ROOT/repo/.env.local" <<EOF
 GIT_HOST_CLI="$FAKE_GITHUB_SH"

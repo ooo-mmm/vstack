@@ -451,16 +451,17 @@ compute_sticky_verdict_from_body() {
     if [[ $negated_changes -gt 0 && $has_explicit_changes -le $negated_changes ]]; then
         has_explicit_changes=0
     fi
-    local has_bare_directive_changes has_bare_directive_approval
+    local has_bare_directive_changes has_negated_directive_approval has_bare_directive_approval
     has_bare_directive_changes=$(printf '%s\n' "$verdict_directives" | grep -ciE '(^|[[:space:]])(Verdict|Status|Recommendation):[[:space:]]*(changes|change|needs changes|request changes|changes requested)\b' || true)
     if [[ $negated_changes -gt 0 && $has_bare_directive_changes -le $negated_changes ]]; then
         has_bare_directive_changes=0
     fi
+    has_negated_directive_approval=$(printf '%s\n' "$verdict_directives" | grep -ciE "(^|[[:space:]])(Verdict|Status|Recommendation):.*\b(do not approve|don't approve|cannot approve|not approved|approval not recommended|not recommend approval|recommend against approval)\b" || true)
     has_bare_directive_approval=$(printf '%s\n' "$verdict_directives" | grep -ciE '(^|[[:space:]])(Verdict|Status|Recommendation):.*\b(approve|approved|approval)\b' || true)
     has_warning=$(printf '%s\n' "$verdict_lines" | grep -cE '⚠️|❌' || true)
     has_explicit_approval=$(printf '%s\n' "$verdict_lines" | grep -ciE '✅.*approv|approv(ed|al)|approved for merge|ready for merge|Review Complete ✅|\*\*Approved\*\*' || true)
 
-    if [[ $has_explicit_changes -gt 0 || $has_bare_directive_changes -gt 0 || $has_warning -gt 0 ]]; then
+    if [[ $has_explicit_changes -gt 0 || $has_bare_directive_changes -gt 0 || $has_negated_directive_approval -gt 0 || $has_warning -gt 0 ]]; then
         echo "changes"
         return 0
     fi
