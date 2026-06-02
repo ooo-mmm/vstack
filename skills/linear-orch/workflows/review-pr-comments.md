@@ -49,9 +49,9 @@ BOT_VERDICT=$(echo "$WAIT_RESULT" | jq -r '.verdict')
 PENDING_REVIEWERS=$(echo "$WAIT_RESULT" | jq -r '.pending_reviewers | join(", ")')
 ```
 
-`$BOT_REVIEWERS` is a comma-separated list of bot usernames to wait for (e.g., `review-bot-a[bot],chatgpt-codex-connector[bot]`). Default: wait for any bot with any signal (sticky, formal review, or reaction on the PR body).
+`$BOT_REVIEWERS` is a comma-separated list of bot usernames to wait for (e.g., `review-bot-a[bot],chatgpt-codex-connector[bot]`). Default: auto-detect review bots from formal reviews, known review-bot comment summaries (`View job` / `**Claude finished ...**` with `### Review Summary`), PR-body reactions, and known review-bot own-comment reactions. Custom comment-only review bots must be configured explicitly with `BOT_REVIEWERS` / `--reviewers`.
 
-**Polling behavior**: per reviewer, status is one of `pending|approved|changes|skipped|unknown`. The wrapper only returns `status=complete` when no reviewer is pending. If `status=timeout` and `pending_reviewers` is non-empty, ask the user `Wait` | `Skip pending bot` (configure via `BOT_SKIPPED_REVIEWERS`) | `Proceed without`. Late arrivals are still caught in § 6.3.
+**Polling behavior**: per reviewer, status is one of `pending|approved|changes|skipped|unknown`. Claude-style comments parse `✅ Approved` / `Changes requested`; Codex-style signals use 👀 = pending, 👍 = approved, and inline review threads = changes. The wrapper only returns `status=complete` when no reviewer is pending. If `status=timeout` and `pending_reviewers` is non-empty, ask the user `Wait` | `Skip pending bot` (configure via `BOT_SKIPPED_REVIEWERS`) | `Proceed without`. Late arrivals are still caught in § 6.3.
 
 ### 1.2 Fetch Actionable Data
 

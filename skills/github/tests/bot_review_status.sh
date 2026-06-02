@@ -240,6 +240,9 @@ assert_eq "$(compute_sticky_verdict_from_body "Status: changes")" "changes" "bar
 assert_eq "$(compute_sticky_verdict_from_body "Recommendation: approve")" "approved" "bare Recommendation: approve = approved"
 assert_eq "$(compute_sticky_verdict_from_body "Recommendation: do not approve")" "changes" "negated Recommendation approval = changes"
 assert_eq "$(compute_sticky_verdict_from_body "Verdict: approval not recommended")" "changes" "approval-not-recommended verdict = changes"
+assert_eq "$(compute_sticky_verdict_from_body "Status: pending approval")" "pending" "pending approval directive stays pending"
+assert_eq "$(compute_sticky_verdict_from_body "Status: approval required")" "pending" "approval required directive stays pending"
+assert_eq "$(compute_sticky_verdict_from_body "Verdict: approved; no changes requested but cannot merge")" "changes" "real blocker wins over approved plus no changes requested"
 
 echo
 echo "----"

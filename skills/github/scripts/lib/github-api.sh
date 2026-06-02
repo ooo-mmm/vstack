@@ -442,27 +442,28 @@ compute_sticky_verdict_from_body() {
         /([Cc]hanges requested|[Nn]eeds changes|[Rr]equest changes|[Aa]pproved for merge|[Rr]eady for merge|Review Complete ✅|\*\*[Aa]pproved\*\*)/ { print; next }
     ' || true)
 
-    local verdict_directives has_explicit_changes has_warning has_explicit_approval
+    local change_verdict_lines verdict_directives has_explicit_changes has_warning has_explicit_approval
+    # Strip only explicitly negated "changes requested" text before scanning
+    # for blockers. Keep the rest of the line so real blockers like
+    # "cannot merge" still win over nearby approval text.
+    change_verdict_lines=$(printf '%s\n' "$verdict_lines" | sed -E 's/[Nn]o changes requested//g; s/0 changes requested//g; s/[Nn]o blocking changes//g')
     verdict_directives=$(printf '%s\n' "$verdict_lines" | grep -iE '(^|[[:space:]])(Verdict|Status|Recommendation):' || true)
-    has_explicit_changes=$(printf '%s\n' "$verdict_lines" | grep -ciE '(^|[^[:alnum:]])(changes requested|needs changes|request changes|changes required|not approved|cannot merge|do not merge|blocks merge|blocked)([^[:alnum:]]|$)' || true)
-    # Do not let "no changes requested" negate an approval.
-    local negated_changes
-    negated_changes=$(printf '%s\n' "$verdict_lines" | grep -ciE 'no changes requested|0 changes requested|no blocking changes' || true)
-    if [[ $negated_changes -gt 0 && $has_explicit_changes -le $negated_changes ]]; then
-        has_explicit_changes=0
-    fi
-    local has_bare_directive_changes has_negated_directive_approval has_bare_directive_approval
-    has_bare_directive_changes=$(printf '%s\n' "$verdict_directives" | grep -ciE '(^|[[:space:]])(Verdict|Status|Recommendation):[[:space:]]*(changes|change|needs changes|request changes|changes requested)\b' || true)
-    if [[ $negated_changes -gt 0 && $has_bare_directive_changes -le $negated_changes ]]; then
-        has_bare_directive_changes=0
-    fi
+    has_explicit_changes=$(printf '%s\n' "$change_verdict_lines" | grep -ciE '(^|[^[:alnum:]])(changes requested|needs changes|request changes|changes required|not approved|cannot merge|do not merge|blocks merge|blocked)([^[:alnum:]]|$)' || true)
+    local change_directives has_bare_directive_changes has_negated_directive_approval has_pending_directive has_bare_directive_approval
+    change_directives=$(printf '%s\n' "$verdict_directives" | sed -E 's/[Nn]o changes requested//g; s/0 changes requested//g; s/[Nn]o blocking changes//g')
+    has_bare_directive_changes=$(printf '%s\n' "$change_directives" | grep -ciE '(^|[[:space:]])(Verdict|Status|Recommendation):[[:space:]]*(changes|change|needs changes|request changes|changes requested)\b' || true)
     has_negated_directive_approval=$(printf '%s\n' "$verdict_directives" | grep -ciE "(^|[[:space:]])(Verdict|Status|Recommendation):.*\b(do not approve|don't approve|cannot approve|not approved|approval not recommended|not recommend approval|recommend against approval)\b" || true)
-    has_bare_directive_approval=$(printf '%s\n' "$verdict_directives" | grep -ciE '(^|[[:space:]])(Verdict|Status|Recommendation):.*\b(approve|approved|approval)\b' || true)
+    has_pending_directive=$(printf '%s\n' "$verdict_directives" | grep -ciE '(^|[[:space:]])(Verdict|Status|Recommendation):.*\b(pending|reviewing|in progress|awaiting approval|needs approval|requires approval|approval required|required approval)\b' || true)
+    has_bare_directive_approval=$(printf '%s\n' "$verdict_directives" | grep -ciE '(^|[[:space:]])(Verdict|Status|Recommendation):.*\b(approve|approved)\b' || true)
     has_warning=$(printf '%s\n' "$verdict_lines" | grep -cE '⚠️|❌' || true)
     has_explicit_approval=$(printf '%s\n' "$verdict_lines" | grep -ciE '✅.*approv|approv(ed|al)|approved for merge|ready for merge|Review Complete ✅|\*\*Approved\*\*' || true)
 
     if [[ $has_explicit_changes -gt 0 || $has_bare_directive_changes -gt 0 || $has_negated_directive_approval -gt 0 || $has_warning -gt 0 ]]; then
         echo "changes"
+        return 0
+    fi
+    if [[ $has_pending_directive -gt 0 ]]; then
+        echo "pending"
         return 0
     fi
     if [[ $has_explicit_approval -gt 0 || $has_bare_directive_approval -gt 0 ]]; then
