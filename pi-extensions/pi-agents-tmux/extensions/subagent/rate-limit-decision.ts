@@ -23,7 +23,7 @@ export const RATE_LIMIT_RESET_MARGIN_MS = 5_000;
 export const RATE_LIMIT_CLOCK_RESET_PAST_TOLERANCE_MS = 10 * 60_000;
 
 export const RATE_LIMIT_ERROR_REGEX =
-	/(temporarily limiting requests|rate[\s_-]?limit(?:ed)?|429|too many requests|(?:you(?:['’]?ve|\s+have)\s+hit\s+your\s+(?:session|usage)\s+limit)|\b(?:session|usage)\s+limit\b|[·•]\s*resets\b|\bresets?\s+(?:at\s+)?\d{1,2}(?::\d{2}){0,2}\s*(?:am|pm)?)/i;
+	/(temporarily limiting requests|rate[\s_-]?limit(?:ed)?|429|529|too many requests|overload(?:ed|ing)?|resource exhausted|stream idle timeout|(?:you(?:['’]?ve|\s+have)\s+hit\s+your\s+(?:session|usage)\s+limit)|\b(?:session|usage)\s+limit\b|[·•]\s*resets\b|\bresets?\s+(?:at\s+)?\d{1,2}(?::\d{2}){0,2}\s*(?:am|pm)?)/i;
 
 export interface RateLimitWatchdogInput {
 	event: unknown;
