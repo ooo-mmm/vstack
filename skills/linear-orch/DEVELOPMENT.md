@@ -19,10 +19,11 @@ bash skills/linear-orch/tests/run-all.sh
 bash skills/linear-orch/tests/run-all.sh flightdeck_mode
 ```
 
-Each test stages a temp repo with a parametrized `gh` stub on `PATH` and exercises the auth ladder — stale-token sanitize, keyring fallback, `.env.local` `GH_BOT_TOKEN` fallback, and the hard "no working auth path" exit (code `3`). Suites:
+Tests stage isolated repos/worktrees with parametrized CLI stubs on `PATH`. The auth suites exercise stale-token sanitize, keyring fallback, `.env.local` `GH_BOT_TOKEN` fallback, and the hard "no working auth path" exit (code `3`); the session-init suite exercises worktree Linear auth diagnostic preservation. Suites:
 
 - `bot_review_wait.sh` — review-wait state machine.
 - `ci_wait.sh` — CI-wait state machine + auth ladder.
 - `flightdeck_mode.sh` — managed-mode detection helper.
 - `merge_pr_sweep.sh` — finalization branch sweep guard.
+- `session_init.sh` — worktree session-init auth reporting.
 - `oc-flightdeck-managed.sh` — OpenCode adapter managed-env propagation.

@@ -54,6 +54,8 @@ Set in `.env` or `.env.local`, or export in the shell. Helper scripts source bot
 
 `bot-review-wait --json` fails fast with JSON `status: "error"` when GitHub auth/API reads are not reliable. If an invalid `GH_TOKEN`/`GITHUB_TOKEN` masks working `gh` keyring auth, it unsets those variables for the wait process and continues with a warning. See [`DEVELOPMENT.md`](./DEVELOPMENT.md) for the full auth fallback details and the test runner.
 
+`session-init --json` preserves the structured Linear `auth-check` diagnostic in `.linear_auth.error`. The value `not installed` means the Linear skill command is missing, not that an API key, 1Password, or Linear API check failed.
+
 ## System Dependencies
 
 - `jq`, `bash` 4+, `flock` (util-linux)
