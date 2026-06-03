@@ -93,6 +93,20 @@ const CLAUDE_USAGE_LIMIT_EVENT = {
 	type: "message",
 };
 
+const CLAUDE_STREAM_IDLE_EVENT = {
+	message: {
+		api: "claude-bridge",
+		errorMessage: "Claude Code stream idle timeout after 90s with no assistant/tool output; treating stalled stream as retryable 529 overloaded/rate limit condition. Retry after 60s.",
+		model: "claude-opus-4-8",
+		provider: "claude-bridge",
+		rateLimitType: "stream_idle",
+		retryAfterMs: 60_000,
+		role: "assistant",
+		stopReason: "error",
+	},
+	type: "message",
+};
+
 const OPENAI_CODEX_RATE_LIMIT_EVENT = {
 	message: {
 		api: "openai-codex",
@@ -208,6 +222,22 @@ describe("decideRateLimitRetry — canonical detection (vstack#108)", () => {
 		expect(decision.hash).toContain("%41");
 		expect(decision.resetSource).toBe("backoff-only");
 		expect(decision.degradedResetSource).toBe(true);
+	});
+
+	test("claude-bridge stream-idle synthetic overload uses SDK retry hint", () => {
+		expect(classifyRateLimitEvent(CLAUDE_STREAM_IDLE_EVENT)).toEqual({ isRateLimitEvent: true });
+		const decision = decideRateLimitRetry({
+			attempt: 0,
+			event: CLAUDE_STREAM_IDLE_EVENT,
+			lastRetryAt: null,
+			now: 1_000_000,
+			paneId: "%41",
+		});
+		expect(decision.kind).toBe("retry-at");
+		if (decision.kind !== "retry-at") throw new Error("expected retry-at");
+		expect(decision.at).toBe(1_000_000 + 60_000);
+		expect(decision.resetSource).toBe("sdk-rate-limit-event");
+		expect(decision.degradedResetSource).toBe(false);
 	});
 
 	test("ladder advances with the attempt counter", () => {
@@ -680,6 +710,7 @@ describe("rate-limit decision parity — false-positive regression coverage (vst
 			...rejectionReasonEvents,
 			{ event: CANONICAL_RATE_LIMIT_EVENT, name: "canonical rate-limit event" },
 			{ event: CLAUDE_SESSION_LIMIT_EVENT, name: "Claude session-limit event" },
+			{ event: CLAUDE_STREAM_IDLE_EVENT, name: "Claude stream-idle overload event" },
 			{ event: CLAUDE_USAGE_LIMIT_EVENT, name: "Claude usage-limit event" },
 		]) {
 			const input = { attempt: 0, event, lastRetryAt: null, now: SESSION_LIMIT_NOW, paneId: "%41" };
