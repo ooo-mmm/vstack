@@ -45,6 +45,16 @@ CLI wrapper for GitHub API operations used in PR workflows. Provides structured 
 
 Most commands accept no PR number to auto-detect from the current branch.
 
+### Diff Summary Helper
+
+`git-diff-summary [-C path] [base-branch|--staged|--head]` is a standalone
+review-routing helper that emits JSON with changed-file domains, scope,
+insert/delete stats, and `risk_flags`. Rust-specific flags
+(`unsafe_code_added`, `repr_c_struct_changed`, `extern_c_changed`,
+`atomics_modified`) scan added lines from `.rs` diffs only, so scripts,
+docs, and other non-Rust files can discuss those tokens without triggering a
+Rust risk route.
+
 ### PR Merge Outcomes
 
 `pr-merge` returns three distinct outcomes — branch on the exit code, not on

@@ -71,13 +71,13 @@ main() {
     # Detect risk flags via grep (avoids passing huge diffs through jq)
     local risk_flags="[]"
     local flags=()
-    local diff_added
-    diff_added=$(git diff $diff_ref 2>/dev/null | grep -E '^\+' || true)
+    local rust_diff_added
+    rust_diff_added=$(git diff $diff_ref -- '*.rs' 2>/dev/null | grep -E '^\+' || true)
 
-    if echo "$diff_added" | grep -qE '^\+.*unsafe '; then flags+=("unsafe_code_added"); fi
-    if echo "$diff_added" | grep -qE '^\+.*#\[repr\(C\)\]'; then flags+=("repr_c_struct_changed"); fi
-    if echo "$diff_added" | grep -qE '^\+.*extern "C"'; then flags+=("extern_c_changed"); fi
-    if echo "$diff_added" | grep -qE '^\+.*(Atomic|atomic::)'; then flags+=("atomics_modified"); fi
+    if echo "$rust_diff_added" | grep -qE '^\+.*unsafe '; then flags+=("unsafe_code_added"); fi
+    if echo "$rust_diff_added" | grep -qE '^\+.*#\[repr\(C\)\]'; then flags+=("repr_c_struct_changed"); fi
+    if echo "$rust_diff_added" | grep -qE '^\+.*extern "C"'; then flags+=("extern_c_changed"); fi
+    if echo "$rust_diff_added" | grep -qE '^\+.*(Atomic|atomic::)'; then flags+=("atomics_modified"); fi
 
     # panic/unwrap only flagged in production source (not tests/benches)
     local prod_paths
