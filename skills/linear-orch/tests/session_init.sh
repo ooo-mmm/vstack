@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# Regression tests for linear-orch/scripts/session-init worktree auth reporting.
+# The worktree fast path must preserve structured linear auth-check failures and
+# reserve "not installed" for a missing linear skill command.
+
+set -euo pipefail
+
+TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
+SCRIPT="$REPO_ROOT/skills/linear-orch/scripts/session-init"
+LINEAR_SKILL="$REPO_ROOT/skills/linear"
+TMP_ROOT="$(mktemp -d)"
+trap 'rm -rf "$TMP_ROOT"' EXIT
+
+PASS=0
+FAIL=0
+
+assert_eq() {
+  local got="$1" want="$2" name="$3"
+  if [[ "$got" == "$want" ]]; then
+    PASS=$((PASS + 1))
+    printf '  ok    %s\n' "$name"
+  else
+    FAIL=$((FAIL + 1))
+    printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$name" "$want" "$got"
+  fi
+}
+
+STUB_BIN="$TMP_ROOT/bin"
+mkdir -p "$STUB_BIN"
+
+cat >"$STUB_BIN/git" <<'SH'
+#!/usr/bin/env bash
+case "$*" in
+  "rev-parse --show-toplevel") printf '%s\n' "${TEST_PROJECT_ROOT:?}" ;;
+  "rev-parse --git-common-dir") printf '%s\n' "${TEST_PROJECT_ROOT:?}/../main/.git" ;;
+  "branch --show-current") printf '%s\n' "issue-322" ;;
+  *) exit 1 ;;
+esac
+SH
+chmod +x "$STUB_BIN/git"
+
+cat >"$STUB_BIN/op" <<'SH'
+#!/usr/bin/env bash
+echo 'fake op failure' >&2
+exit 1
+SH
+chmod +x "$STUB_BIN/op"
+
+make_worktree() {
+  local name="$1" with_linear="${2:-yes}"
+  local wt="$TMP_ROOT/$name"
+  mkdir -p "$wt/.agents/skills"
+  if [[ "$with_linear" == "yes" ]]; then
+    cp -R "$LINEAR_SKILL" "$wt/.agents/skills/linear"
+  fi
+  printf 'LINEAR_API_KEY=op://vault/item/field\n' >"$wt/.env.local"
+  printf '%s\n' "$wt"
+}
+
+run_session_init() {
+  local wt="$1"
+  (
+    cd "$wt"
+    TEST_PROJECT_ROOT="$wt" PATH="$STUB_BIN:$PATH" "$SCRIPT" --json
+  )
+}
+
+echo "=== session-init worktree Linear auth diagnostics ==="
+
+WT_OP_FAIL="$(make_worktree wt-op-fail yes)"
+out="$(run_session_init "$WT_OP_FAIL")"
+err="$(jq -r '.linear_auth.error // empty' <<<"$out")"
+ok="$(jq -r '.linear_auth.ok // false' <<<"$out")"
+assert_eq "$ok" "false" "1Password resolution failure reports ok=false"
+assert_eq "$err" "Failed to resolve LINEAR_API_KEY from 1Password. Run: op signin" "1Password resolution failure preserves auth-check error"
+
+WT_MISSING="$(make_worktree wt-missing-linear no)"
+out="$(run_session_init "$WT_MISSING")"
+err="$(jq -r '.linear_auth.error // empty' <<<"$out")"
+ok="$(jq -r '.linear_auth.ok // false' <<<"$out")"
+assert_eq "$ok" "false" "missing linear command reports ok=false"
+assert_eq "$err" "not installed" "missing linear command reports not installed"
+
+printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
+[[ "$FAIL" -eq 0 ]]

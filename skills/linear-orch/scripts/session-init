@@ -137,6 +137,26 @@ json_is_type() {
   jq -e --arg type "$expected_type" 'type == $type' >/dev/null 2>&1 <<<"$json"
 }
 
+linear_auth_check() {
+  local output=""
+  local rc=0
+
+  if [[ ! -x "$LINEAR" ]]; then
+    printf '%s' '{"ok":false,"error":"not installed"}'
+    return 1
+  fi
+
+  output=$("$LINEAR" auth-check 2>&1) || rc=$?
+
+  if ! json_is_type object "$output"; then
+    printf '%s' '{"ok":false,"error":"auth-check failed"}'
+    return 1
+  fi
+
+  jq -c 'if has("ok") then . else . + {ok: false} end' <<<"$output"
+  return "$rc"
+}
+
 # Main sessions should use the user's repo token; worktree sessions prefer the bot token.
 GH_MAIN_TOKEN=$(resolve_github_token_var GH_TOKEN 2>/dev/null || true)
 GH_BOT_TOKEN_RESOLVED=$(resolve_github_token_var GH_BOT_TOKEN 2>/dev/null || true)
@@ -221,9 +241,7 @@ if [[ -n "$GIT_COMMON_DIR" && "$GIT_COMMON_DIR" != ".git" && "$GIT_COMMON_DIR" !
   WT_GH_OK="false"
   WT_GH_TOKEN="${GH_BOT_TOKEN_RESOLVED:-$GH_MAIN_TOKEN}"
   gh_with_token "$WT_GH_TOKEN" api user &>/dev/null && WT_GH_OK="true"
-  if ! WT_LINEAR=$(json_or_default '{"ok":false,"error":"auth-check failed"}' object "$LINEAR" auth-check 2>/dev/null); then
-    WT_LINEAR='{"ok":false,"error":"not installed"}'
-  fi
+  WT_LINEAR=$(linear_auth_check 2>/dev/null || true)
   WT_LINEAR_OK=$(echo "$WT_LINEAR" | jq -r '.ok // false')
   WT_LINEAR_ERR=$(echo "$WT_LINEAR" | jq -r '.error // empty')
 
