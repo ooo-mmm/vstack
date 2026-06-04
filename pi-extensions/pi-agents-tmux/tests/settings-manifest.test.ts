@@ -3,13 +3,16 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { settingNumber } from "../extensions/subagent/settings.js";
+import { bgTaskTimeoutMs, DEFAULT_BG_TASK_TIMEOUT_MS, settingNumber } from "../extensions/subagent/settings.js";
 import { MAX_CONCURRENCY } from "../extensions/subagent/types.js";
 
 type ManifestSetting = {
+	apply?: string;
+	category?: string;
 	key: string;
 	default?: unknown;
 	description?: string;
+	type?: string;
 };
 
 function manifestSettings(): ManifestSetting[] {
@@ -36,6 +39,28 @@ test("settings metadata keeps maxConcurrency visible and scoped", () => {
 	assert.match(maxConcurrency.description ?? "", /one-shot\/background agent executions/i);
 	assert.match(maxConcurrency.description ?? "", /parallel dispatch queue/i);
 	assert.match(maxConcurrency.description ?? "", /Persistent pane agents occupy a worker only until launch\/enqueue/i);
+});
+
+test("settings metadata keeps bgTaskTimeoutMs visible and disableable", () => {
+	const bgTimeout = manifestSettings().find((item) => item.key === "bgTaskTimeoutMs");
+	assert.ok(bgTimeout, "bgTaskTimeoutMs setting remains visible");
+	assert.equal(bgTimeout.default, DEFAULT_BG_TASK_TIMEOUT_MS);
+	assert.equal(bgTimeout.type, "number");
+	assert.equal(bgTimeout.category, "Execution");
+	assert.equal(bgTimeout.apply, "live");
+	assert.match(bgTimeout.description ?? "", /marked unresponsive/i);
+	assert.match(bgTimeout.description ?? "", /0 to disable/i);
+
+	const cwd = mkdtempSync(join(tmpdir(), "pi-agents-bg-timeout-"));
+	writeProjectSettings(cwd, { bgTaskTimeoutMs: 0 });
+	const previousPiDir = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = join(cwd, "agent");
+	try {
+		assert.equal(bgTaskTimeoutMs(cwd), 0);
+	} finally {
+		if (previousPiDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previousPiDir;
+	}
 });
 
 test("legacy maxParallelTasks setting does not affect maxConcurrency", () => {

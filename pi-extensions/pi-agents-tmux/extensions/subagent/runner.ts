@@ -25,6 +25,7 @@ import {
 } from "./paths.js";
 import { randomHex } from "./random.js";
 import {
+	bgTaskTimeoutMs,
 	resultLimits,
 	selectedEffortForAgent,
 	selectedModelForAgent,
@@ -59,6 +60,12 @@ let spawnProcess: SpawnProcess = spawn;
 const MAX_RESULT_DIAGNOSTICS = 12;
 const BG_EXCLUDED_TOOLS = ["complete_subagent"];
 const BG_EXCLUDED_TOOL_SET = new Set(BG_EXCLUDED_TOOLS.map(normalizedPiToolName));
+const BG_TIMEOUT_KILL_GRACE_MS = 5_000;
+let bgTimeoutKillGraceMsForTests: number | undefined;
+
+export function setBgTimeoutKillGraceMsForTests(ms?: number): void {
+	bgTimeoutKillGraceMsForTests = ms;
+}
 
 export function setSingleAgentSpawnForTests(spawner?: SpawnProcess): void {
 	spawnProcess = spawner ?? spawn;
@@ -156,6 +163,54 @@ function compactThenEmptySummary(cwdSnapshot?: CwdSnapshot): string {
 	if (!cwdSnapshot) return base;
 	const dirty = cwdSnapshot.dirty ? "dirty" : "clean";
 	return `${base} HEAD ${cwdSnapshot.head.slice(0, 12)} (${dirty}) ${cwdSnapshot.lastCommit.subject}`;
+}
+
+function formatDurationMs(ms: number): string {
+	if (ms < 1000) return `${ms}ms`;
+	const seconds = ms / 1000;
+	if (seconds < 60) return `${Math.round(seconds)}s`;
+	const minutes = seconds / 60;
+	if (minutes < 60) return `${Math.round(minutes)}m`;
+	return `${Math.round(minutes / 60)}h`;
+}
+
+interface SignalOutcome {
+	error?: string;
+	ok: boolean;
+	signal: NodeJS.Signals;
+	target: "child" | "process-group";
+}
+
+function signalProcessGroupOrChild(proc: ReturnType<SpawnProcess>, signal: NodeJS.Signals): SignalOutcome[] {
+	const outcomes: SignalOutcome[] = [];
+	const pid = typeof proc.pid === "number" && proc.pid > 0 ? proc.pid : undefined;
+	if (pid && process.platform !== "win32") {
+		try {
+			process.kill(-pid, signal);
+			return [{ ok: true, signal, target: "process-group" }];
+		} catch (error) {
+			outcomes.push({ error: stringifyError(error), ok: false, signal, target: "process-group" });
+		}
+	}
+	try {
+		const ok = proc.kill(signal);
+		outcomes.push({
+			error: ok ? undefined : "proc.kill returned false",
+			ok,
+			signal,
+			target: "child",
+		});
+	} catch (error) {
+		outcomes.push({ error: stringifyError(error), ok: false, signal, target: "child" });
+	}
+	return outcomes;
+}
+
+function formatSignalOutcomes(outcomes: SignalOutcome[]): string {
+	return outcomes.map((outcome) => {
+		const status = outcome.ok ? "delivered" : `failed${outcome.error ? `: ${outcome.error}` : ""}`;
+		return `${outcome.signal} ${outcome.target} ${status}`;
+	}).join("; ");
 }
 
 export function formatTruncationNotice(
@@ -582,6 +637,7 @@ async function runSingleAgentAttempt(
 
 		args.push(`Task: ${task}`);
 		let wasAborted = false;
+		let timedOut = false;
 
 		const exitCode = await new Promise<number>((resolve) => {
 			const invocation = getPiInvocation(args);
@@ -606,18 +662,55 @@ async function runSingleAgentAttempt(
 			}
 			const proc = spawnProcess(invocation.command, invocation.args, {
 				cwd: cwd ?? defaultCwd,
+				detached: process.platform !== "win32",
 				env: childEnv,
 				shell: false,
 				stdio: ["ignore", "pipe", "pipe"],
 			});
 			const keepFullTranscript = transcriptFullStreamEnabled();
 			let buffer = "";
+			let processClosed = false;
+			let resolved = false;
 			let sawSessionCompact = false;
 			let compactThenEmptyAgentEnd = false;
 			let postCompactAssistantHasText = false;
 			let latestFilteredMessageUpdate: any;
+			const timeoutMs = bgTaskTimeoutMs(cwd ?? defaultCwd);
+			let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
+			let killEscalationTimer: ReturnType<typeof setTimeout> | undefined;
+			let abortListener: (() => void) | undefined;
+			const killGraceMs = bgTimeoutKillGraceMsForTests ?? BG_TIMEOUT_KILL_GRACE_MS;
 
-			const flushFilteredMessageUpdate = (reason: "nonzero_exit" | "process_error") => {
+			const clearTimeoutTimer = () => {
+				if (!timeoutTimer) return;
+				clearTimeout(timeoutTimer);
+				timeoutTimer = undefined;
+			};
+
+			const clearKillEscalationTimer = () => {
+				if (!killEscalationTimer) return;
+				clearTimeout(killEscalationTimer);
+				killEscalationTimer = undefined;
+			};
+
+			const resolveOnce = (code: number) => {
+				if (resolved) return;
+				resolved = true;
+				clearTimeoutTimer();
+				if (signal && abortListener) signal.removeEventListener("abort", abortListener);
+				Promise.allSettled(transcriptWrites).finally(() => resolve(code));
+			};
+
+			const scheduleKillEscalation = () => {
+				if (killEscalationTimer) return;
+				killEscalationTimer = setTimeout(() => {
+					if (processClosed) return;
+					signalProcessGroupOrChild(proc, "SIGKILL");
+				}, killGraceMs);
+				killEscalationTimer.unref?.();
+			};
+
+			const flushFilteredMessageUpdate = (reason: "nonzero_exit" | "process_error" | "timeout") => {
 				if (keepFullTranscript || !latestFilteredMessageUpdate) return;
 				appendTranscript({
 					stream: "stdout",
@@ -627,6 +720,14 @@ async function runSingleAgentAttempt(
 					reason,
 				});
 				latestFilteredMessageUpdate = undefined;
+			};
+
+			const appendTimeoutDiagnostic = (diagnostics: string[], diagnostic: string) => {
+				diagnostics.push(diagnostic);
+				appendResultDiagnostic(currentResult, diagnostic);
+				appendTranscript({ type: "diagnostic", diagnostic, attempt });
+				currentResult.errorMessage = diagnostics.join("\n");
+				currentResult.stderr = [currentResult.stderr, diagnostic].filter(Boolean).join("\n");
 			};
 
 			const processLine = (line: string) => {
@@ -701,6 +802,7 @@ async function runSingleAgentAttempt(
 			};
 
 			proc.stdout.on("data", (data) => {
+				if (resolved) return;
 				buffer += data.toString();
 				const lines = buffer.split("\n");
 				buffer = lines.pop() || "";
@@ -708,39 +810,73 @@ async function runSingleAgentAttempt(
 			});
 
 			proc.stderr.on("data", (data) => {
+				if (resolved) return;
 				const text = data.toString();
 				currentResult.stderr += text;
 				appendTranscript({ stream: "stderr", text });
 			});
 
 			proc.on("close", (code, closeSignal) => {
+				processClosed = true;
+				clearKillEscalationTimer();
+				if (resolved) return;
 				if (buffer.trim()) processLine(buffer);
 				if (compactThenEmptyAgentEnd) currentResult.needsCompletionReason = "compact-then-empty";
 				const signalName = typeof closeSignal === "string" && closeSignal ? closeSignal : undefined;
-				const exitCode = signalName || wasAborted ? (code && code !== 0 ? code : 1) : (code ?? 0);
+				const exitCode = signalName || wasAborted || timedOut ? (code && code !== 0 ? code : 1) : (code ?? 0);
 				if (signalName && !currentResult.errorMessage) currentResult.errorMessage = `Agent process terminated by signal ${signalName}`;
 				if (exitCode !== 0) flushFilteredMessageUpdate("nonzero_exit");
 				appendTranscript({ type: "exit", code: exitCode, ...(signalName ? { signal: signalName } : {}), attempt });
-				Promise.allSettled(transcriptWrites).finally(() => resolve(exitCode));
+				resolveOnce(exitCode);
 			});
 
 			proc.on("error", (error) => {
+				if (resolved) return;
 				currentResult.errorMessage = stringifyError(error);
 				flushFilteredMessageUpdate("process_error");
 				appendTranscript({ type: "process_error", error: stringifyError(error), attempt });
-				Promise.allSettled(transcriptWrites).finally(() => resolve(1));
+				resolveOnce(1);
 			});
 
 			if (signal) {
 				const killProc = () => {
 					wasAborted = true;
-					proc.kill("SIGTERM");
-					setTimeout(() => {
-						if (!proc.killed) proc.kill("SIGKILL");
-					}, 5000);
+					signalProcessGroupOrChild(proc, "SIGTERM");
+					scheduleKillEscalation();
 				};
 				if (signal.aborted) killProc();
-				else signal.addEventListener("abort", killProc, { once: true });
+				else {
+					abortListener = killProc;
+					signal.addEventListener("abort", killProc, { once: true });
+				}
+			}
+
+			if (timeoutMs > 0) {
+				timeoutTimer = setTimeout(async () => {
+					if (resolved || processClosed) return;
+					timedOut = true;
+					const message = `Agent ${agent.name} exceeded bg task timeout (${formatDurationMs(timeoutMs)}) without completing; marking it unresponsive and terminating the child process group.`;
+					const timeoutDiagnostics = [message];
+					currentResult.status = "failed";
+					currentResult.stopReason = "unresponsive_timeout";
+					currentResult.errorMessage = message;
+					currentResult.stderr = [currentResult.stderr, message].filter(Boolean).join("\n");
+					appendResultDiagnostic(currentResult, message);
+					appendTranscript({ type: "timeout", reason: "bg-task-timeout", timeoutMs, attempt });
+					flushFilteredMessageUpdate("timeout");
+					emitUpdate();
+					const termOutcomes = signalProcessGroupOrChild(proc, "SIGTERM");
+					appendTimeoutDiagnostic(timeoutDiagnostics, `Timeout termination SIGTERM: ${formatSignalOutcomes(termOutcomes)}`);
+					await new Promise((resume) => setTimeout(resume, killGraceMs));
+					if (resolved) return;
+					if (!resolved && !processClosed) {
+						const killOutcomes = signalProcessGroupOrChild(proc, "SIGKILL");
+						appendTimeoutDiagnostic(timeoutDiagnostics, `Timeout termination SIGKILL: ${formatSignalOutcomes(killOutcomes)}`);
+						appendTimeoutDiagnostic(timeoutDiagnostics, `Timeout termination unconfirmed: child process did not emit close within ${formatDurationMs(killGraceMs)} after SIGTERM.`);
+					}
+					resolveOnce(1);
+				}, timeoutMs);
+				timeoutTimer.unref?.();
 			}
 		});
 
@@ -823,6 +959,7 @@ async function runSingleAgentAttempt(
 			model: currentResult.model,
 			effort: currentResult.effort,
 			usage: currentResult.usage,
+			reason: failed ? currentResult.stopReason : undefined,
 			error: failed ? currentResult.errorMessage || currentResult.stderr || undefined : undefined,
 			sessionMode: currentResult.sessionMode,
 			sessionKey: session.explicit ? session.key : undefined,

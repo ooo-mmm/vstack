@@ -21,6 +21,7 @@ import {
 } from "../extensions/subagent/sessions.js";
 import {
 	runSingleAgent,
+	setBgTimeoutKillGraceMsForTests,
 	setGitExecFileForTests,
 	setSingleAgentSpawnForTests,
 } from "../extensions/subagent/runner.js";
@@ -59,21 +60,23 @@ function testAgent(): AgentConfig {
 	};
 }
 
-function installMockSpawn(scenarios: Array<{ code?: number | null; error?: Error | string; signal?: string; stderr?: string; stdout?: string }>) {
-	const calls: Array<{ args: string[] }> = [];
+function installMockSpawn(scenarios: Array<{ code?: number | null; delayMs?: number; error?: Error | string; signal?: string; stderr?: string; stdout?: string }>) {
+	const calls: Array<{ args: string[]; kills: string[] }> = [];
 	setSingleAgentSpawnForTests(((command: string, args: string[]) => {
 		void command;
-		calls.push({ args });
+		const call = { args, kills: [] as string[] };
+		calls.push(call);
 		const proc = new EventEmitter() as any;
 		proc.stdout = new EventEmitter();
 		proc.stderr = new EventEmitter();
 		proc.killed = false;
-		proc.kill = () => {
+		proc.kill = (signal?: string) => {
 			proc.killed = true;
+			call.kills.push(signal ?? "SIGTERM");
 			return true;
 		};
 		const scenario = scenarios.shift();
-		queueMicrotask(() => {
+		const finish = () => {
 			if (scenario?.stdout) proc.stdout.emit("data", Buffer.from(scenario.stdout));
 			if (scenario?.stderr) proc.stderr.emit("data", Buffer.from(scenario.stderr));
 			if (scenario?.error) {
@@ -81,7 +84,40 @@ function installMockSpawn(scenarios: Array<{ code?: number | null; error?: Error
 				return;
 			}
 			proc.emit("close", scenario?.signal ? (scenario.code ?? null) : (scenario?.code ?? 0), scenario?.signal ?? null);
-		});
+		};
+		if (scenario?.delayMs !== undefined) setTimeout(finish, scenario.delayMs);
+		else queueMicrotask(finish);
+		return proc;
+	}) as any);
+	return calls;
+}
+
+function installHangingMockSpawn(options: {
+	closeOnSignal?: string;
+	kill?: (signal: string, count: number) => boolean;
+	pid?: number;
+	stdout?: string;
+} = {}) {
+	const calls: Array<{ args: string[]; detached?: boolean; kills: string[] }> = [];
+	setSingleAgentSpawnForTests(((command: string, args: string[], spawnOptions?: { detached?: boolean }) => {
+		void command;
+		const call = { args, detached: spawnOptions?.detached, kills: [] as string[] };
+		calls.push(call);
+		const proc = new EventEmitter() as any;
+		proc.stdout = new EventEmitter();
+		proc.stderr = new EventEmitter();
+		if (options.pid) proc.pid = options.pid;
+		proc.killed = false;
+		proc.kill = (signal?: string) => {
+			proc.killed = true;
+			const normalizedSignal = signal ?? "SIGTERM";
+			call.kills.push(normalizedSignal);
+			if (options.closeOnSignal === normalizedSignal) {
+				queueMicrotask(() => proc.emit("close", null, normalizedSignal));
+			}
+			return options.kill?.(normalizedSignal, call.kills.length) ?? true;
+		};
+		if (options.stdout) queueMicrotask(() => proc.stdout.emit("data", Buffer.from(options.stdout!)));
 		return proc;
 	}) as any);
 	return calls;
@@ -351,6 +387,287 @@ test("failed oneshot transcript does not flush a message_update finalized by mes
 	}
 	if (previousFull === undefined) delete process.env.PI_AGENTS_TMUX_TRANSCRIPT_FULL;
 	else process.env.PI_AGENTS_TMUX_TRANSCRIPT_FULL = previousFull;
+});
+
+test("bg one-shot timeout returns failed result and kills hung child", async () => {
+	const cwd = tempRuntime();
+	writeSettings(cwd, { bgTaskTimeoutMs: 5 });
+	const runtimeRoot = tempRuntime();
+	const events: Array<{ name: string; payload: any }> = [];
+	setBgTimeoutKillGraceMsForTests(1);
+	const calls = installHangingMockSpawn({
+		stdout: bridgeStdout([
+			shapedStreamEvent("top-level", "message_update", { message: { role: "assistant", content: [{ type: "text", text: "stuck in tool loop" }] } }),
+		]),
+	});
+	try {
+		const result = await runSingleAgent(
+			cwd,
+			runtimeRoot,
+			[testAgent()],
+			"reviewer-test",
+			"hang forever",
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			mockPiEvents(events),
+			undefined,
+			undefined,
+			makeDetails,
+		);
+		assert.equal(result.exitCode, 1);
+		assert.equal(result.status, "failed");
+		assert.equal(result.stopReason, "unresponsive_timeout");
+		assert.match(result.errorMessage ?? "", /exceeded bg task timeout/);
+		assert.match(result.errorMessage ?? "", /Timeout termination SIGTERM: SIGTERM child delivered/);
+		assert.match(result.errorMessage ?? "", /Timeout termination SIGKILL: SIGKILL child delivered/);
+		assert.match(result.errorMessage ?? "", /Timeout termination unconfirmed/);
+		assert.equal(calls.length, 1);
+		assert.deepEqual(calls[0]?.kills, ["SIGTERM", "SIGKILL"]);
+		const content = readFileSync(result.transcriptPath!, "utf8");
+		assert.match(content, /stuck in tool loop/);
+		assert.match(content, /"buffered":true/);
+		assert.match(content, /"reason":"timeout"/);
+		assert.match(content, /Timeout termination SIGTERM/);
+		assert.match(content, /Timeout termination SIGKILL/);
+		const failed = events.find((event) => event.name === "subagents:failed");
+		assert.equal(failed?.payload.reason, "unresponsive_timeout");
+		assert.equal(failed?.payload.status, "failed");
+		assert.match(failed?.payload.error ?? "", /Timeout termination unconfirmed/);
+	} finally {
+		setSingleAgentSpawnForTests();
+		setBgTimeoutKillGraceMsForTests();
+	}
+});
+
+test("bg one-shot timeout records termination failure diagnostics", async () => {
+	const cwd = tempRuntime();
+	writeSettings(cwd, { bgTaskTimeoutMs: 5 });
+	setBgTimeoutKillGraceMsForTests(1);
+	const calls = installHangingMockSpawn({ kill: () => false });
+	try {
+		const result = await runSingleAgent(
+			cwd,
+			tempRuntime(),
+			[testAgent()],
+			"reviewer-test",
+			"ignore termination",
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			mockPiEvents([]),
+			undefined,
+			undefined,
+			makeDetails,
+		);
+		assert.equal(result.stopReason, "unresponsive_timeout");
+		assert.deepEqual(calls[0]?.kills, ["SIGTERM", "SIGKILL"]);
+		assert.match(result.errorMessage ?? "", /SIGTERM child failed: proc.kill returned false/);
+		assert.match(result.errorMessage ?? "", /SIGKILL child failed: proc.kill returned false/);
+		assert.match(readFileSync(result.transcriptPath!, "utf8"), /proc.kill returned false/);
+	} finally {
+		setSingleAgentSpawnForTests();
+		setBgTimeoutKillGraceMsForTests();
+	}
+});
+
+test("bg one-shot timeout uses detached process-group termination when pid is available", async () => {
+	const cwd = tempRuntime();
+	writeSettings(cwd, { bgTaskTimeoutMs: 5 });
+	setBgTimeoutKillGraceMsForTests(1);
+	const calls = installHangingMockSpawn({ pid: 12345 });
+	const processKillCalls: Array<{ pid: number; signal?: string | number }> = [];
+	const previousKill = process.kill;
+	(process as unknown as { kill: typeof process.kill }).kill = ((pid: number, signal?: string | number) => {
+		processKillCalls.push({ pid, signal });
+		return true;
+	}) as typeof process.kill;
+	try {
+		const result = await runSingleAgent(
+			cwd,
+			tempRuntime(),
+			[testAgent()],
+			"reviewer-test",
+			"hang with pid",
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			mockPiEvents([]),
+			undefined,
+			undefined,
+			makeDetails,
+		);
+		assert.equal(result.stopReason, "unresponsive_timeout");
+		assert.equal(calls[0]?.detached, process.platform !== "win32");
+		assert.deepEqual(calls[0]?.kills, []);
+		assert.deepEqual(processKillCalls, [
+			{ pid: -12345, signal: "SIGTERM" },
+			{ pid: -12345, signal: "SIGKILL" },
+		]);
+		assert.match(result.errorMessage ?? "", /SIGTERM process-group delivered/);
+		assert.match(result.errorMessage ?? "", /SIGKILL process-group delivered/);
+	} finally {
+		(process as unknown as { kill: typeof process.kill }).kill = previousKill;
+		setSingleAgentSpawnForTests();
+		setBgTimeoutKillGraceMsForTests();
+	}
+});
+
+test("bg one-shot timeout falls back to child kill when process-group signal fails", async () => {
+	const cwd = tempRuntime();
+	writeSettings(cwd, { bgTaskTimeoutMs: 5 });
+	setBgTimeoutKillGraceMsForTests(1);
+	const calls = installHangingMockSpawn({ pid: 12345 });
+	const previousKill = process.kill;
+	(process as unknown as { kill: typeof process.kill }).kill = ((pid: number, signal?: string | number) => {
+		throw new Error(`cannot signal ${pid} with ${String(signal)}`);
+	}) as typeof process.kill;
+	try {
+		const result = await runSingleAgent(
+			cwd,
+			tempRuntime(),
+			[testAgent()],
+			"reviewer-test",
+			"hang with failed process group",
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			mockPiEvents([]),
+			undefined,
+			undefined,
+			makeDetails,
+		);
+		assert.equal(result.stopReason, "unresponsive_timeout");
+		assert.equal(calls[0]?.detached, process.platform !== "win32");
+		assert.deepEqual(calls[0]?.kills, ["SIGTERM", "SIGKILL"]);
+		assert.match(result.errorMessage ?? "", /SIGTERM process-group failed: .*cannot signal -12345/);
+		assert.match(result.errorMessage ?? "", /SIGTERM child delivered/);
+		assert.match(result.errorMessage ?? "", /SIGKILL process-group failed: .*cannot signal -12345/);
+		assert.match(result.errorMessage ?? "", /SIGKILL child delivered/);
+	} finally {
+		(process as unknown as { kill: typeof process.kill }).kill = previousKill;
+		setSingleAgentSpawnForTests();
+		setBgTimeoutKillGraceMsForTests();
+	}
+});
+
+test("bg one-shot timeout observes close after SIGTERM without escalating to SIGKILL", async () => {
+	const cwd = tempRuntime();
+	writeSettings(cwd, { bgTaskTimeoutMs: 5 });
+	setBgTimeoutKillGraceMsForTests(20);
+	const events: Array<{ name: string; payload: any }> = [];
+	const calls = installHangingMockSpawn({ closeOnSignal: "SIGTERM" });
+	try {
+		const result = await runSingleAgent(
+			cwd,
+			tempRuntime(),
+			[testAgent()],
+			"reviewer-test",
+			"close after timeout term",
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			mockPiEvents(events),
+			undefined,
+			undefined,
+			makeDetails,
+		);
+		assert.equal(result.exitCode, 1);
+		assert.equal(result.stopReason, "unresponsive_timeout");
+		assert.deepEqual(calls[0]?.kills, ["SIGTERM"]);
+		assert.match(result.errorMessage ?? "", /Timeout termination SIGTERM/);
+		assert.doesNotMatch(result.errorMessage ?? "", /Timeout termination SIGKILL/);
+		assert.doesNotMatch(result.errorMessage ?? "", /Timeout termination unconfirmed/);
+		const failed = events.find((event) => event.name === "subagents:failed");
+		assert.match(failed?.payload.error ?? "", /Timeout termination SIGTERM/);
+		assert.doesNotMatch(failed?.payload.error ?? "", /Timeout termination SIGKILL/);
+		const content = readFileSync(result.transcriptPath!, "utf8");
+		assert.match(content, /Timeout termination SIGTERM/);
+		assert.doesNotMatch(content, /Timeout termination SIGKILL/);
+		assert.doesNotMatch(content, /Timeout termination unconfirmed/);
+	} finally {
+		setSingleAgentSpawnForTests();
+		setBgTimeoutKillGraceMsForTests();
+	}
+});
+
+test("bg one-shot timeout disabled preserves a delayed successful exit", async () => {
+	const cwd = tempRuntime();
+	writeSettings(cwd, { bgTaskTimeoutMs: 0 });
+	const events: Array<{ name: string; payload: any }> = [];
+	const calls = installMockSpawn([
+		{ code: 0, delayMs: 10, stdout: bridgeStdout([
+			bridgeEvent("message_end", { message: { role: "assistant", content: [{ type: "text", text: "done after delay" }], usage: { input: 1, output: 1, totalTokens: 2 } } }),
+		]) },
+	]);
+	try {
+		const result = await runSingleAgent(
+			cwd,
+			tempRuntime(),
+			[testAgent()],
+			"reviewer-test",
+			"finish after disabled timeout",
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			mockPiEvents(events),
+			undefined,
+			undefined,
+			makeDetails,
+		);
+		assert.equal(result.exitCode, 0);
+		assert.notEqual(result.stopReason, "unresponsive_timeout");
+		assert.deepEqual(calls[0]?.kills, []);
+		assert.equal(events.some((event) => event.name === "subagents:failed"), false);
+		assert.equal(events.find((event) => event.name === "subagents:completed")?.payload.status, "completed");
+	} finally {
+		setSingleAgentSpawnForTests();
+	}
+});
+
+test("bg one-shot normal exits before active timeout keep original lifecycle", async () => {
+	const cwd = tempRuntime();
+	writeSettings(cwd, { bgTaskTimeoutMs: 250 });
+	const cases: Array<{ code?: number | null; expectedEvent: string; expectedExitCode: number; expectedStatus: string; label: string; signal?: string }> = [
+		{ code: 0, expectedEvent: "subagents:completed", expectedExitCode: 0, expectedStatus: "completed", label: "success" },
+		{ code: 2, expectedEvent: "subagents:failed", expectedExitCode: 2, expectedStatus: "failed", label: "nonzero" },
+		{ code: null, expectedEvent: "subagents:failed", expectedExitCode: 1, expectedStatus: "failed", label: "signal", signal: "SIGTERM" },
+	];
+	for (const item of cases) {
+		const events: Array<{ name: string; payload: any }> = [];
+		const calls = installMockSpawn([{ code: item.code, delayMs: 5, signal: item.signal }]);
+		try {
+			const result = await runSingleAgent(
+				cwd,
+				tempRuntime(),
+				[testAgent()],
+				"reviewer-test",
+				`finish before timeout ${item.label}`,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				mockPiEvents(events),
+				undefined,
+				undefined,
+				makeDetails,
+			);
+			assert.equal(result.exitCode, item.expectedExitCode, item.label);
+			assert.notEqual(result.stopReason, "unresponsive_timeout", item.label);
+			assert.deepEqual(calls[0]?.kills, [], item.label);
+			const lifecycle = events.find((event) => event.name === item.expectedEvent);
+			assert.equal(lifecycle?.payload.status, item.expectedStatus, item.label);
+			assert.notEqual(lifecycle?.payload.reason, "unresponsive_timeout", item.label);
+		} finally {
+			setSingleAgentSpawnForTests();
+		}
+	}
 });
 
 test("oneshot transcript keeps message_update snapshots when full stream env is enabled", async () => {
