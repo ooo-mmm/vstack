@@ -21,6 +21,7 @@ Delegate work to specialized agents from a running Pi session. Agents run either
 - `taskId` retrieval, mid-run steering, and pane stop without losing memory. When `pi-session-bridge` provides compact input events, trace views humanize `steer` vs `followUp` input records instead of showing raw JSON only.
 - Stop kills the tmux process but preserves the session — next launch resumes it.
 - Bg agents get fresh sessions per call by default; opt into shared memory with an explicit `sessionKey`. Bg completions are captured from the child process's final assistant output; `complete_subagent` is reserved for persistent pane/follow-up tasks and is withheld from bg children.
+- Bg one-shot children have a process-level deadline (`bgTaskTimeoutMs`, default 30 minutes). A child that never exits is marked failed with `reason: "unresponsive_timeout"`, its process group is terminated, and the parent parallel queue keeps draining instead of waiting forever.
 - Inventory-aware launch guard rejects unknown agent names with the available list.
 - Large parallel calls run through a flat worker pool capped at `maxConcurrency`; callers do not need to split requests. Pane idle waits use `wait_for_subagent_idle`.
 - Persistent panes auto-resume after detected provider rate limits. Scheduling prefers validated structured quota snapshots (Claude usage endpoints, Codex/OpenAI `wham/usage` fixtures/seams, SDK reset/retry fields) and records `resetSource`; malformed quota data falls back with sanitized diagnostics, and localized `resets <time>` prose is only a degraded fallback before plain backoff.
@@ -144,6 +145,7 @@ There is one execution-concurrency knob — `maxConcurrency` — and it caps con
 | --- | --- |
 | Enable agents | Master toggle for the subagent tools, dashboard, and pane helpers. |
 | Max concurrency | Cap on concurrent one-shot/background agent executions in the parallel dispatch queue; persistent pane agents only occupy the queue until launch/enqueue. |
+| Background task timeout | Deadline in milliseconds for bg one-shot child processes. On timeout the child is marked failed with `reason: "unresponsive_timeout"` and its process group is terminated. Set `0` to disable. |
 | Subagent model source | Use the agent's `model:` or inherit the parent session model. |
 | Subagent thinking source | Use the model `:effort` suffix or inherit the parent thinking level. |
 | Reused session budget threshold | Fraction of model context allowed before an explicit `sessionKey` lane is considered too full. |

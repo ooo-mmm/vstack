@@ -14,6 +14,8 @@ import {
 } from "./types.js";
 import { glyphStyle } from "./glyphs.js";
 
+export const DEFAULT_BG_TASK_TIMEOUT_MS = 30 * 60 * 1000;
+
 export function expandHome(input: string): string {
 	if (input === "~") return os.homedir();
 	if (input.startsWith("~/")) return path.join(os.homedir(), input.slice(2));
@@ -202,6 +204,10 @@ export function resultLimits(cwd?: string): ResultLimits {
 		maxBytes: Math.max(1, Math.floor(settingNumber("resultMaxBytes", DEFAULT_RESULT_MAX_BYTES, cwd))),
 		maxLines: Math.max(1, Math.floor(settingNumber("resultMaxLines", DEFAULT_RESULT_MAX_LINES, cwd))),
 	};
+}
+
+export function bgTaskTimeoutMs(cwd?: string): number {
+	return Math.max(0, Math.floor(settingNumber("bgTaskTimeoutMs", DEFAULT_BG_TASK_TIMEOUT_MS, cwd)));
 }
 
 export function splitResultLimits(total: ResultLimits, parts: number): ResultLimits {

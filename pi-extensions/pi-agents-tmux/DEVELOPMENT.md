@@ -130,6 +130,10 @@ Pane `markTaskNeedsCompletion` persists and returns the `needs_completion` recor
 For vstack#38, bg subagent runs detect `session_compact → agent_end{content:[]}` or content with no `type:"text"` parts on the post-compact bridge-stream slice only. This emits `subagents:needs_completion` with `reason: "compact-then-empty"`.
 The detector is mutually exclusive with the `context_length_exceeded` throw-path retry from PR #35: retry logic handles thrown overflows first, and compact-then-empty only classifies attempts that did not trigger that retry path. Retry detection only trusts error envelopes/stderr; normal tool output or assistant text that mentions `context_length_exceeded` must not trigger a retry.
 
+## Bg one-shot timeout watchdog
+
+For vstack#336, bg one-shot child processes have a hard deadline from `bgTaskTimeoutMs` (default 30 minutes; `0` disables). This covers the case where the child process wedges mid tool-use loop and never emits `agent_end` or exits, so pane/outbox watchdogs cannot run. When the deadline fires, `runner.ts` records `stopReason: "unresponsive_timeout"`, appends timeout diagnostics to the transcript/result, emits the normal `subagents:failed` lifecycle event, resolves the parent worker with a failed `SingleResult`, and sends `SIGTERM` followed by `SIGKILL` to the child process group. This lets the parallel worker pool continue and prevents orphaned bg children from lingering indefinitely.
+
 ## Agent-end watchdog (vstack#66)
 
 Fallback for the silent-abandonment case where a child agent's turn ends — pane goes idle, transcript settles — but no `complete_subagent` outbox JSON was written. The existing child `agent_end` handler only synthesizes a needs_completion outbox when the task was inbox-delivered (`childCurrentTaskFile` is set); bridge-delivered follow-ups left the parent waiting forever.
