@@ -1,6 +1,6 @@
 ## pi-agents-tmux — `subagent`, `delegate_subagent`, `steer_subagent`, `get_subagent_result`, `wait_for_subagent_idle`, `stop_subagent`
 
-`subagent` delegates work to a project-defined agent (loaded from `.pi/agents`, with `.claude/agents` as a compatibility source). Agents with `pane: true` run in visible persistent tmux panes and survive across turns; others run as resumable bg agents. Child tools default to the parent's active tools minus the agent's `deny-tools:`.
+`subagent` delegates work to an agent from the selected inventory. Project scope loads the nearest `<project>/.pi/agents` plus `<project>/.claude/agents`; user scope loads `~/.pi/agent/agents` plus `~/.claude/agents`. Agents with `pane: true` run in visible persistent tmux panes and survive across turns; others run as resumable bg agents. Child tools default to the parent's active tools minus the agent's `deny-tools:`.
 
 `delegate_subagent` is the restricted variant that child agents (engineer-role agents in particular) can call without gaining full orchestration controls. It only runs in child Pi processes (those launched with `PI_SUBAGENT_CHILD_AGENT` set), only accepts a single `{ agent, task, cwd? }`, and only targets agents listed in the caller's `allowed-subagents:` frontmatter. Engineer agents installed by vstack default to `allowed-subagents: scout` so they can dispatch read-only reconnaissance without absorbing the context. Pane targets, parallel/chain modes, session reuse, and the `agentScope` knob are all rejected.
 
@@ -10,7 +10,7 @@ Do not use for: trivial work the parent can do directly with read/grep/find; any
 
 Calling rules:
 - One self-contained `task` string per delegation — the subagent cannot ask follow-ups.
-- Default `agentScope` is `"project"`. Pass `"both"` only when user-level agents at `~/.pi/agent/agents` are explicitly needed.
+- Default `agentScope` is `"project"`. Pass `"both"` only when user-level agents at `~/.pi/agent/agents` or `~/.claude/agents` are explicitly needed.
 - Bg (`pane: false`) agents start in a fresh one-shot session when `sessionKey` is omitted. Pass a stable `sessionKey` only when you intentionally want to reuse memory across calls; reused lanes are preflight-guarded near context limit and default to refuse-and-warn.
 - Bg children and pane children both carry `PI_SUBAGENT_CHILD_AGENT` for identity/authorization; only visible pane children carry `PI_SUBAGENT_CHILD_PANE=1` and may update tmux pane title or poll pane inboxes.
 - Bg completions are captured from the child process's final assistant output. `complete_subagent` is reserved for persistent pane/follow-up tasks and is not exposed to bg children.

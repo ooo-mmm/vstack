@@ -16,7 +16,7 @@ const ChainItem = Type.Object({
 });
 
 const AgentScopeSchema = StringEnum(["user", "project", "both"] as const, {
-	description: 'Which agent directories to use. Default: "project" (.pi/agents plus .claude/agents compatibility). Use "both" to include user-level agents too.',
+	description: 'Which agent directories to use. Default: "project" (nearest project .pi/agents plus .claude/agents). Use "both" to include user-level agents from ~/.pi/agent/agents and ~/.claude/agents too.',
 	default: "project",
 });
 

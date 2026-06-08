@@ -1670,7 +1670,7 @@ export default function (pi: ExtensionAPI) {
 				.join("\n");
 
 			return {
-				systemPrompt: `${event.systemPrompt}\n\n## Project Agents\nProject-local agents available to \`subagent\` (default \`agentScope: "project"\`; pass \`"both"\` only for user-level agents at \`~/.pi/agent/agents\`):\n${agentLines}`,
+				systemPrompt: `${event.systemPrompt}\n\n## Project Agents\nProject-local agents available to \`subagent\` (default \`agentScope: "project"\`; pass \`"both"\` only for user-level agents at \`~/.pi/agent/agents\` or \`~/.claude/agents\`):\n${agentLines}`,
 			};
 		}
 
@@ -1843,8 +1843,8 @@ export default function (pi: ExtensionAPI) {
 			"Agent names are checked against selected inventory before launch; unknown names fail with available agents.",
 			`Parallel calls run through a flat worker pool capped at maxConcurrency (default ${MAX_CONCURRENCY}); callers do not need to split requests.`,
 			`Results are truncated by default to ${DEFAULT_RESULT_MAX_LINES} lines or ${formatSize(DEFAULT_RESULT_MAX_BYTES)}; full oversized output is saved under the session runtime when enabled.`,
-			'Default agent scope is "project" (.pi/agents plus .claude/agents compatibility).',
-			'Use agentScope: "both" to include user-level agents from ~/.pi/agent/agents.',
+			'Default agent scope is "project" (nearest project .pi/agents plus .claude/agents compatibility).',
+			'Use agentScope: "both" to include user-level agents from ~/.pi/agent/agents and ~/.claude/agents.',
 		].join(" "),
 		parameters: SubagentParams,
 

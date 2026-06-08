@@ -6,7 +6,7 @@ Implementation surface for contributors and AI callers. End-user setup, commands
 
 Three layers, used consistently across tool output, mini dashboard widget, full `/agents` popup, and the persisted record:
 
-- **Agent** — the static profile (name, model, kind, deny-tools, description). One per `.pi/agents/<name>.md` (or compatibility source). Reusable across many invocations.
+- **Agent** — the static profile (name, model, kind, deny-tools, description). Sources are `~/.claude/agents`, `~/.pi/agent/agents`, nearest project `.claude/agents`, and nearest project `.pi/agents`; `$HOME` harness dirs stay user-scoped when Pi runs under home. Reusable across many invocations.
 - **Session** — the underlying Pi runtime carrying an agent. Has a `sessionId` and a session file (JSONL transcript) that survives across turns. Pane agents have ONE persistent session per pane; bg agents default to ONE-SHOT (fresh session per task) but can reuse a session via `sessionKey`.
 - **Task** — a single `subagent` tool invocation. Has a `taskId`, the input prompt, status (`queued` → `working` → `completed | failed | needs_completion`), summary, transcript path, and usage. The unit of work the user observes.
 

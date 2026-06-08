@@ -66,6 +66,18 @@ Persistent panes require running Pi inside tmux.
 
 Arguments support autocomplete, including known agent names.
 
+## Agent Sources
+
+`agentScope` controls which directories are considered:
+
+| Scope | Directories |
+| --- | --- |
+| `user` | `~/.claude/agents`, `~/.pi/agent/agents` |
+| `project` | Nearest `<project>/.claude/agents`, nearest `<project>/.pi/agents` |
+| `both` | User sources, then project sources |
+
+When Pi starts from a directory under `$HOME`, home-level harness directories such as `~/.claude/agents` are still user scope, not project scope. Duplicate names resolve in this order: user Claude, user Pi, project Claude, project Pi.
+
 Keyboard shortcuts inside the browser/dashboard popup are documented in the popup's own footer.
 
 ## Persistent pane agents
