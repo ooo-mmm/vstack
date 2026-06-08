@@ -974,8 +974,9 @@ fn installed_hook_harnesses_on_disk(
     harnesses
 }
 
-const GENERATED_SAFETY_PROSE_MARKER: &str =
-    " operations, the agent should verify this constraint is met.";
+fn generated_safety_action_line(hook: &crate::hook::Hook) -> Option<String> {
+    hook.safety_prose().lines().last().map(str::to_string)
+}
 
 fn hook_script_artifact_matches(path: &Path, hook: &crate::hook::Hook, harness_id: &str) -> bool {
     if std::fs::read(path).is_ok_and(|installed| installed == hook.script.as_bytes()) {
@@ -990,17 +991,23 @@ fn hook_script_artifact_matches(path: &Path, hook: &crate::hook::Hook, harness_i
     })
 }
 
-fn safety_text_artifact_matches(path: &Path, expected: &str, marker: &str) -> bool {
+fn safety_text_artifact_matches(
+    path: &Path,
+    expected: &str,
+    header_line: &str,
+    action_line: &str,
+) -> bool {
     if std::fs::read(path).is_ok_and(|installed| installed == expected.as_bytes()) {
         return true;
     }
 
     std::fs::read_to_string(path)
-        .is_ok_and(|content| generated_safety_text_matches(&content, marker))
+        .is_ok_and(|content| generated_safety_text_matches(&content, header_line, action_line))
 }
 
-fn generated_safety_text_matches(content: &str, marker: &str) -> bool {
-    content.contains(marker) && content.contains(GENERATED_SAFETY_PROSE_MARKER)
+fn generated_safety_text_matches(content: &str, header_line: &str, action_line: &str) -> bool {
+    content.lines().any(|line| line == header_line)
+        && content.lines().any(|line| line == action_line)
 }
 
 fn claude_hook_artifact_exists(
@@ -1031,11 +1038,14 @@ fn cursor_hook_artifact_exists(
         project_root.join(".cursor").join("rules")
     };
     let expected = crate::installer::cursor_hook_rule_contents(hook);
-    safety_text_artifact_matches(
-        &rules_dir.join(format!("safety-{}.mdc", hook.name)),
-        &expected,
-        &format!("# Safety: {}", hook.name),
-    )
+    generated_safety_action_line(hook).is_some_and(|action_line| {
+        safety_text_artifact_matches(
+            &rules_dir.join(format!("safety-{}.mdc", hook.name)),
+            &expected,
+            &format!("# Safety: {}", hook.name),
+            &action_line,
+        )
+    })
 }
 
 fn codex_hook_artifact_exists(project_root: &Path, global: bool, hook: &crate::hook::Hook) -> bool {
@@ -1062,11 +1072,14 @@ fn codex_agent_has_expected_prose(codex_root: &Path, hook: &crate::hook::Hook) -
         return false;
     };
     let marker = format!("## Safety: {}", hook.name);
+    let Some(action_line) = generated_safety_action_line(hook) else {
+        return false;
+    };
     entries.flatten().any(|entry| {
         let path = entry.path();
         path.extension().is_some_and(|ex| ex == "toml")
             && std::fs::read_to_string(&path)
-                .map(|content| generated_safety_text_matches(&content, &marker))
+                .map(|content| generated_safety_text_matches(&content, &marker, &action_line))
                 .unwrap_or(false)
     })
 }
@@ -1082,11 +1095,14 @@ fn opencode_hook_artifact_exists(
         project_root.join(".opencode").join("instructions")
     };
     let expected = crate::installer::opencode_hook_instruction_contents(hook);
-    safety_text_artifact_matches(
-        &instructions_dir.join(format!("vstack-hook-{}.md", hook.name)),
-        &expected,
-        &format!("# Safety: {}", hook.name),
-    )
+    generated_safety_action_line(hook).is_some_and(|action_line| {
+        safety_text_artifact_matches(
+            &instructions_dir.join(format!("vstack-hook-{}.md", hook.name)),
+            &expected,
+            &format!("# Safety: {}", hook.name),
+            &action_line,
+        )
+    })
 }
 
 fn normalize_path_lexical(path: &Path) -> PathBuf {
@@ -1176,10 +1192,10 @@ fn prune_broken_skill_symlinks(global: bool) -> bool {
 
 // Recover only concrete hook artifacts with stable vstack-generated identity.
 // Scripts must carry matching hook frontmatter; wrapper/prose artifacts must
-// carry the generated safety marker. This allows stale artifacts after source
-// edits to regain a lock entry so refresh can replace them. Pi has no per-hook
-// artifact; Pi hook behavior is packaged and recovered through the Pi package
-// lock path.
+// carry the exact safety header line plus the event/matcher-derived action
+// line. This allows stale artifacts after source edits to regain a lock entry
+// so refresh can replace them. Pi has no per-hook artifact; Pi hook behavior is
+// packaged and recovered through the Pi package lock path.
 fn recover_hook_lock_entries_at(
     lock: &mut LockFile,
     project_root: &Path,
@@ -1225,8 +1241,8 @@ fn recover_hook_lock_entries_at(
 /// - Hook artifacts on disk with stable vstack-generated identity are
 ///   re-added: Claude/Codex native scripts with matching hook frontmatter,
 ///   Cursor safety rules, OpenCode instruction files, and Codex prose fallback
-///   blocks with generated safety markers. Pi has no per-hook artifact because
-///   hooks are delivered by the Pi hooks package.
+///   blocks with exact safety header and event/matcher action lines. Pi has no
+///   per-hook artifact because hooks are delivered by the Pi hooks package.
 /// - Items in lock but missing from disk are removed from lock.
 /// - Broken harness skill symlinks pointing at vstack's canonical skill roots
 ///   are removed so generated `.claude/skills/*` entries cannot survive with
@@ -1641,12 +1657,22 @@ mod source_registry_tests {
     }
 
     fn test_hook_script_with_event(name: &str, event: &str, body: &str) -> String {
+        test_hook_script_with_meta(name, event, "Bash", "test hook", body)
+    }
+
+    fn test_hook_script_with_meta(
+        name: &str,
+        event: &str,
+        matcher: &str,
+        description: &str,
+        body: &str,
+    ) -> String {
         format!(
             "# ---
 # name: {name}
 # event: {event}
-# matcher: Bash
-# description: test hook
+# matcher: {matcher}
+# description: {description}
 # ---
 #!/usr/bin/env bash
 {body}
@@ -1885,6 +1911,262 @@ echo foreign
 
         let entry = lock.entries.get("prose-hook").unwrap();
         assert_eq!(entry.harnesses, vec!["codex".to_string()]);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn recover_hook_lock_entries_recovers_stale_generated_text_after_source_change() {
+        let dir = sandbox("hook_recover_stale_text");
+        let source = dir.join("source");
+        let project = dir.join("project");
+        let hooks_dir = source.join("hooks");
+        fs::create_dir_all(&hooks_dir).unwrap();
+
+        fs::write(
+            hooks_dir.join("text-hook.sh"),
+            test_hook_script_with_meta(
+                "text-hook",
+                "PreToolUse",
+                "Bash",
+                "current description",
+                "echo current",
+            ),
+        )
+        .unwrap();
+        let old_text_hook_path = dir.join("old-text-hook.sh");
+        fs::write(
+            &old_text_hook_path,
+            test_hook_script_with_meta(
+                "text-hook",
+                "PreToolUse",
+                "Bash",
+                "previous description",
+                "echo previous",
+            ),
+        )
+        .unwrap();
+        let old_text_hook = crate::hook::Hook::from_file(&old_text_hook_path).unwrap();
+
+        fs::write(
+            hooks_dir.join("prose-hook.sh"),
+            test_hook_script_with_meta(
+                "prose-hook",
+                "TaskCompleted",
+                "Bash",
+                "current description",
+                "echo current",
+            ),
+        )
+        .unwrap();
+        let old_prose_hook_path = dir.join("old-prose-hook.sh");
+        fs::write(
+            &old_prose_hook_path,
+            test_hook_script_with_meta(
+                "prose-hook",
+                "TaskCompleted",
+                "Bash",
+                "previous description",
+                "echo previous",
+            ),
+        )
+        .unwrap();
+        let old_prose_hook = crate::hook::Hook::from_file(&old_prose_hook_path).unwrap();
+
+        fs::create_dir_all(project.join(".cursor/rules")).unwrap();
+        fs::write(
+            project.join(".cursor/rules/safety-text-hook.mdc"),
+            crate::installer::cursor_hook_rule_contents(&old_text_hook),
+        )
+        .unwrap();
+        fs::create_dir_all(project.join(".opencode/instructions")).unwrap();
+        fs::write(
+            project.join(".opencode/instructions/vstack-hook-text-hook.md"),
+            crate::installer::opencode_hook_instruction_contents(&old_text_hook),
+        )
+        .unwrap();
+        fs::create_dir_all(project.join(".codex/agents")).unwrap();
+        fs::write(
+            project.join(".codex/agents/rust.toml"),
+            format!(
+                "developer_instructions = '''
+{}
+'''
+",
+                crate::installer::codex_hook_safety_block(&old_prose_hook)
+            ),
+        )
+        .unwrap();
+
+        let mut lock = LockFile {
+            version: 1,
+            entries: std::collections::BTreeMap::new(),
+        };
+        assert!(recover_hook_lock_entries_at(
+            &mut lock,
+            &project,
+            false,
+            &source.display().to_string(),
+            "2026-06-07T00:00:00Z",
+        ));
+
+        let text_entry = lock.entries.get("text-hook").unwrap();
+        assert_eq!(
+            text_entry.harnesses,
+            vec!["cursor".to_string(), "opencode".to_string()]
+        );
+        let prose_entry = lock.entries.get("prose-hook").unwrap();
+        assert_eq!(prose_entry.harnesses, vec!["codex".to_string()]);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn recover_hook_lock_entries_rejects_same_named_foreign_generated_text() {
+        let dir = sandbox("hook_recover_foreign_text");
+        let source = dir.join("source");
+        let project = dir.join("project");
+        let hooks_dir = source.join("hooks");
+        fs::create_dir_all(&hooks_dir).unwrap();
+
+        fs::write(
+            hooks_dir.join("text-hook.sh"),
+            test_hook_script_with_meta(
+                "text-hook",
+                "PreToolUse",
+                "Bash",
+                "source description",
+                "echo source",
+            ),
+        )
+        .unwrap();
+        let foreign_text_hook_path = dir.join("foreign-text-hook.sh");
+        fs::write(
+            &foreign_text_hook_path,
+            test_hook_script_with_meta(
+                "text-hook",
+                "PostToolUse",
+                "Edit|Write",
+                "source description",
+                "echo foreign",
+            ),
+        )
+        .unwrap();
+        let foreign_text_hook = crate::hook::Hook::from_file(&foreign_text_hook_path).unwrap();
+
+        fs::write(
+            hooks_dir.join("prose-hook.sh"),
+            test_hook_script_with_meta(
+                "prose-hook",
+                "TaskCompleted",
+                "Bash",
+                "source description",
+                "echo source",
+            ),
+        )
+        .unwrap();
+        let foreign_prose_hook_path = dir.join("foreign-prose-hook.sh");
+        fs::write(
+            &foreign_prose_hook_path,
+            test_hook_script_with_meta(
+                "prose-hook",
+                "PreToolUse",
+                "Bash",
+                "source description",
+                "echo foreign",
+            ),
+        )
+        .unwrap();
+        let foreign_prose_hook = crate::hook::Hook::from_file(&foreign_prose_hook_path).unwrap();
+
+        fs::create_dir_all(project.join(".cursor/rules")).unwrap();
+        fs::write(
+            project.join(".cursor/rules/safety-text-hook.mdc"),
+            crate::installer::cursor_hook_rule_contents(&foreign_text_hook),
+        )
+        .unwrap();
+        fs::create_dir_all(project.join(".opencode/instructions")).unwrap();
+        fs::write(
+            project.join(".opencode/instructions/vstack-hook-text-hook.md"),
+            crate::installer::opencode_hook_instruction_contents(&foreign_text_hook),
+        )
+        .unwrap();
+        fs::create_dir_all(project.join(".codex/agents")).unwrap();
+        fs::write(
+            project.join(".codex/agents/rust.toml"),
+            format!(
+                "developer_instructions = '''
+{}
+'''
+",
+                crate::installer::codex_hook_safety_block(&foreign_prose_hook)
+            ),
+        )
+        .unwrap();
+
+        let mut lock = LockFile {
+            version: 1,
+            entries: std::collections::BTreeMap::new(),
+        };
+        assert!(!recover_hook_lock_entries_at(
+            &mut lock,
+            &project,
+            false,
+            &source.display().to_string(),
+            "2026-06-07T00:00:00Z",
+        ));
+        assert!(lock.entries.is_empty());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn recover_hook_lock_entries_codex_prose_requires_exact_header_line() {
+        let dir = sandbox("hook_recover_codex_prefix");
+        let source = dir.join("source");
+        let project = dir.join("project");
+        let hooks_dir = source.join("hooks");
+        fs::create_dir_all(&hooks_dir).unwrap();
+        fs::write(
+            hooks_dir.join("foo.sh"),
+            test_hook_script_with_event("foo", "TaskCompleted", "echo foo"),
+        )
+        .unwrap();
+        let foo_bar_path = hooks_dir.join("foo-bar.sh");
+        fs::write(
+            &foo_bar_path,
+            test_hook_script_with_event("foo-bar", "TaskCompleted", "echo foo-bar"),
+        )
+        .unwrap();
+        let foo_bar_hook = crate::hook::Hook::from_file(&foo_bar_path).unwrap();
+
+        fs::create_dir_all(project.join(".codex/agents")).unwrap();
+        fs::write(
+            project.join(".codex/agents/rust.toml"),
+            format!(
+                "developer_instructions = '''
+{}
+'''
+",
+                crate::installer::codex_hook_safety_block(&foo_bar_hook)
+            ),
+        )
+        .unwrap();
+
+        let mut lock = LockFile {
+            version: 1,
+            entries: std::collections::BTreeMap::new(),
+        };
+        assert!(recover_hook_lock_entries_at(
+            &mut lock,
+            &project,
+            false,
+            &source.display().to_string(),
+            "2026-06-07T00:00:00Z",
+        ));
+
+        assert!(!lock.entries.contains_key("foo"));
+        assert_eq!(
+            lock.entries.get("foo-bar").unwrap().harnesses,
+            vec!["codex".to_string()]
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
