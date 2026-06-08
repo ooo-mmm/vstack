@@ -314,7 +314,7 @@ fn install_hook_opencode(hook: &Hook, global: bool) -> Result<()> {
     install_hook_opencode_at_path(hook, &config_path, &instruction_path, &instruction_ref)
 }
 
-fn opencode_hook_instruction_path(global: bool, name: &str) -> PathBuf {
+pub(crate) fn opencode_hook_instruction_path(global: bool, name: &str) -> PathBuf {
     let file_name = format!("vstack-hook-{name}.md");
     if global {
         crate::config::opencode_global_dir()
@@ -337,6 +337,28 @@ fn opencode_hook_instruction_ref(global: bool, name: &str) -> String {
     }
 }
 
+pub(crate) fn opencode_hook_instruction_contents(hook: &Hook) -> String {
+    format!("# Safety: {}\n\n{}", hook.name, hook.safety_prose())
+}
+
+pub(crate) fn cursor_hook_rule_contents(hook: &Hook) -> String {
+    let mut output = String::new();
+    output.push_str("---\n");
+    output.push_str(&format!(
+        "description: \"Safety: {} — {}\"\n",
+        hook.name, hook.description
+    ));
+    output.push_str("alwaysApply: true\n");
+    output.push_str("---\n\n");
+    output.push_str(&format!("# Safety: {}\n\n", hook.name));
+    output.push_str(&hook.safety_prose());
+    output
+}
+
+pub(crate) fn codex_hook_safety_block(hook: &Hook) -> String {
+    format!("## Safety: {}\n\n{}", hook.name, hook.safety_prose())
+}
+
 fn install_hook_opencode_at_path(
     hook: &Hook,
     config_path: &Path,
@@ -350,8 +372,7 @@ fn install_hook_opencode_at_path(
         std::fs::create_dir_all(parent)?;
     }
 
-    let instruction_contents = format!("# Safety: {}\n\n{}", hook.name, hook.safety_prose());
-    std::fs::write(instruction_path, instruction_contents)?;
+    std::fs::write(instruction_path, opencode_hook_instruction_contents(hook))?;
 
     let mut config: serde_json::Value = if config_path.exists() {
         let content = std::fs::read_to_string(config_path)?;
@@ -411,7 +432,7 @@ fn install_hook_opencode_at_path(
 /// prompt" rather than "block the done state". Returning None routes such
 /// hooks to the prose-only fallback; authors who want codex coverage should
 /// scope the hook with `harnesses: [claude-code]` or rewrite for Stop.
-fn codex_event_for(event: &str) -> Option<&'static str> {
+pub(crate) fn codex_event_for(event: &str) -> Option<&'static str> {
     match event {
         "SessionStart" => Some("SessionStart"),
         "UserPromptSubmit" => Some("UserPromptSubmit"),
@@ -426,7 +447,7 @@ fn codex_event_for(event: &str) -> Option<&'static str> {
 }
 
 /// Root of the codex config layer for the given scope.
-fn codex_root(global: bool) -> PathBuf {
+pub(crate) fn codex_root(global: bool) -> PathBuf {
     if global {
         crate::config::codex_home_dir()
     } else {
@@ -775,8 +796,6 @@ fn install_hook_codex_prose(hook: &Hook, global: bool, agents: &[Agent]) -> Resu
         return Ok(());
     }
 
-    let safety = hook.safety_prose();
-
     for agent in agents {
         let toml_path = agents_dir.join(format!("{}.toml", agent.name));
         if !toml_path.exists() {
@@ -790,7 +809,9 @@ fn install_hook_codex_prose(hook: &Hook, global: bool, agents: &[Agent]) -> Resu
 
         if let Some(close_pos) = content.rfind("'''") {
             let mut new_content = content[..close_pos].to_string();
-            new_content.push_str(&format!("\n## Safety: {}\n\n{}\n", hook.name, safety));
+            new_content.push('\n');
+            new_content.push_str(&codex_hook_safety_block(hook));
+            new_content.push('\n');
             new_content.push_str(&content[close_pos..]);
             std::fs::write(&toml_path, new_content)?;
         }
@@ -799,25 +820,19 @@ fn install_hook_codex_prose(hook: &Hook, global: bool, agents: &[Agent]) -> Resu
     Ok(())
 }
 
+pub(crate) fn cursor_hook_rule_path(global: bool, name: &str) -> PathBuf {
+    Harness::Cursor
+        .agents_dir(global)
+        .join(format!("safety-{name}.mdc"))
+}
+
 /// Cursor: add safety advisory to a dedicated .mdc file
 fn install_hook_cursor(hook: &Hook, global: bool) -> Result<()> {
     let rules_dir = Harness::Cursor.agents_dir(global);
     std::fs::create_dir_all(&rules_dir)?;
 
-    let path = rules_dir.join(format!("safety-{}.mdc", hook.name));
-
-    let mut output = String::new();
-    output.push_str("---\n");
-    output.push_str(&format!(
-        "description: \"Safety: {} — {}\"\n",
-        hook.name, hook.description
-    ));
-    output.push_str("alwaysApply: true\n");
-    output.push_str("---\n\n");
-    output.push_str(&format!("# Safety: {}\n\n", hook.name));
-    output.push_str(&hook.safety_prose());
-
-    std::fs::write(&path, output)?;
+    let path = cursor_hook_rule_path(global, &hook.name);
+    std::fs::write(&path, cursor_hook_rule_contents(hook))?;
     Ok(())
 }
 
