@@ -974,12 +974,33 @@ fn installed_hook_harnesses_on_disk(
     harnesses
 }
 
-fn hook_script_artifact_matches(path: &Path, hook: &crate::hook::Hook) -> bool {
-    std::fs::read(path).is_ok_and(|installed| installed == hook.script.as_bytes())
+const GENERATED_SAFETY_PROSE_MARKER: &str =
+    " operations, the agent should verify this constraint is met.";
+
+fn hook_script_artifact_matches(path: &Path, hook: &crate::hook::Hook, harness_id: &str) -> bool {
+    if std::fs::read(path).is_ok_and(|installed| installed == hook.script.as_bytes()) {
+        return true;
+    }
+
+    crate::hook::Hook::from_file(path).is_ok_and(|installed| {
+        installed.name == hook.name
+            && installed.event == hook.event
+            && installed.matcher == hook.matcher
+            && installed.applies_to(harness_id)
+    })
 }
 
-fn text_artifact_matches(path: &Path, expected: &str) -> bool {
-    std::fs::read(path).is_ok_and(|installed| installed == expected.as_bytes())
+fn safety_text_artifact_matches(path: &Path, expected: &str, marker: &str) -> bool {
+    if std::fs::read(path).is_ok_and(|installed| installed == expected.as_bytes()) {
+        return true;
+    }
+
+    std::fs::read_to_string(path)
+        .is_ok_and(|content| generated_safety_text_matches(&content, marker))
+}
+
+fn generated_safety_text_matches(content: &str, marker: &str) -> bool {
+    content.contains(marker) && content.contains(GENERATED_SAFETY_PROSE_MARKER)
 }
 
 fn claude_hook_artifact_exists(
@@ -992,7 +1013,11 @@ fn claude_hook_artifact_exists(
     } else {
         project_root.join(".claude").join("hooks")
     };
-    hook_script_artifact_matches(&hooks_dir.join(format!("{}.sh", hook.name)), hook)
+    hook_script_artifact_matches(
+        &hooks_dir.join(format!("{}.sh", hook.name)),
+        hook,
+        crate::harness::Harness::ClaudeCode.id(),
+    )
 }
 
 fn cursor_hook_artifact_exists(
@@ -1006,9 +1031,10 @@ fn cursor_hook_artifact_exists(
         project_root.join(".cursor").join("rules")
     };
     let expected = crate::installer::cursor_hook_rule_contents(hook);
-    text_artifact_matches(
+    safety_text_artifact_matches(
         &rules_dir.join(format!("safety-{}.mdc", hook.name)),
         &expected,
+        &format!("# Safety: {}", hook.name),
     )
 }
 
@@ -1023,6 +1049,7 @@ fn codex_hook_artifact_exists(project_root: &Path, global: bool, hook: &crate::h
         return hook_script_artifact_matches(
             &root.join("hooks").join(format!("{}.sh", hook.name)),
             hook,
+            crate::harness::Harness::Codex.id(),
         );
     }
 
@@ -1034,12 +1061,12 @@ fn codex_agent_has_expected_prose(codex_root: &Path, hook: &crate::hook::Hook) -
     let Ok(entries) = std::fs::read_dir(&agents_dir) else {
         return false;
     };
-    let expected = crate::installer::codex_hook_safety_block(hook);
+    let marker = format!("## Safety: {}", hook.name);
     entries.flatten().any(|entry| {
         let path = entry.path();
         path.extension().is_some_and(|ex| ex == "toml")
             && std::fs::read_to_string(&path)
-                .map(|content| content.contains(&expected))
+                .map(|content| generated_safety_text_matches(&content, &marker))
                 .unwrap_or(false)
     })
 }
@@ -1055,9 +1082,10 @@ fn opencode_hook_artifact_exists(
         project_root.join(".opencode").join("instructions")
     };
     let expected = crate::installer::opencode_hook_instruction_contents(hook);
-    text_artifact_matches(
+    safety_text_artifact_matches(
         &instructions_dir.join(format!("vstack-hook-{}.md", hook.name)),
         &expected,
+        &format!("# Safety: {}", hook.name),
     )
 }
 
@@ -1146,11 +1174,12 @@ fn prune_broken_skill_symlinks(global: bool) -> bool {
     prune_broken_skill_symlinks_in_dirs(&dirs, &roots)
 }
 
-// Recover only concrete hook artifacts whose installed bytes/text prove they
-// were generated from the resolved source hook. Recoverable forms are Claude
-// and Codex native scripts, Cursor safety rules, OpenCode instruction files,
-// and Codex prose fallback blocks. Pi has no per-hook artifact; Pi hook
-// behavior is packaged and recovered through the Pi package lock path.
+// Recover only concrete hook artifacts with stable vstack-generated identity.
+// Scripts must carry matching hook frontmatter; wrapper/prose artifacts must
+// carry the generated safety marker. This allows stale artifacts after source
+// edits to regain a lock entry so refresh can replace them. Pi has no per-hook
+// artifact; Pi hook behavior is packaged and recovered through the Pi package
+// lock path.
 fn recover_hook_lock_entries_at(
     lock: &mut LockFile,
     project_root: &Path,
@@ -1193,10 +1222,11 @@ fn recover_hook_lock_entries_at(
 ///
 /// - Skills on disk (with `.vstack-refreshed` marker) but missing from lock are
 ///   re-added.
-/// - Hook artifacts on disk that exactly match source-generated artifacts are
-///   re-added: Claude/Codex native scripts, Cursor safety rules, OpenCode
-///   instruction files, and Codex prose fallback blocks. Pi has no per-hook
-///   artifact because hooks are delivered by the Pi hooks package.
+/// - Hook artifacts on disk with stable vstack-generated identity are
+///   re-added: Claude/Codex native scripts with matching hook frontmatter,
+///   Cursor safety rules, OpenCode instruction files, and Codex prose fallback
+///   blocks with generated safety markers. Pi has no per-hook artifact because
+///   hooks are delivered by the Pi hooks package.
 /// - Items in lock but missing from disk are removed from lock.
 /// - Broken harness skill symlinks pointing at vstack's canonical skill roots
 ///   are removed so generated `.claude/skills/*` entries cannot survive with
@@ -1706,6 +1736,42 @@ mod source_registry_tests {
     }
 
     #[test]
+    fn recover_hook_lock_entries_recovers_stale_script_after_source_change() {
+        let dir = sandbox("hook_recover_stale_script");
+        let source = dir.join("source");
+        let project = dir.join("project");
+        fs::create_dir_all(source.join("hooks")).unwrap();
+        fs::write(
+            source.join("hooks").join("my-hook.sh"),
+            test_hook_script("my-hook", "echo current source"),
+        )
+        .unwrap();
+        fs::create_dir_all(project.join(".claude").join("hooks")).unwrap();
+        fs::write(
+            project.join(".claude/hooks/my-hook.sh"),
+            test_hook_script("my-hook", "echo previously installed source"),
+        )
+        .unwrap();
+        let mut lock = LockFile {
+            version: 1,
+            entries: std::collections::BTreeMap::new(),
+        };
+
+        assert!(recover_hook_lock_entries_at(
+            &mut lock,
+            &project,
+            false,
+            &source.display().to_string(),
+            "2026-06-07T00:00:00Z",
+        ));
+
+        let entry = lock.entries.get("my-hook").unwrap();
+        assert_eq!(entry.harnesses, vec!["claude-code".to_string()]);
+        assert!(entry.source_hash.is_empty());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn recover_hook_lock_entries_skips_same_named_foreign_script() {
         let dir = sandbox("hook_recover_foreign");
         let source = dir.join("source");
@@ -1719,7 +1785,9 @@ mod source_registry_tests {
         fs::create_dir_all(project.join(".claude").join("hooks")).unwrap();
         fs::write(
             project.join(".claude/hooks/my-hook.sh"),
-            test_hook_script("my-hook", "echo foreign"),
+            "#!/usr/bin/env bash
+echo foreign
+",
         )
         .unwrap();
         let mut lock = LockFile {
