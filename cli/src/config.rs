@@ -858,11 +858,16 @@ pub struct DiskItem {
     pub kind: ItemKind,
 }
 
-/// Scan the canonical skill directory and harness agent/hook directories
-/// for items installed by vstack. Skills are identified by the `.vstack-refreshed`
-/// marker. Agents/hooks are identified by presence in harness directories that
-/// vstack manages (we can only reliably detect these via the lock, so this
-/// function focuses on skills).
+/// Discovered hook artifacts on disk that match hooks available in the source.
+#[derive(Debug)]
+struct DiskHookItem {
+    name: String,
+    harnesses: Vec<String>,
+}
+
+/// Scan the canonical skill directory for skills installed by vstack.
+/// Skills are identified by the `.vstack-refreshed` marker; hook recovery
+/// uses concrete per-harness hook artifacts plus matching source hooks.
 pub fn scan_installed_skills_on_disk(global: bool) -> Vec<DiskItem> {
     let mut items = Vec::new();
 
@@ -905,6 +910,99 @@ pub fn scan_installed_skills_on_disk(global: bool) -> Vec<DiskItem> {
     }
 
     items
+}
+
+fn scan_installed_hooks_on_disk_at(
+    project_root: &Path,
+    global: bool,
+    source: &str,
+) -> Vec<DiskHookItem> {
+    let Some(source_root) = resolve_source_path(source) else {
+        return Vec::new();
+    };
+
+    let Ok(source_hooks) = crate::hook::discover_hooks(&source_root.join("hooks")) else {
+        return Vec::new();
+    };
+
+    source_hooks
+        .into_iter()
+        .filter_map(|hook| {
+            let harnesses = installed_hook_harnesses_on_disk(project_root, global, &hook);
+            if harnesses.is_empty() {
+                None
+            } else {
+                Some(DiskHookItem {
+                    name: hook.name,
+                    harnesses,
+                })
+            }
+        })
+        .collect()
+}
+
+fn installed_hook_harnesses_on_disk(
+    project_root: &Path,
+    global: bool,
+    hook: &crate::hook::Hook,
+) -> Vec<String> {
+    let mut harnesses = Vec::new();
+
+    if hook.applies_to(crate::harness::Harness::ClaudeCode.id())
+        && claude_hook_artifact_exists(project_root, global, &hook.name)
+    {
+        harnesses.push(crate::harness::Harness::ClaudeCode.id().to_string());
+    }
+    if hook.applies_to(crate::harness::Harness::OpenCode.id())
+        && opencode_hook_artifact_exists(project_root, global, &hook.name)
+    {
+        harnesses.push(crate::harness::Harness::OpenCode.id().to_string());
+    }
+    if hook.applies_to(crate::harness::Harness::Codex.id())
+        && codex_hook_artifact_exists(project_root, global, &hook.name)
+    {
+        harnesses.push(crate::harness::Harness::Codex.id().to_string());
+    }
+
+    harnesses
+}
+
+fn hook_script_artifact_matches(path: &Path, name: &str) -> bool {
+    path.is_file() && crate::hook::Hook::from_file(path).is_ok_and(|hook| hook.name == name)
+}
+
+fn claude_hook_artifact_exists(project_root: &Path, global: bool, name: &str) -> bool {
+    let hooks_dir = if global {
+        claude_global_dir().join("hooks")
+    } else {
+        project_root.join(".claude").join("hooks")
+    };
+    hook_script_artifact_matches(&hooks_dir.join(format!("{name}.sh")), name)
+}
+
+fn codex_hook_artifact_exists(project_root: &Path, global: bool, name: &str) -> bool {
+    let root = if global {
+        codex_home_dir()
+    } else {
+        project_root.join(".codex")
+    };
+    hook_script_artifact_matches(&root.join("hooks").join(format!("{name}.sh")), name)
+}
+
+fn opencode_hook_artifact_exists(project_root: &Path, global: bool, name: &str) -> bool {
+    let instructions_dir = if global {
+        opencode_global_dir().join("instructions")
+    } else {
+        project_root.join(".opencode").join("instructions")
+    };
+    let path = instructions_dir.join(format!("vstack-hook-{name}.md"));
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    content
+        .lines()
+        .next()
+        .is_some_and(|line| line == format!("# Safety: {name}"))
 }
 
 fn normalize_path_lexical(path: &Path) -> PathBuf {
@@ -992,10 +1090,50 @@ fn prune_broken_skill_symlinks(global: bool) -> bool {
     prune_broken_skill_symlinks_in_dirs(&dirs, &roots)
 }
 
+fn recover_hook_lock_entries_at(
+    lock: &mut LockFile,
+    project_root: &Path,
+    global: bool,
+    source: &str,
+    installed_at: &str,
+) -> bool {
+    let mut modified = false;
+    for item in scan_installed_hooks_on_disk_at(project_root, global, source) {
+        match lock.entries.get_mut(&item.name) {
+            Some(entry) if entry.kind == ItemKind::Hook => {
+                for harness in item.harnesses {
+                    if !entry.harnesses.contains(&harness) {
+                        entry.harnesses.push(harness);
+                        modified = true;
+                    }
+                }
+            }
+            Some(_) => {}
+            None => {
+                let entry = LockEntry {
+                    name: item.name.clone(),
+                    kind: ItemKind::Hook,
+                    source: source.to_string(),
+                    harnesses: item.harnesses,
+                    method: InstallMethod::Copy,
+                    installed_at: installed_at.to_string(),
+                    source_hash: String::new(),
+                };
+                eprintln!("  Recovered lock entry for installed hook: {}", item.name);
+                lock.add(entry);
+                modified = true;
+            }
+        }
+    }
+    modified
+}
+
 /// Reconcile the lock file with what's actually on disk.
 ///
-/// - Items on disk (with `.vstack-refreshed` marker) but missing from lock are
+/// - Skills on disk (with `.vstack-refreshed` marker) but missing from lock are
 ///   re-added.
+/// - Hook artifacts on disk that match source hooks but are missing from lock
+///   are re-added.
 /// - Items in lock but missing from disk are removed from lock.
 /// - Broken harness skill symlinks pointing at vstack's canonical skill roots
 ///   are removed so generated `.claude/skills/*` entries cannot survive with
@@ -1062,6 +1200,11 @@ pub fn reconcile_lock_with_disk(lock: &mut LockFile, global: bool, source: &str)
             lock.remove(&name);
             modified = true;
         }
+    }
+
+    let root = project_root();
+    if recover_hook_lock_entries_at(lock, &root, global, source, &now) {
+        modified = true;
     }
 
     // Remove stale Pi package lock entries. Pi packages do not have the skill
@@ -1396,6 +1539,104 @@ mod source_registry_tests {
         assert_ne!(
             h1, h2,
             "changing [hook-events] role list must invalidate hook source hash"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    fn test_hook_script(name: &str, body: &str) -> String {
+        format!(
+            "# ---\n# name: {name}\n# event: PreToolUse\n# matcher: Bash\n# description: test hook\n# ---\n#!/usr/bin/env bash\n{body}\n"
+        )
+    }
+
+    #[test]
+    fn scan_installed_hooks_on_disk_detects_concrete_project_artifacts() {
+        let dir = sandbox("hook_scan_artifacts");
+        let source = dir.join("source");
+        let project = dir.join("project");
+        fs::create_dir_all(source.join("hooks")).unwrap();
+        fs::write(
+            source.join("hooks").join("my-hook.sh"),
+            test_hook_script("my-hook", "echo source"),
+        )
+        .unwrap();
+        fs::create_dir_all(project.join(".claude").join("hooks")).unwrap();
+        fs::write(
+            project.join(".claude").join("hooks").join("my-hook.sh"),
+            test_hook_script("my-hook", "echo old claude"),
+        )
+        .unwrap();
+        fs::create_dir_all(project.join(".codex").join("hooks")).unwrap();
+        fs::write(
+            project.join(".codex").join("hooks").join("my-hook.sh"),
+            test_hook_script("my-hook", "echo old codex"),
+        )
+        .unwrap();
+        fs::create_dir_all(project.join(".opencode").join("instructions")).unwrap();
+        fs::write(
+            project
+                .join(".opencode")
+                .join("instructions")
+                .join("vstack-hook-my-hook.md"),
+            "# Safety: my-hook\n\nold prose",
+        )
+        .unwrap();
+
+        let items = scan_installed_hooks_on_disk_at(&project, false, &source.display().to_string());
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].name, "my-hook");
+        let mut harnesses = items[0].harnesses.clone();
+        harnesses.sort();
+        assert_eq!(
+            harnesses,
+            vec![
+                "claude-code".to_string(),
+                "codex".to_string(),
+                "opencode".to_string()
+            ]
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn recover_hook_lock_entries_sets_empty_hash_for_refresh_summary() {
+        let dir = sandbox("hook_recover_lock");
+        let source = dir.join("source");
+        let project = dir.join("project");
+        fs::create_dir_all(source.join("hooks")).unwrap();
+        fs::write(
+            source.join("hooks").join("my-hook.sh"),
+            test_hook_script("my-hook", "echo source"),
+        )
+        .unwrap();
+        fs::create_dir_all(project.join(".claude").join("hooks")).unwrap();
+        fs::write(
+            project.join(".claude").join("hooks").join("my-hook.sh"),
+            test_hook_script("my-hook", "echo old claude"),
+        )
+        .unwrap();
+        let mut lock = LockFile {
+            version: 1,
+            entries: std::collections::BTreeMap::new(),
+        };
+
+        let modified = recover_hook_lock_entries_at(
+            &mut lock,
+            &project,
+            false,
+            &source.display().to_string(),
+            "2026-06-07T00:00:00Z",
+        );
+
+        assert!(modified);
+        let entry = lock.entries.get("my-hook").unwrap();
+        assert_eq!(entry.kind, ItemKind::Hook);
+        assert_eq!(entry.harnesses, vec!["claude-code".to_string()]);
+        assert_eq!(entry.method, InstallMethod::Copy);
+        assert!(
+            entry.source_hash.is_empty(),
+            "refresh should count recovered hooks as updated after reinstall"
         );
         let _ = fs::remove_dir_all(&dir);
     }
