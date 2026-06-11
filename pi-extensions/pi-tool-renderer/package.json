@@ -1,6 +1,6 @@
 {
   "name": "@vanillagreen/pi-tool-renderer",
-  "version": "1.6.0",
+  "version": "1.6.2",
   "description": "Compact Claude/opencode-style renderers for Pi tools with rich diffs, apply_patch, generic/MCP rendering, and optional global chrome.",
   "license": "MIT",
   "keywords": [
@@ -519,21 +519,7 @@
           "category": "Chrome",
           "apply": "live"
         },
-        {
-          "key": "workingIndicator",
-          "label": "Working indicator",
-          "description": "Optional streaming working indicator customization. default leaves Pi/QoL behavior untouched; pulse uses a compact pulsing dot; hidden removes it.",
-          "type": "enum",
-          "enumValues": [
-            "default",
-            "pulse",
-            "hidden"
-          ],
-          "default": "default",
-          "category": "Chrome",
-          "apply": "reload",
-          "requiresReload": true
-        }
+
       ]
     }
   },

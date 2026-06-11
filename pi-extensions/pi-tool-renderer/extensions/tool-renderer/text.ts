@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 import { stableRenderWidth, stripAnsi } from "./ansi.js";
 import { glyphs, truncateText } from "./glyphs.js";
 import { pendingStatusAnimation, settingNumber, stackToolCalls } from "./settings.js";
+import { SPINNER_FRAMES, spinnerFrame } from "./spinner.js";
 import { stackPrefix, toolLabel, treeConnector, type TreeBranch } from "./theme.js";
 
 export class TruncatedLines {
@@ -177,6 +178,10 @@ export function blinkingPrefix(theme: any, context: any, cwd?: string): string {
 export function pendingStatusPrefix(theme: any, context: any, cwd?: string): string {
 	if (pendingStatusAnimation(context?.cwd ?? cwd)) return blinkingPrefix(theme, context, cwd);
 	clearBlink(context);
+	// Spinner for active tool execution
+	if (context?.executionStarted && context?.isPartial) {
+		return theme.fg("warning", SPINNER_FRAMES[spinnerFrame()]);
+	}
 	return theme.fg("warning", glyphs(context?.cwd ?? cwd).bullet);
 }
 

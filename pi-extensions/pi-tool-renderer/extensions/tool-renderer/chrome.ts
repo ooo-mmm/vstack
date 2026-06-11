@@ -22,6 +22,7 @@ import {
 	componentDefinesRenderer,
 } from "./generic.js";
 import { settingBoolean, settingEnum, toolChromeMode } from "./settings.js";
+import { SPINNER_FRAMES, startSpinner, stopSpinner, onSpinnerTick } from "./spinner.js";
 import { glyphs } from "./glyphs.js";
 import { subtleRule } from "./theme.js";
 
@@ -208,19 +209,20 @@ export function registerToolChromeEvents(pi: ExtensionAPI): void {
 export function installWorkingIndicator(pi: ExtensionAPI): void {
 	pi.on("session_start", (_event, ctx) => {
 		if (!ctx.hasUI) return;
-		const mode = settingEnum("workingIndicator", ["default", "pulse", "hidden"] as const, "default", ctx.cwd);
-		if (mode === "default") return;
-		if (mode === "hidden") {
-			ctx.ui.setWorkingIndicator({ frames: [] });
-			return;
-		}
+		startSpinner();
 		const g = glyphs(ctx.cwd);
+		const theme = ctx.ui.theme;
+		const dim = (s: string) => theme.fg("muted", s);
 		ctx.ui.setWorkingIndicator({
-			frames: [ctx.ui.theme.fg("dim", g.dot.trim()), ctx.ui.theme.fg("muted", g.emptyBullet.trim()), ctx.ui.theme.fg("accent", g.bullet.trim()), ctx.ui.theme.fg("muted", g.emptyBullet.trim())],
-			intervalMs: 120,
+			frames: SPINNER_FRAMES.map(f => dim(f)),
+			intervalMs: 100,
 		});
+		// Tick requestRender on spinner change so pending tool prefixes animate
+		const unsub = onSpinnerTick(() => ctx.tui?.requestRender?.());
+		pi.on("session_shutdown", () => unsub());
 	});
 	pi.on("session_shutdown", (_event, ctx) => {
+		stopSpinner();
 		if (ctx.hasUI) ctx.ui.setWorkingIndicator();
 	});
 }

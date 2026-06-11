@@ -24,9 +24,21 @@ import {
 } from "./text.js";
 
 export const CORE_TOOL_RENDERERS = new Set(["read", "bash", "grep", "find", "ls", "edit", "write", "tool_batch", "tasks_write", "bg_task", "bg_status", "question", "subagent"]);
+export const GENERIC_TOOL_PREFIXES = [
+	"memory_",
+	"document_",
+	"ctx_",
+	"ask_",
+	"greedy_",
+	"ollama_",
+	"intercom_",
+	"session_",
+	"skill_"
+];
 export const OPENAI_STYLE_TOOL_NAMES = new Set([
 	"webfetch",
 	"web_fetch",
+	"batch_web_fetch",
 	"web_search",
 	"fetch_content",
 	"get_search_content",
@@ -48,6 +60,8 @@ export const OPENAI_STYLE_TOOL_NAMES = new Set([
 	"TaskOutput",
 	"TaskStop",
 	"TaskExecute",
+	"TaskStop",
+	"TaskExecute",
 ]);
 
 export function isMcpToolName(name: string): boolean {
@@ -58,7 +72,11 @@ export function shouldUseGenericRenderer(name: string): boolean {
 	if (!name || CORE_TOOL_RENDERERS.has(name) || name === "apply_patch") return false;
 	if (isMcpToolName(name)) return true;
 	if (OPENAI_STYLE_TOOL_NAMES.has(name)) return true;
-	return /^Task[A-Z]/.test(name);
+	if (/^Task[A-Z]/.test(name)) return true;
+	for (const prefix of GENERIC_TOOL_PREFIXES) {
+		if (name.startsWith(prefix)) return true;
+	}
+	return false;
 }
 
 export function isUnknownToolComponent(component: any): boolean {

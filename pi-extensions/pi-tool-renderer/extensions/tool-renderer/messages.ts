@@ -20,6 +20,7 @@ import { settingBoolean } from "./settings.js";
 import { frameGlyphs, glyphs } from "./glyphs.js";
 import { FALLBACK_THEME, stackPrefix, toolLabel, treeConnector } from "./theme.js";
 import { makeTruncatedLines } from "./text.js";
+import { SPINNER_FRAMES as GLOBAL_SPINNER, spinnerFrame as spinnerIdx, onSpinnerTick } from "./spinner.js";
 
 const USER_MESSAGE_PATCH_SYMBOL = Symbol.for("vstack.pi-tool-renderer.user-message-patch");
 const USER_MESSAGE_BOX_STATE_SYMBOL = Symbol.for("vstack.pi-tool-renderer.user-message-box-state");
@@ -199,6 +200,8 @@ function alignAssistantContent(component: any): void {
 }
 
 export function installAssistantMessageRenderer(pi: ExtensionAPI, AssistantMessageComponent: any): void {
+	const THINKING_TAIL_LINES = 3;
+
 	const prototype = AssistantMessageComponent?.prototype as Record<PropertyKey, unknown> | undefined;
 	if (!prototype || typeof prototype.render !== "function" || typeof prototype.updateContent !== "function") return;
 
@@ -218,10 +221,42 @@ export function installAssistantMessageRenderer(pi: ExtensionAPI, AssistantMessa
 			if (end.length === 0) return rendered;
 			return [...end, ""];
 		};
-		prototype.updateContent = function alignedAssistantUpdateContent(this: any, message: any): void {
+		prototype.updateContent = function thinkingPatchedUpdateContent(this: any, message: any): void {
+			// Tail-truncate thinking content for compact view; full when expanded
+			if (message?.content && Array.isArray(message.content) && this?.hideThinkingBlock !== false) {
+				for (const item of message.content) {
+					if (item?.type === "thinking" && typeof item.thinking === "string") {
+						const lines = item.thinking.split("\n");
+						if (lines.length > THINKING_TAIL_LINES + 1) {
+							item.thinking = [`… ${lines.length - THINKING_TAIL_LINES} more`, ...lines.slice(-THINKING_TAIL_LINES)].join("\n");
+						}
+					}
+				}
+			}
+
 			state!.originalUpdateContent.call(this, message);
 			const cwd = state?.activeCtx?.cwd ?? process.cwd();
 			if (settingBoolean("alignAssistantMessages", true, cwd)) alignAssistantContent(this);
+
+			// Spinner + expand hint on hidden thinking label
+			if (this?.hideThinkingBlock) {
+				const th = state?.activeCtx?.ui?.theme ?? FALLBACK_THEME;
+				const frame = GLOBAL_SPINNER[spinnerIdx()];
+				this.hiddenThinkingLabel = `${frame} Thinking... ${th.fg("dim", "· ctrl+o to expand")}`;
+
+				const unsub = onSpinnerTick(() => {
+					if (this?.hideThinkingBlock) {
+						const th2 = state?.activeCtx?.ui?.theme ?? FALLBACK_THEME;
+						const f2 = GLOBAL_SPINNER[spinnerIdx()];
+						this.hiddenThinkingLabel = `${f2} Thinking... ${th2.fg("dim", "· ctrl+o to expand")}`;
+						state?.activeCtx?.tui?.requestRender?.();
+					} else {
+						// Stop listener once thinking is visible (expanded via ctrl+o)
+						if (typeof unsub === "function") unsub();
+					}
+				});
+				pi.on("session_shutdown", () => { if (typeof unsub === "function") unsub(); });
+			}
 		};
 	}
 
