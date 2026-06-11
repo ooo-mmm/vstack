@@ -62,4 +62,8 @@ See [`DEVELOPMENT.md`](./DEVELOPMENT.md) for GitHub auth fallback details and th
 
 ## Codex Desktop Worktrees
 
-Let Codex Desktop own worktree creation, branch metadata, and teardown. Configure the worktree skill's `codex-setup` and `codex-cleanup` hooks in the Codex environment, then run `initialize [ISSUE_ID]` or `start [ISSUE_ID]` with an explicit issue ID.
+For app-visible handoff, use `handoff ... --harness codex-app` from the orch workflow. The Codex app branch creates/reuses the vstack worktree, then uses native Codex app thread-management tools when the runtime exposes them. If those tools are absent, it prints the worktree path and exact `$orch start ...` message for manual app-thread launch.
+
+Let Codex Desktop own Codex-managed worktree creation, branch metadata, and teardown when using its built-in worktree mode. Configure the worktree skill's `codex-setup` and `codex-cleanup` hooks in the Codex environment, then run `initialize [ISSUE_ID]` or `start [ISSUE_ID]` with an explicit issue ID.
+
+Do not automate app-visible handoff with `codex debug app-server send-message-v2`. Do not run raw `codex app-server` unattended unless the active client can surface approvals to the user.

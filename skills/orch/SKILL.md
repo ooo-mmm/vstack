@@ -26,6 +26,8 @@ Load IN ORDER before anything else. Do not proceed if any fails.
 > If you are running in **Claude Code**: Always create a team before launching agents. Spawn and delegate to agents within the team context so they share state and can be messaged for re-delegation. When asking the user a question or presenting options, always use the `AskUserQuestion` tool. `SendMessage` accepts exactly `to`, `summary`, `message` — extra fields (`type`, `recipient`, `content`, `body`) have caused duplicate delivery on idle wake-up.
 
 > If you are running in **Codex**: Spawn workers with `fork_context: false`. Two-step pattern: (1) spawn with the `<bootstrap_format>` message, (2) `send_input` a `DELEGATION:` prefixed message containing exactly the filled `<delegation_format>` content — nothing more.
+>
+> For **Codex app-visible handoff**, invoke `workflows/handoff.md` with `harness=codex-app`. Use native Codex app thread-management tools when they are exposed by the runtime. If they are not exposed, print manual app-thread commands; do not substitute terminal launch or debug app-server automation.
 
 > If you are running in **OpenCode**: The persistent identity of a spawned sub-agent is the `task_id` returned by `functions.task`. On first spawn, store that `task_id` in workflow state (`child_sessions[agent].agent_id` for dev/QA, `review_agent_ids[reviewer-name]` for reviewers). On re-delegation (fix cycles, re-review), call `functions.task(task_id=<stored_id>)` — never spawn a fresh task when a stored ID exists. Fresh spawn only if: no stored ID, one resume attempt fails, or the prior task is confirmed dead.
 
@@ -48,7 +50,7 @@ When invoked with `<command> [args]`, route to the corresponding workflow.
 |---------|-----------|----------|-------|
 | `start` | `[ISSUE_ID]` \| `github OWNER/REPO#N` | `workflows/start.md` or `workflows/start-worktree.md` | Context-aware routing |
 | `start new` | `linear|github ...` | `workflows/start-new.md` | Create one issue then start it |
-| `handoff` | `linear|github ...` | `workflows/handoff.md` | Launch-only; no monitoring |
+| `handoff` | `linear|github ...` | `workflows/handoff.md` | Launch-only; no monitoring; Codex app uses native app threads when available |
 | `plan-issues` | `PLAN_PATH linear|github` | `workflows/plan-issues.md` | Convert plan items into issues |
 | `parallel-check` | `[ISSUE_IDS]` | `workflows/parallel-check.md` | Safe parallel handoff analysis |
 | `initialize` | `[ISSUE_ID]` | `workflows/initialize.md` | Team setup, auth, cache, state (standalone) |

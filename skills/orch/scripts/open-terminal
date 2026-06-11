@@ -50,6 +50,7 @@ done
 [[ ${#ITEMS[@]} -gt 0 ]] || { echo "Error: no work items specified" >&2; exit 1; }
 [[ "$TRACKER" == "linear" || "$TRACKER" == "github" ]] || { echo "Error: --tracker must be linear or github" >&2; exit 1; }
 [[ -n "$HARNESS" || -n "$CMD_TEMPLATE" ]] || { echo "Error: --harness or --cmd required" >&2; exit 1; }
+[[ "$HARNESS" != "codex-app" ]] || { echo "Error: codex-app handoff requires native Codex app thread tools; open-terminal only launches terminal harnesses" >&2; exit 1; }
 
 if [[ -z "$TERMINAL_MODE" ]]; then
   if [[ -n "${TMUX:-}" ]]; then TERMINAL_MODE="tmux"; else TERMINAL_MODE="gui"; fi

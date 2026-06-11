@@ -82,6 +82,7 @@ Ask one action:
 |--------|--------|
 | Continue here | Execute `workflows/start-worktree.md` using `[WT_PATH]` as the worktree context |
 | Launch handoff | Invoke `workflows/handoff.md` |
+| Launch Codex app | Invoke `workflows/handoff.md` with `harness=codex-app`; use native Codex app thread tools if available, otherwise print manual app-thread commands |
 | Manual | Print worktree path and exact `/orch start ...` command |
 
 <output_format>
@@ -92,7 +93,7 @@ Ask one action:
 | Work item | [ID or OWNER/REPO#N] |
 | Worktree | [WT_PATH] |
 | Branch | [BRANCH] |
-| Next | [continue-here|handoff|manual] |
+| Next | [continue-here|handoff|codex-app|manual] |
 </output_format>
 
 ## 6. End
