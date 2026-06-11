@@ -235,22 +235,13 @@ fn verify_hook_install(
                 }
             }
             crate::harness::Harness::Cursor => {
-                let path = harness
-                    .agents_dir(global)
-                    .join(format!("safety-{name}.mdc"));
+                let path = crate::installer::cursor_hook_rule_path(global, name);
                 if !path.exists() {
                     missing.push(format!("{h}: rule missing"));
                 }
             }
             crate::harness::Harness::OpenCode => {
-                let dir = if global {
-                    config::opencode_global_dir().join("instructions")
-                } else {
-                    config::project_root()
-                        .join(".opencode")
-                        .join("instructions")
-                };
-                let path = dir.join(format!("vstack-hook-{name}.md"));
+                let path = crate::installer::opencode_hook_instruction_path(global, name);
                 if !path.exists() {
                     missing.push(format!("{h}: instruction missing"));
                 }
@@ -258,11 +249,7 @@ fn verify_hook_install(
             crate::harness::Harness::Codex => {
                 // Native install: script under <root>/.codex/hooks/.
                 // Prose-fallback: `## Safety: <name>` block in some agent toml.
-                let root = if global {
-                    config::codex_home_dir()
-                } else {
-                    config::project_root().join(".codex")
-                };
+                let root = crate::installer::codex_root(global);
                 let script = root.join("hooks").join(format!("{name}.sh"));
                 let has_script = script.exists();
                 let has_prose = !has_script && codex_agent_has_prose(&root, name);

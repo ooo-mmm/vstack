@@ -858,11 +858,16 @@ pub struct DiskItem {
     pub kind: ItemKind,
 }
 
-/// Scan the canonical skill directory and harness agent/hook directories
-/// for items installed by vstack. Skills are identified by the `.vstack-refreshed`
-/// marker. Agents/hooks are identified by presence in harness directories that
-/// vstack manages (we can only reliably detect these via the lock, so this
-/// function focuses on skills).
+/// Discovered hook artifacts on disk that match hooks available in the source.
+#[derive(Debug)]
+struct DiskHookItem {
+    name: String,
+    harnesses: Vec<String>,
+}
+
+/// Scan the canonical skill directory for skills installed by vstack.
+/// Skills are identified by the `.vstack-refreshed` marker; hook recovery
+/// uses concrete per-harness hook artifacts plus matching source hooks.
 pub fn scan_installed_skills_on_disk(global: bool) -> Vec<DiskItem> {
     let mut items = Vec::new();
 
@@ -905,6 +910,226 @@ pub fn scan_installed_skills_on_disk(global: bool) -> Vec<DiskItem> {
     }
 
     items
+}
+
+fn scan_installed_hooks_on_disk_at(
+    project_root: &Path,
+    global: bool,
+    source: &str,
+) -> Vec<DiskHookItem> {
+    let cursor_global_rules_dir = cursor_global_dir().join("rules");
+    scan_installed_hooks_on_disk_at_with_cursor_global_rules(
+        project_root,
+        global,
+        source,
+        &cursor_global_rules_dir,
+    )
+}
+
+fn scan_installed_hooks_on_disk_at_with_cursor_global_rules(
+    project_root: &Path,
+    global: bool,
+    source: &str,
+    cursor_global_rules_dir: &Path,
+) -> Vec<DiskHookItem> {
+    let Some(source_root) = resolve_source_path(source) else {
+        return Vec::new();
+    };
+
+    let Ok(source_hooks) = crate::hook::discover_hooks(&source_root.join("hooks")) else {
+        return Vec::new();
+    };
+
+    source_hooks
+        .into_iter()
+        .filter_map(|hook| {
+            let harnesses = installed_hook_harnesses_on_disk(
+                project_root,
+                global,
+                &hook,
+                cursor_global_rules_dir,
+            );
+            if harnesses.is_empty() {
+                None
+            } else {
+                Some(DiskHookItem {
+                    name: hook.name,
+                    harnesses,
+                })
+            }
+        })
+        .collect()
+}
+
+fn installed_hook_harnesses_on_disk(
+    project_root: &Path,
+    global: bool,
+    hook: &crate::hook::Hook,
+    cursor_global_rules_dir: &Path,
+) -> Vec<String> {
+    let mut harnesses = Vec::new();
+
+    if hook.applies_to(crate::harness::Harness::ClaudeCode.id())
+        && claude_hook_artifact_exists(project_root, global, hook)
+    {
+        harnesses.push(crate::harness::Harness::ClaudeCode.id().to_string());
+    }
+    if hook.applies_to(crate::harness::Harness::Cursor.id())
+        && cursor_hook_artifact_exists(project_root, global, hook, cursor_global_rules_dir)
+    {
+        harnesses.push(crate::harness::Harness::Cursor.id().to_string());
+    }
+    if hook.applies_to(crate::harness::Harness::OpenCode.id())
+        && opencode_hook_artifact_exists(project_root, global, hook)
+    {
+        harnesses.push(crate::harness::Harness::OpenCode.id().to_string());
+    }
+    if hook.applies_to(crate::harness::Harness::Codex.id())
+        && codex_hook_artifact_exists(project_root, global, hook)
+    {
+        harnesses.push(crate::harness::Harness::Codex.id().to_string());
+    }
+    // Pi has no per-hook artifact to recover. Hooks are bundled in the
+    // @vanillagreen/pi-hooks package, which is recovered as a Pi package.
+
+    harnesses
+}
+
+fn generated_safety_action_line(hook: &crate::hook::Hook) -> Option<String> {
+    hook.safety_prose().lines().last().map(str::to_string)
+}
+
+fn hook_script_artifact_matches(path: &Path, hook: &crate::hook::Hook, harness_id: &str) -> bool {
+    if std::fs::read(path).is_ok_and(|installed| installed == hook.script.as_bytes()) {
+        return true;
+    }
+
+    crate::hook::Hook::from_file(path).is_ok_and(|installed| {
+        installed.name == hook.name
+            && installed.event == hook.event
+            && installed.matcher == hook.matcher
+            && installed.applies_to(harness_id)
+    })
+}
+
+fn safety_text_artifact_matches(
+    path: &Path,
+    expected: &str,
+    header_line: &str,
+    action_line: &str,
+) -> bool {
+    if std::fs::read(path).is_ok_and(|installed| installed == expected.as_bytes()) {
+        return true;
+    }
+
+    std::fs::read_to_string(path)
+        .is_ok_and(|content| generated_safety_text_matches(&content, header_line, action_line))
+}
+
+fn generated_safety_text_matches(content: &str, header_line: &str, action_line: &str) -> bool {
+    content.lines().any(|line| line == header_line)
+        && content.lines().any(|line| line == action_line)
+}
+
+fn claude_hook_artifact_exists(
+    project_root: &Path,
+    global: bool,
+    hook: &crate::hook::Hook,
+) -> bool {
+    let hooks_dir = if global {
+        claude_global_dir().join("hooks")
+    } else {
+        project_root.join(".claude").join("hooks")
+    };
+    hook_script_artifact_matches(
+        &hooks_dir.join(format!("{}.sh", hook.name)),
+        hook,
+        crate::harness::Harness::ClaudeCode.id(),
+    )
+}
+
+fn cursor_hook_artifact_exists(
+    project_root: &Path,
+    global: bool,
+    hook: &crate::hook::Hook,
+    cursor_global_rules_dir: &Path,
+) -> bool {
+    if global && !crate::harness::Harness::Cursor.supports_global_scope() {
+        return false;
+    }
+
+    let project_rules_dir = project_root.join(".cursor").join("rules");
+    let rules_dir = if global {
+        cursor_global_rules_dir
+    } else {
+        &project_rules_dir
+    };
+    let expected = crate::installer::cursor_hook_rule_contents(hook);
+    generated_safety_action_line(hook).is_some_and(|action_line| {
+        safety_text_artifact_matches(
+            &rules_dir.join(format!("safety-{}.mdc", hook.name)),
+            &expected,
+            &format!("# Safety: {}", hook.name),
+            &action_line,
+        )
+    })
+}
+
+fn codex_hook_artifact_exists(project_root: &Path, global: bool, hook: &crate::hook::Hook) -> bool {
+    let root = if global {
+        codex_home_dir()
+    } else {
+        project_root.join(".codex")
+    };
+
+    if crate::installer::codex_event_for(&hook.event).is_some() {
+        return hook_script_artifact_matches(
+            &root.join("hooks").join(format!("{}.sh", hook.name)),
+            hook,
+            crate::harness::Harness::Codex.id(),
+        );
+    }
+
+    codex_agent_has_expected_prose(&root, hook)
+}
+
+fn codex_agent_has_expected_prose(codex_root: &Path, hook: &crate::hook::Hook) -> bool {
+    let agents_dir = codex_root.join("agents");
+    let Ok(entries) = std::fs::read_dir(&agents_dir) else {
+        return false;
+    };
+    let marker = format!("## Safety: {}", hook.name);
+    let Some(action_line) = generated_safety_action_line(hook) else {
+        return false;
+    };
+    entries.flatten().any(|entry| {
+        let path = entry.path();
+        path.extension().is_some_and(|ex| ex == "toml")
+            && std::fs::read_to_string(&path)
+                .map(|content| generated_safety_text_matches(&content, &marker, &action_line))
+                .unwrap_or(false)
+    })
+}
+
+fn opencode_hook_artifact_exists(
+    project_root: &Path,
+    global: bool,
+    hook: &crate::hook::Hook,
+) -> bool {
+    let instructions_dir = if global {
+        opencode_global_dir().join("instructions")
+    } else {
+        project_root.join(".opencode").join("instructions")
+    };
+    let expected = crate::installer::opencode_hook_instruction_contents(hook);
+    generated_safety_action_line(hook).is_some_and(|action_line| {
+        safety_text_artifact_matches(
+            &instructions_dir.join(format!("vstack-hook-{}.md", hook.name)),
+            &expected,
+            &format!("# Safety: {}", hook.name),
+            &action_line,
+        )
+    })
 }
 
 fn normalize_path_lexical(path: &Path) -> PathBuf {
@@ -992,10 +1217,83 @@ fn prune_broken_skill_symlinks(global: bool) -> bool {
     prune_broken_skill_symlinks_in_dirs(&dirs, &roots)
 }
 
+// Recover only concrete hook artifacts with stable vstack-generated identity.
+// Scripts must carry matching hook frontmatter; wrapper/prose artifacts must
+// carry the exact safety header line plus the event/matcher-derived action
+// line. This allows stale artifacts after source edits to regain a lock entry
+// so refresh can replace them. Pi has no per-hook artifact; Pi hook behavior is
+// packaged and recovered through the Pi package lock path.
+fn recover_hook_lock_entries_at(
+    lock: &mut LockFile,
+    project_root: &Path,
+    global: bool,
+    source: &str,
+    installed_at: &str,
+) -> bool {
+    let cursor_global_rules_dir = cursor_global_dir().join("rules");
+    recover_hook_lock_entries_at_with_cursor_global_rules(
+        lock,
+        project_root,
+        global,
+        source,
+        installed_at,
+        &cursor_global_rules_dir,
+    )
+}
+
+fn recover_hook_lock_entries_at_with_cursor_global_rules(
+    lock: &mut LockFile,
+    project_root: &Path,
+    global: bool,
+    source: &str,
+    installed_at: &str,
+    cursor_global_rules_dir: &Path,
+) -> bool {
+    let mut modified = false;
+    for item in scan_installed_hooks_on_disk_at_with_cursor_global_rules(
+        project_root,
+        global,
+        source,
+        cursor_global_rules_dir,
+    ) {
+        match lock.entries.get_mut(&item.name) {
+            Some(entry) if entry.kind == ItemKind::Hook => {
+                for harness in item.harnesses {
+                    if !entry.harnesses.contains(&harness) {
+                        entry.harnesses.push(harness);
+                        modified = true;
+                    }
+                }
+            }
+            Some(_) => {}
+            None => {
+                let entry = LockEntry {
+                    name: item.name.clone(),
+                    kind: ItemKind::Hook,
+                    source: source.to_string(),
+                    harnesses: item.harnesses,
+                    method: InstallMethod::Copy,
+                    installed_at: installed_at.to_string(),
+                    source_hash: String::new(),
+                };
+                eprintln!("  Recovered lock entry for installed hook: {}", item.name);
+                lock.add(entry);
+                modified = true;
+            }
+        }
+    }
+    modified
+}
+
 /// Reconcile the lock file with what's actually on disk.
 ///
-/// - Items on disk (with `.vstack-refreshed` marker) but missing from lock are
+/// - Skills on disk (with `.vstack-refreshed` marker) but missing from lock are
 ///   re-added.
+/// - Hook artifacts on disk with stable vstack-generated identity are
+///   re-added: Claude/Codex native scripts with matching hook frontmatter,
+///   Cursor safety rules, OpenCode instruction files, and Codex prose fallback
+///   blocks with exact safety header and event/matcher action lines. Pi has no
+///   per-hook artifact because hooks are delivered by the Pi hooks package.
 /// - Items in lock but missing from disk are removed from lock.
 /// - Broken harness skill symlinks pointing at vstack's canonical skill roots
 ///   are removed so generated `.claude/skills/*` entries cannot survive with
@@ -1062,6 +1360,11 @@ pub fn reconcile_lock_with_disk(lock: &mut LockFile, global: bool, source: &str)
             lock.remove(&name);
             modified = true;
         }
+    }
+
+    let root = project_root();
+    if recover_hook_lock_entries_at(lock, &root, global, source, &now) {
+        modified = true;
     }
 
     // Remove stale Pi package lock entries. Pi packages do not have the skill
@@ -1396,6 +1699,568 @@ mod source_registry_tests {
         assert_ne!(
             h1, h2,
             "changing [hook-events] role list must invalidate hook source hash"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    fn test_hook_script(name: &str, body: &str) -> String {
+        test_hook_script_with_event(name, "PreToolUse", body)
+    }
+
+    fn test_hook_script_with_event(name: &str, event: &str, body: &str) -> String {
+        test_hook_script_with_meta(name, event, "Bash", "test hook", body)
+    }
+
+    fn test_hook_script_with_meta(
+        name: &str,
+        event: &str,
+        matcher: &str,
+        description: &str,
+        body: &str,
+    ) -> String {
+        format!(
+            "# ---
+# name: {name}
+# event: {event}
+# matcher: {matcher}
+# description: {description}
+# ---
+#!/usr/bin/env bash
+{body}
+"
+        )
+    }
+
+    #[test]
+    fn scan_installed_hooks_on_disk_detects_concrete_project_artifacts() {
+        let dir = sandbox("hook_scan_artifacts");
+        let source = dir.join("source");
+        let project = dir.join("project");
+        fs::create_dir_all(source.join("hooks")).unwrap();
+        let script = test_hook_script("my-hook", "echo source");
+        let source_hook_path = source.join("hooks").join("my-hook.sh");
+        fs::write(&source_hook_path, &script).unwrap();
+        let hook = crate::hook::Hook::from_file(&source_hook_path).unwrap();
+
+        fs::create_dir_all(project.join(".claude").join("hooks")).unwrap();
+        fs::write(project.join(".claude/hooks/my-hook.sh"), &script).unwrap();
+        fs::create_dir_all(project.join(".cursor").join("rules")).unwrap();
+        fs::write(
+            project.join(".cursor/rules/safety-my-hook.mdc"),
+            crate::installer::cursor_hook_rule_contents(&hook),
+        )
+        .unwrap();
+        fs::create_dir_all(project.join(".codex").join("hooks")).unwrap();
+        fs::write(project.join(".codex/hooks/my-hook.sh"), &script).unwrap();
+        fs::create_dir_all(project.join(".opencode").join("instructions")).unwrap();
+        fs::write(
+            project.join(".opencode/instructions/vstack-hook-my-hook.md"),
+            crate::installer::opencode_hook_instruction_contents(&hook),
+        )
+        .unwrap();
+
+        let items = scan_installed_hooks_on_disk_at(&project, false, &source.display().to_string());
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].name, "my-hook");
+        let mut harnesses = items[0].harnesses.clone();
+        harnesses.sort();
+        assert_eq!(
+            harnesses,
+            vec![
+                "claude-code".to_string(),
+                "codex".to_string(),
+                "cursor".to_string(),
+                "opencode".to_string()
+            ]
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn recover_hook_lock_entries_sets_empty_hash_for_refresh_summary() {
+        let dir = sandbox("hook_recover_lock");
+        let source = dir.join("source");
+        let project = dir.join("project");
+        fs::create_dir_all(source.join("hooks")).unwrap();
+        let script = test_hook_script("my-hook", "echo source");
+        fs::write(source.join("hooks").join("my-hook.sh"), &script).unwrap();
+        fs::create_dir_all(project.join(".claude").join("hooks")).unwrap();
+        fs::write(project.join(".claude/hooks/my-hook.sh"), &script).unwrap();
+        let mut lock = LockFile {
+            version: 1,
+            entries: std::collections::BTreeMap::new(),
+        };
+
+        let modified = recover_hook_lock_entries_at(
+            &mut lock,
+            &project,
+            false,
+            &source.display().to_string(),
+            "2026-06-07T00:00:00Z",
+        );
+
+        assert!(modified);
+        let entry = lock.entries.get("my-hook").unwrap();
+        assert_eq!(entry.kind, ItemKind::Hook);
+        assert_eq!(entry.harnesses, vec!["claude-code".to_string()]);
+        assert_eq!(entry.method, InstallMethod::Copy);
+        assert!(
+            entry.source_hash.is_empty(),
+            "refresh should count recovered hooks as updated after reinstall"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn recover_hook_lock_entries_recovers_stale_script_after_source_change() {
+        let dir = sandbox("hook_recover_stale_script");
+        let source = dir.join("source");
+        let project = dir.join("project");
+        fs::create_dir_all(source.join("hooks")).unwrap();
+        fs::write(
+            source.join("hooks").join("my-hook.sh"),
+            test_hook_script("my-hook", "echo current source"),
+        )
+        .unwrap();
+        fs::create_dir_all(project.join(".claude").join("hooks")).unwrap();
+        fs::write(
+            project.join(".claude/hooks/my-hook.sh"),
+            test_hook_script("my-hook", "echo previously installed source"),
+        )
+        .unwrap();
+        let mut lock = LockFile {
+            version: 1,
+            entries: std::collections::BTreeMap::new(),
+        };
+
+        assert!(recover_hook_lock_entries_at(
+            &mut lock,
+            &project,
+            false,
+            &source.display().to_string(),
+            "2026-06-07T00:00:00Z",
+        ));
+
+        let entry = lock.entries.get("my-hook").unwrap();
+        assert_eq!(entry.harnesses, vec!["claude-code".to_string()]);
+        assert!(entry.source_hash.is_empty());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn recover_hook_lock_entries_skips_same_named_foreign_script() {
+        let dir = sandbox("hook_recover_foreign");
+        let source = dir.join("source");
+        let project = dir.join("project");
+        fs::create_dir_all(source.join("hooks")).unwrap();
+        fs::write(
+            source.join("hooks").join("my-hook.sh"),
+            test_hook_script("my-hook", "echo source"),
+        )
+        .unwrap();
+        fs::create_dir_all(project.join(".claude").join("hooks")).unwrap();
+        fs::write(
+            project.join(".claude/hooks/my-hook.sh"),
+            "#!/usr/bin/env bash
+echo foreign
+",
+        )
+        .unwrap();
+        let mut lock = LockFile {
+            version: 1,
+            entries: std::collections::BTreeMap::new(),
+        };
+
+        let modified = recover_hook_lock_entries_at(
+            &mut lock,
+            &project,
+            false,
+            &source.display().to_string(),
+            "2026-06-07T00:00:00Z",
+        );
+
+        assert!(!modified);
+        assert!(!lock.entries.contains_key("my-hook"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn recover_hook_lock_entries_recovers_cursor_rule_only() {
+        let dir = sandbox("hook_recover_cursor");
+        let source = dir.join("source");
+        let project = dir.join("project");
+        fs::create_dir_all(source.join("hooks")).unwrap();
+        let source_hook_path = source.join("hooks").join("cursor-hook.sh");
+        fs::write(
+            &source_hook_path,
+            test_hook_script("cursor-hook", "echo source"),
+        )
+        .unwrap();
+        let hook = crate::hook::Hook::from_file(&source_hook_path).unwrap();
+        fs::create_dir_all(project.join(".cursor").join("rules")).unwrap();
+        fs::write(
+            project.join(".cursor/rules/safety-cursor-hook.mdc"),
+            crate::installer::cursor_hook_rule_contents(&hook),
+        )
+        .unwrap();
+        let mut lock = LockFile {
+            version: 1,
+            entries: std::collections::BTreeMap::new(),
+        };
+
+        assert!(recover_hook_lock_entries_at(
+            &mut lock,
+            &project,
+            false,
+            &source.display().to_string(),
+            "2026-06-07T00:00:00Z",
+        ));
+
+        let entry = lock.entries.get("cursor-hook").unwrap();
+        assert_eq!(entry.harnesses, vec!["cursor".to_string()]);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn recover_hook_lock_entries_ignores_cursor_rule_for_global_scope() {
+        let dir = sandbox("hook_recover_cursor_global");
+        let source = dir.join("source");
+        let project = dir.join("project");
+        let cursor_global_rules_dir = dir.join("global-cursor").join("rules");
+        fs::create_dir_all(source.join("hooks")).unwrap();
+        let source_hook_path = source.join("hooks").join("cursor-hook.sh");
+        fs::write(
+            &source_hook_path,
+            test_hook_script("cursor-hook", "echo source"),
+        )
+        .unwrap();
+        let hook = crate::hook::Hook::from_file(&source_hook_path).unwrap();
+        fs::create_dir_all(&cursor_global_rules_dir).unwrap();
+        fs::write(
+            cursor_global_rules_dir.join("safety-cursor-hook.mdc"),
+            crate::installer::cursor_hook_rule_contents(&hook),
+        )
+        .unwrap();
+        let mut lock = LockFile {
+            version: 1,
+            entries: std::collections::BTreeMap::new(),
+        };
+        let modified = recover_hook_lock_entries_at_with_cursor_global_rules(
+            &mut lock,
+            &project,
+            true,
+            &source.display().to_string(),
+            "2026-06-07T00:00:00Z",
+            &cursor_global_rules_dir,
+        );
+
+        assert!(
+            !modified,
+            "global recovery must not record project-only Cursor hooks"
+        );
+        assert!(
+            !lock.entries.contains_key("cursor-hook"),
+            "Cursor must be absent from global hook lock recovery"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn recover_hook_lock_entries_recovers_codex_prose_fallback_only() {
+        let dir = sandbox("hook_recover_codex_prose");
+        let source = dir.join("source");
+        let project = dir.join("project");
+        fs::create_dir_all(source.join("hooks")).unwrap();
+        let source_hook_path = source.join("hooks").join("prose-hook.sh");
+        fs::write(
+            &source_hook_path,
+            test_hook_script_with_event("prose-hook", "TaskCompleted", "echo source"),
+        )
+        .unwrap();
+        let hook = crate::hook::Hook::from_file(&source_hook_path).unwrap();
+        fs::create_dir_all(project.join(".codex").join("agents")).unwrap();
+        fs::write(
+            project.join(".codex/agents/rust.toml"),
+            format!(
+                "developer_instructions = '''
+{}
+'''
+",
+                crate::installer::codex_hook_safety_block(&hook)
+            ),
+        )
+        .unwrap();
+        let mut lock = LockFile {
+            version: 1,
+            entries: std::collections::BTreeMap::new(),
+        };
+
+        assert!(recover_hook_lock_entries_at(
+            &mut lock,
+            &project,
+            false,
+            &source.display().to_string(),
+            "2026-06-07T00:00:00Z",
+        ));
+
+        let entry = lock.entries.get("prose-hook").unwrap();
+        assert_eq!(entry.harnesses, vec!["codex".to_string()]);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn recover_hook_lock_entries_recovers_stale_generated_text_after_source_change() {
+        let dir = sandbox("hook_recover_stale_text");
+        let source = dir.join("source");
+        let project = dir.join("project");
+        let hooks_dir = source.join("hooks");
+        fs::create_dir_all(&hooks_dir).unwrap();
+
+        fs::write(
+            hooks_dir.join("text-hook.sh"),
+            test_hook_script_with_meta(
+                "text-hook",
+                "PreToolUse",
+                "Bash",
+                "current description",
+                "echo current",
+            ),
+        )
+        .unwrap();
+        let old_text_hook_path = dir.join("old-text-hook.sh");
+        fs::write(
+            &old_text_hook_path,
+            test_hook_script_with_meta(
+                "text-hook",
+                "PreToolUse",
+                "Bash",
+                "previous description",
+                "echo previous",
+            ),
+        )
+        .unwrap();
+        let old_text_hook = crate::hook::Hook::from_file(&old_text_hook_path).unwrap();
+
+        fs::write(
+            hooks_dir.join("prose-hook.sh"),
+            test_hook_script_with_meta(
+                "prose-hook",
+                "TaskCompleted",
+                "Bash",
+                "current description",
+                "echo current",
+            ),
+        )
+        .unwrap();
+        let old_prose_hook_path = dir.join("old-prose-hook.sh");
+        fs::write(
+            &old_prose_hook_path,
+            test_hook_script_with_meta(
+                "prose-hook",
+                "TaskCompleted",
+                "Bash",
+                "previous description",
+                "echo previous",
+            ),
+        )
+        .unwrap();
+        let old_prose_hook = crate::hook::Hook::from_file(&old_prose_hook_path).unwrap();
+
+        fs::create_dir_all(project.join(".cursor/rules")).unwrap();
+        fs::write(
+            project.join(".cursor/rules/safety-text-hook.mdc"),
+            crate::installer::cursor_hook_rule_contents(&old_text_hook),
+        )
+        .unwrap();
+        fs::create_dir_all(project.join(".opencode/instructions")).unwrap();
+        fs::write(
+            project.join(".opencode/instructions/vstack-hook-text-hook.md"),
+            crate::installer::opencode_hook_instruction_contents(&old_text_hook),
+        )
+        .unwrap();
+        fs::create_dir_all(project.join(".codex/agents")).unwrap();
+        fs::write(
+            project.join(".codex/agents/rust.toml"),
+            format!(
+                "developer_instructions = '''
+{}
+'''
+",
+                crate::installer::codex_hook_safety_block(&old_prose_hook)
+            ),
+        )
+        .unwrap();
+
+        let mut lock = LockFile {
+            version: 1,
+            entries: std::collections::BTreeMap::new(),
+        };
+        assert!(recover_hook_lock_entries_at(
+            &mut lock,
+            &project,
+            false,
+            &source.display().to_string(),
+            "2026-06-07T00:00:00Z",
+        ));
+
+        let text_entry = lock.entries.get("text-hook").unwrap();
+        assert_eq!(
+            text_entry.harnesses,
+            vec!["cursor".to_string(), "opencode".to_string()]
+        );
+        let prose_entry = lock.entries.get("prose-hook").unwrap();
+        assert_eq!(prose_entry.harnesses, vec!["codex".to_string()]);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn recover_hook_lock_entries_rejects_same_named_foreign_generated_text() {
+        let dir = sandbox("hook_recover_foreign_text");
+        let source = dir.join("source");
+        let project = dir.join("project");
+        let hooks_dir = source.join("hooks");
+        fs::create_dir_all(&hooks_dir).unwrap();
+
+        fs::write(
+            hooks_dir.join("text-hook.sh"),
+            test_hook_script_with_meta(
+                "text-hook",
+                "PreToolUse",
+                "Bash",
+                "source description",
+                "echo source",
+            ),
+        )
+        .unwrap();
+        let foreign_text_hook_path = dir.join("foreign-text-hook.sh");
+        fs::write(
+            &foreign_text_hook_path,
+            test_hook_script_with_meta(
+                "text-hook",
+                "PostToolUse",
+                "Edit|Write",
+                "source description",
+                "echo foreign",
+            ),
+        )
+        .unwrap();
+        let foreign_text_hook = crate::hook::Hook::from_file(&foreign_text_hook_path).unwrap();
+
+        fs::write(
+            hooks_dir.join("prose-hook.sh"),
+            test_hook_script_with_meta(
+                "prose-hook",
+                "TaskCompleted",
+                "Bash",
+                "source description",
+                "echo source",
+            ),
+        )
+        .unwrap();
+        let foreign_prose_hook_path = dir.join("foreign-prose-hook.sh");
+        fs::write(
+            &foreign_prose_hook_path,
+            test_hook_script_with_meta(
+                "prose-hook",
+                "PreToolUse",
+                "Bash",
+                "source description",
+                "echo foreign",
+            ),
+        )
+        .unwrap();
+        let foreign_prose_hook = crate::hook::Hook::from_file(&foreign_prose_hook_path).unwrap();
+
+        fs::create_dir_all(project.join(".cursor/rules")).unwrap();
+        fs::write(
+            project.join(".cursor/rules/safety-text-hook.mdc"),
+            crate::installer::cursor_hook_rule_contents(&foreign_text_hook),
+        )
+        .unwrap();
+        fs::create_dir_all(project.join(".opencode/instructions")).unwrap();
+        fs::write(
+            project.join(".opencode/instructions/vstack-hook-text-hook.md"),
+            crate::installer::opencode_hook_instruction_contents(&foreign_text_hook),
+        )
+        .unwrap();
+        fs::create_dir_all(project.join(".codex/agents")).unwrap();
+        fs::write(
+            project.join(".codex/agents/rust.toml"),
+            format!(
+                "developer_instructions = '''
+{}
+'''
+",
+                crate::installer::codex_hook_safety_block(&foreign_prose_hook)
+            ),
+        )
+        .unwrap();
+
+        let mut lock = LockFile {
+            version: 1,
+            entries: std::collections::BTreeMap::new(),
+        };
+        assert!(!recover_hook_lock_entries_at(
+            &mut lock,
+            &project,
+            false,
+            &source.display().to_string(),
+            "2026-06-07T00:00:00Z",
+        ));
+        assert!(lock.entries.is_empty());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn recover_hook_lock_entries_codex_prose_requires_exact_header_line() {
+        let dir = sandbox("hook_recover_codex_prefix");
+        let source = dir.join("source");
+        let project = dir.join("project");
+        let hooks_dir = source.join("hooks");
+        fs::create_dir_all(&hooks_dir).unwrap();
+        fs::write(
+            hooks_dir.join("foo.sh"),
+            test_hook_script_with_event("foo", "TaskCompleted", "echo foo"),
+        )
+        .unwrap();
+        let foo_bar_path = hooks_dir.join("foo-bar.sh");
+        fs::write(
+            &foo_bar_path,
+            test_hook_script_with_event("foo-bar", "TaskCompleted", "echo foo-bar"),
+        )
+        .unwrap();
+        let foo_bar_hook = crate::hook::Hook::from_file(&foo_bar_path).unwrap();
+
+        fs::create_dir_all(project.join(".codex/agents")).unwrap();
+        fs::write(
+            project.join(".codex/agents/rust.toml"),
+            format!(
+                "developer_instructions = '''
+{}
+'''
+",
+                crate::installer::codex_hook_safety_block(&foo_bar_hook)
+            ),
+        )
+        .unwrap();
+
+        let mut lock = LockFile {
+            version: 1,
+            entries: std::collections::BTreeMap::new(),
+        };
+        assert!(recover_hook_lock_entries_at(
+            &mut lock,
+            &project,
+            false,
+            &source.display().to_string(),
+            "2026-06-07T00:00:00Z",
+        ));
+
+        assert!(!lock.entries.contains_key("foo"));
+        assert_eq!(
+            lock.entries.get("foo-bar").unwrap().harnesses,
+            vec!["codex".to_string()]
         );
         let _ = fs::remove_dir_all(&dir);
     }
