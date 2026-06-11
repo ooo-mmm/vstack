@@ -1,10 +1,12 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { execFileSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
 export const PACKAGE_ID = "@vanillagreen/pi-web-tools";
 export const WEB_PROVIDERS = ["auto", "exa", "perplexity", "gemini", "exa-mcp", "duckduckgo", "openai-native"] as const;
+const DEFAULT_OP_READ_TIMEOUT_MS = 1500;
+const OP_READ_TIMEOUT_ENV = "PI_WEB_TOOLS_OP_READ_TIMEOUT_MS";
 export type WebProvider = (typeof WEB_PROVIDERS)[number];
 export type ResolvedWebProvider = Exclude<WebProvider, "auto">;
 
@@ -224,14 +226,44 @@ function secretFrom(raw: SettingsRecord, keys: string[]): string | undefined {
 	return undefined;
 }
 
+function opReadTimeoutMs(): number {
+	const raw = process.env[OP_READ_TIMEOUT_ENV];
+	const parsed = raw && raw.trim() ? Number(raw) : NaN;
+	return Number.isFinite(parsed) && parsed > 0 ? Math.min(Math.max(Math.trunc(parsed), 100), 10000) : DEFAULT_OP_READ_TIMEOUT_MS;
+}
+
+function addSecretWarning(warnings: string[], name: string, reason: string): void {
+	warnings.push(`${name} is a 1Password reference but could not be resolved ${reason}; treating it as unset.`);
+}
+
 function resolveSecretRef(value: string | undefined, name: string, warnings: string[]): string | undefined {
 	if (!value || !value.startsWith("op://")) return value;
-	try {
-		return execFileSync("op", ["read", value], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
-	} catch {
-		warnings.push(`${name} is a 1Password reference but could not be resolved. Install/sign in to the op CLI and run: op read '${value}'`);
-		return value;
+	const timeout = opReadTimeoutMs();
+	const result = spawnSync("op", ["read", value], {
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "ignore"],
+		timeout,
+		killSignal: "SIGTERM",
+	});
+	const errorCode = result.error && "code" in result.error ? String(result.error.code) : undefined;
+	if (errorCode === "ETIMEDOUT") {
+		addSecretWarning(warnings, name, `within ${timeout}ms`);
+		return undefined;
 	}
+	if (result.error) {
+		addSecretWarning(warnings, name, "because the op CLI is unavailable or failed to start");
+		return undefined;
+	}
+	if (result.status !== 0 || result.signal) {
+		addSecretWarning(warnings, name, "because op read exited unsuccessfully");
+		return undefined;
+	}
+	const resolved = result.stdout.trim();
+	if (!resolved) {
+		addSecretWarning(warnings, name, "because op read returned an empty value");
+		return undefined;
+	}
+	return resolved;
 }
 
 export function loadSettings(cwd = process.cwd()): WebToolsSettings {

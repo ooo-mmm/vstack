@@ -115,6 +115,40 @@ test("loadSettings reads project .env.local without overriding process env", () 
 	}
 });
 
+test("loadSettings treats slow op:// API key references as unset", () => {
+	const root = tempDir();
+	const user = join(root, "agent");
+	const project = join(root, "project");
+	const bin = join(root, "bin");
+	mkdirSync(user, { recursive: true });
+	mkdirSync(join(project, ".pi"), { recursive: true });
+	mkdirSync(bin, { recursive: true });
+	writeFileSync(join(bin, "op"), "#!/usr/bin/env bash\n[ \"$1\" = read ] && { sleep 5; printf late-secret; exit 0; }\nexit 1\n");
+	chmodSync(join(bin, "op"), 0o755);
+	writeFileSync(join(user, "settings.json"), JSON.stringify({ vstack: { extensionManager: { config: { "@vanillagreen/pi-web-tools": { exaApiKey: "op://vault/exa/key" } } } } }));
+	const previousDir = process.env.PI_CODING_AGENT_DIR;
+	const previousPath = process.env.PATH;
+	const previousExa = process.env.EXA_API_KEY;
+	const previousTimeout = process.env.PI_WEB_TOOLS_OP_READ_TIMEOUT_MS;
+	process.env.PI_CODING_AGENT_DIR = user;
+	process.env.PATH = `${bin}:${previousPath}`;
+	process.env.PI_WEB_TOOLS_OP_READ_TIMEOUT_MS = "100";
+	delete process.env.EXA_API_KEY;
+	try {
+		const started = Date.now();
+		const settings = loadSettings(project);
+		assert.equal(settings.apiKeys.exa, undefined);
+		assert.ok(Date.now() - started < 1500);
+		assert.match(settings.warnings.join("\n"), /EXA_API_KEY.*within 100ms.*unset/);
+		assert.doesNotMatch(settings.warnings.join("\n"), /op:\/\//);
+	} finally {
+		if (previousDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = previousDir;
+		process.env.PATH = previousPath;
+		if (previousExa === undefined) delete process.env.EXA_API_KEY; else process.env.EXA_API_KEY = previousExa;
+		if (previousTimeout === undefined) delete process.env.PI_WEB_TOOLS_OP_READ_TIMEOUT_MS; else process.env.PI_WEB_TOOLS_OP_READ_TIMEOUT_MS = previousTimeout;
+	}
+});
+
 test("loadSettings resolves op:// API key references with op CLI", () => {
 	const root = tempDir();
 	const user = join(root, "agent");

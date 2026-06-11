@@ -77,7 +77,7 @@ Set via environment variables, project `.env.local`/`.env`, or a private config 
 - `JINA_API_KEY` (optional; anonymous Jina Reader works without it)
 - `PI_WEB_TOOLS_CONFIG_FILE=/path/to/private.json`
 
-Values may be 1Password references such as `op://Private/Exa API Key/credential` when the `op` CLI is installed and signed in.
+Values may be 1Password references such as `op://Private/Exa API Key/credential` when the `op` CLI is installed and signed in. References resolve best-effort with a short startup timeout (default 1500 ms, override with `PI_WEB_TOOLS_OP_READ_TIMEOUT_MS`); unresolved references are treated as unset so Pi startup does not block.
 
 ## Deep research modes
 
