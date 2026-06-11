@@ -65,6 +65,7 @@ export interface SettingsFile {
 	path: string;
 	json: Record<string, unknown>;
 	exists: boolean;
+	projectTrusted?: boolean;
 }
 
 export interface ManagerState {

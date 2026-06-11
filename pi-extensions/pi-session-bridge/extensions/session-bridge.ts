@@ -866,18 +866,21 @@ export function parseCommandArgs(argsString: string): string[] {
 }
 
 export function substitutePromptArgs(content: string, args: string[]): string {
-	let result = content;
-	result = result.replace(/\$(\d+)/g, (_match, num: string) => args[Number.parseInt(num, 10) - 1] ?? "");
-	result = result.replace(/\$\{@:(\d+)(?::(\d+))?\}/g, (_match, startStr: string, lengthStr?: string) => {
-		let start = Number.parseInt(startStr, 10) - 1;
-		if (start < 0) start = 0;
-		if (lengthStr) return args.slice(start, start + Number.parseInt(lengthStr, 10)).join(" ");
-		return args.slice(start).join(" ");
-	});
 	const allArgs = args.join(" ");
-	result = result.replace(/\$ARGUMENTS/g, allArgs);
-	result = result.replace(/\$@/g, allArgs);
-	return result;
+	return content.replace(/\$\{(\d+):-([^}]*)\}|\$\{@:(\d+)(?::(\d+))?\}|\$(ARGUMENTS|@|\d+)/g, (_match, defaultNum: string | undefined, defaultValue: string | undefined, sliceStart: string | undefined, sliceLength: string | undefined, simple: string | undefined) => {
+		if (defaultNum) {
+			const value = args[Number.parseInt(defaultNum, 10) - 1];
+			return value ? value : (defaultValue ?? "");
+		}
+		if (sliceStart) {
+			let start = Number.parseInt(sliceStart, 10) - 1;
+			if (start < 0) start = 0;
+			if (sliceLength) return args.slice(start, start + Number.parseInt(sliceLength, 10)).join(" ");
+			return args.slice(start).join(" ");
+		}
+		if (simple === "ARGUMENTS" || simple === "@") return allArgs;
+		return args[Number.parseInt(simple ?? "0", 10) - 1] ?? "";
+	});
 }
 
 export async function resolveOwnTmuxPaneByParentChain(

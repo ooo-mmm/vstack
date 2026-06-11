@@ -49,6 +49,10 @@ function inventory(cwd: string) {
 	return buildInventory({} as never, { cwd } as never);
 }
 
+function inventoryWithTrust(cwd: string, trusted: boolean) {
+	return buildInventory({} as never, { cwd, isProjectTrusted: () => trusted } as never);
+}
+
 beforeEach(() => {
 	resetTmp();
 	process.env.HOME = join(rootTmp, "home");
@@ -121,6 +125,24 @@ test("project npm package settings override same global npm package", () => {
 	expect(copies.find((pkg) => pkg.scope === "project")?.displayName).toBe("Project Copy");
 	expect(copies.find((pkg) => pkg.scope === "project")?.settingsSchema?.map((schema) => schema.key)).toEqual(["projectFlag"]);
 	expect(copies.find((pkg) => pkg.scope === "user")?.state).toBe("shadowed");
+});
+
+test("ignores project settings when Pi reports project untrusted", () => {
+	const project = join(rootTmp, "project");
+	const projectPi = join(project, ".pi");
+	const userPi = process.env.PI_CODING_AGENT_DIR!;
+	const userPackageDir = join(userPi, "npm", "node_modules", "@scope", "dupe-settings");
+	const projectPackageDir = join(projectPi, "npm", "node_modules", "@scope", "dupe-settings");
+	writeJson(join(userPi, "settings.json"), { packages: ["npm:@scope/dupe-settings"] });
+	writeJson(join(projectPi, "settings.json"), { packages: ["npm:@scope/dupe-settings"], vstack: { extensionManager: { config: { "@scope/dupe-settings": { enabled: false } } } } });
+	writePackage(userPackageDir, "@scope/dupe-settings", "User Copy", "userFlag");
+	writePackage(projectPackageDir, "@scope/dupe-settings", "Project Copy", "projectFlag");
+
+	const inv = inventoryWithTrust(project, false);
+	expect(inv.settingsFiles.find((file) => file.scope === "project")?.projectTrusted).toBe(false);
+	expect(inv.packages.filter((pkg) => pkg.packageName === "@scope/dupe-settings")).toHaveLength(1);
+	expect(inv.packages.find((pkg) => pkg.packageName === "@scope/dupe-settings")?.scope).toBe("user");
+	expect(inv.managerState.config["@scope/dupe-settings"]).toBeUndefined();
 });
 
 test("npm update and uninstall plans use Pi scope-local npm directories", () => {

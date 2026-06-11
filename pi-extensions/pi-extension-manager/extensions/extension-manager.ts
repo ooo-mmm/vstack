@@ -14,7 +14,7 @@ import { buildInventory, npmCandidatesFromInventory } from "./manager/inventory.
 export { npmCandidatesFromInventory };
 import { openManager } from "./manager/manager-ui.js";
 import { openQuickSettings, quickSettingsCompletions } from "./manager/quick-settings-ui.js";
-import { findProjectPiDir, userPiDir } from "./manager/paths.js";
+import { userPiDir } from "./manager/paths.js";
 import {
 	defaultWriteScope,
 	findSettingsFile,
@@ -31,10 +31,8 @@ export default function extensionManager(pi: ExtensionAPI): void {
 	if (guard[INSTALL_SYMBOL]) return;
 	guard[INSTALL_SYMBOL] = true;
 
-	const projectPiDir = findProjectPiDir(process.cwd());
 	const loadConfig = mergedManagerState([
 		{ baseDir: userPiDir(), exists: existsSync(join(userPiDir(), "settings.json")), json: readJsonObject(join(userPiDir(), "settings.json")).json, path: join(userPiDir(), "settings.json"), scope: "user" },
-		{ baseDir: projectPiDir, exists: existsSync(join(projectPiDir, "settings.json")), json: readJsonObject(join(projectPiDir, "settings.json")).json, path: join(projectPiDir, "settings.json"), scope: "project" },
 	]);
 
 	if (loadConfig.config[MANAGER_ID]?.enabled === false) {

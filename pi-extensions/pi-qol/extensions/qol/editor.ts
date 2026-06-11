@@ -24,6 +24,7 @@ function styleSlashAutocompleteHints(suggestions: AutocompleteSuggestions | null
 export function installAutocompleteHintStyling(ctx: ExtensionContext): void {
 	if (!ctx.hasUI) return;
 	ctx.ui.addAutocompleteProvider((current) => ({
+		...current,
 		async getSuggestions(lines, cursorLine, cursorCol, options) {
 			return styleSlashAutocompleteHints(await current.getSuggestions(lines, cursorLine, cursorCol, options), ctx.ui.theme);
 		},
